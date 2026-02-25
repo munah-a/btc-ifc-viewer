@@ -67,9 +67,9 @@ select {
 
 .app-header {
   height: var(--header-h);
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   padding: 0 14px;
   border-bottom: 1px solid var(--border);
@@ -111,6 +111,19 @@ select {
   font-weight: 700;
   font-size: 17px;
   letter-spacing: -0.02em;
+}
+
+.beta-tag {
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 1;
+  align-self: center;
 }
 
 .logo-subtitle {
@@ -184,11 +197,11 @@ select {
   background: transparent;
 }
 
-.browser-node > summary {
+.browser-node>summary {
   list-style: none;
 }
 
-.browser-node > summary::-webkit-details-marker {
+.browser-node>summary::-webkit-details-marker {
   display: none;
 }
 
@@ -203,12 +216,12 @@ select {
   user-select: none;
 }
 
-.browser-node:not(.is-model) > .browser-summary {
+.browser-node:not(.is-model)>.browser-summary {
   padding: 4px 6px;
   border-radius: 6px;
 }
 
-.browser-node:not(.is-model) > .browser-summary:hover {
+.browser-node:not(.is-model)>.browser-summary:hover {
   background: rgba(255, 255, 255, 0.04);
 }
 
@@ -218,7 +231,7 @@ select {
   transition: transform 120ms ease;
 }
 
-.browser-node[open] > .browser-summary .browser-twist {
+.browser-node[open]>.browser-summary .browser-twist {
   transform: rotate(90deg);
 }
 
@@ -279,7 +292,7 @@ select {
   background: rgba(255, 255, 255, 0.04);
 }
 
-.browser-node.is-model > .browser-summary {
+.browser-node.is-model>.browser-summary {
   padding: 7px 8px;
 }
 
@@ -1078,7 +1091,7 @@ kbd {
   font-size: 22px;
 }
 
-.dock-toggle > span:not(.material-icons-round) {
+.dock-toggle>span:not(.material-icons-round) {
   display: none;
 }
 
