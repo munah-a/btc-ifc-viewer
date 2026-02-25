@@ -1,0 +1,24 @@
+{
+  "name": "@bim-for-field/viewer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ThatOpen Engine BIM Viewer - Proof of Concept",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@thatopen/components": "^3.3.0",
+    "@thatopen/components-front": "^3.3.0",
+    "@thatopen/fragments": "^3.3.0",
+    "three": "^0.175.0",
+    "web-ifc": "^0.0.74"
+  },
+  "devDependencies": {
+    "@types/three": "^0.175.0",
+    "typescript": "^5.3.0",
+    "vite": "^5.4.0"
+  }
+}

@@ -1,0 +1,448 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BTC IFC Viewer</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+    rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet" />
+</head>
+
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <div class="header-left">
+        <div class="logo">
+          <img src="./btc-logo.svg" alt="BTC" class="logo-icon-img" />
+          <div class="logo-text">BTC IFC Viewer</div>
+        </div>
+      </div>
+
+      <div class="header-center">
+        <div id="modelName" class="model-name">No model loaded</div>
+        <div id="headerModeLabel" class="header-pill">Orbit</div>
+      </div>
+
+      <div class="header-right">
+        <button id="btnExportScreenshot" class="btn btn-secondary" title="Export PNG screenshot">
+          <span class="material-icons-round">photo_camera</span>
+          <span>Shot</span>
+        </button>
+
+        <button id="btnExportState" class="btn btn-secondary" title="Export local viewer data">
+          <span class="material-icons-round">download</span>
+          <span>Export</span>
+        </button>
+
+        <button id="btnImportState" class="btn btn-secondary" title="Import viewer data">
+          <span class="material-icons-round">upload</span>
+          <span>Import</span>
+        </button>
+
+        <button id="btnUpload" class="btn btn-primary" title="Load IFC files">
+          <span class="material-icons-round">upload_file</span>
+          <span>Load IFCs</span>
+        </button>
+
+        <input type="file" id="fileInput" accept=".ifc" multiple hidden />
+        <input type="file" id="importStateInput" accept="application/json" hidden />
+      </div>
+    </header>
+
+    <div class="app-main">
+      <aside class="model-panel">
+        <div class="model-panel-header">
+          <div class="section-title">Model Browser</div>
+          <div class="panel-subtitle">Federated tree by levels, classes, elements and spatial hierarchy</div>
+        </div>
+        <div id="modelBrowserTree" class="model-browser-tree"></div>
+      </aside>
+
+      <section class="viewport-section">
+        <div id="viewer-container" class="viewer"></div>
+
+        <div id="loadingOverlay" class="loading-overlay" hidden>
+          <div class="loading-spinner"></div>
+          <div id="loadingText" class="loading-text">Loading model...</div>
+          <div class="loading-bar">
+            <div id="loadingProgress" class="loading-fill"></div>
+          </div>
+        </div>
+
+        <div id="emptyState" class="empty-state">
+          <span class="material-icons-round empty-icon">view_in_ar</span>
+          <h2>Load IFC Models</h2>
+          <p>Drop one or more IFC files in the viewport or click Load IFCs</p>
+          <button id="btnUploadEmpty" class="btn btn-primary btn-large">
+            <span class="material-icons-round">upload_file</span>
+            <span>Load IFC Files</span>
+          </button>
+        </div>
+
+        <div id="viewerHint" class="viewer-hint" hidden>
+          Issue pin mode active: click model to place issue anchor
+        </div>
+
+        <div class="view-cube" id="viewCube" aria-label="View cube">
+          <div class="view-cube-stage">
+            <div class="view-cube-body" id="viewCubeBody">
+              <button id="cubeFront" class="view-cube-face face-front" title="Front view">FRONT</button>
+              <button id="cubeBack" class="view-cube-face face-back" title="Back view">BACK</button>
+              <button id="cubeRight" class="view-cube-face face-right" title="Right view">RIGHT</button>
+              <button id="cubeLeft" class="view-cube-face face-left" title="Left view">LEFT</button>
+              <button id="cubeTop" class="view-cube-face face-top" title="Top view">TOP</button>
+              <button id="cubeBottom" class="view-cube-face face-bottom" title="Bottom view">BOTTOM</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="viewer-dock" id="viewerDock">
+          <div class="dock-group">
+            <button class="dock-toggle" data-dock-toggle title="Navigate">
+              <span class="material-icons-round">navigation</span>
+              <span>Navigate</span>
+            </button>
+            <div class="dock-flyout">
+              <button id="btnModeOrbit" class="dock-tool-btn active" title="Orbit mode">
+                <span class="material-icons-round">3d_rotation</span>
+                <span class="dock-tool-label">Orbit</span>
+              </button>
+              <button id="btnModePlan" class="dock-tool-btn" title="Plan mode">
+                <span class="material-icons-round">map</span>
+                <span class="dock-tool-label">Plan</span>
+              </button>
+              <button id="btnModeFirstPerson" class="dock-tool-btn" title="First-person mode">
+                <span class="material-icons-round">directions_walk</span>
+                <span class="dock-tool-label">Walk</span>
+              </button>
+              <button id="btnFitAll" class="dock-tool-btn" title="Fit model">
+                <span class="material-icons-round">fit_screen</span>
+                <span class="dock-tool-label">Fit</span>
+              </button>
+              <button id="btnFront" class="dock-tool-btn" title="Front view">
+                <span class="material-icons-round">crop_portrait</span>
+                <span class="dock-tool-label">Front</span>
+              </button>
+              <button id="btnTop" class="dock-tool-btn" title="Top view">
+                <span class="material-icons-round">crop_landscape</span>
+                <span class="dock-tool-label">Top</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="dock-group">
+            <button class="dock-toggle" data-dock-toggle title="Select">
+              <span class="material-icons-round">ads_click</span>
+              <span>Select</span>
+            </button>
+            <div class="dock-flyout">
+              <button id="btnSelectSingle" class="dock-tool-btn active" title="Single select mode">
+                <span class="material-icons-round">ads_click</span>
+                <span class="dock-tool-label">Single</span>
+              </button>
+              <button id="btnSelectMulti" class="dock-tool-btn" title="Multi-select mode">
+                <span class="material-icons-round">select_all</span>
+                <span class="dock-tool-label">Multi</span>
+              </button>
+              <button id="btnIsolate" class="dock-tool-btn" title="Isolate selection">
+                <span class="material-icons-round">visibility</span>
+                <span class="dock-tool-label">Isolate</span>
+              </button>
+              <button id="btnHide" class="dock-tool-btn" title="Hide selection">
+                <span class="material-icons-round">visibility_off</span>
+                <span class="dock-tool-label">Hide</span>
+              </button>
+              <button id="btnShow" class="dock-tool-btn" title="Show selection">
+                <span class="material-icons-round">remove_red_eye</span>
+                <span class="dock-tool-label">Show</span>
+              </button>
+              <button id="btnResetVisibility" class="dock-tool-btn" title="Reset visibility">
+                <span class="material-icons-round">restart_alt</span>
+                <span class="dock-tool-label">Reset</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="dock-group">
+            <button class="dock-toggle" data-dock-toggle title="Measure">
+              <span class="material-icons-round">straighten</span>
+              <span>Measure</span>
+            </button>
+            <div class="dock-flyout">
+              <button id="btnMeasureLength" class="dock-tool-btn" title="Distance measurement">
+                <span class="material-icons-round">straighten</span>
+                <span class="dock-tool-label">Length</span>
+              </button>
+              <button id="btnMeasureArea" class="dock-tool-btn" title="Area measurement">
+                <span class="material-icons-round">square_foot</span>
+                <span class="dock-tool-label">Area</span>
+              </button>
+              <button id="btnClearMeasurements" class="dock-tool-btn" title="Clear measurements">
+                <span class="material-icons-round">cleaning_services</span>
+                <span class="dock-tool-label">Clear</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="dock-group">
+            <button class="dock-toggle" data-dock-toggle title="Section">
+              <span class="material-icons-round">content_cut</span>
+              <span>Section</span>
+            </button>
+            <div class="dock-flyout">
+              <button id="btnSectionX" class="dock-tool-btn" title="Section X">
+                <span class="material-icons-round">content_cut</span>
+                <span class="dock-tool-label">Cut X</span>
+              </button>
+              <button id="btnSectionY" class="dock-tool-btn" title="Section Y">
+                <span class="material-icons-round">content_cut</span>
+                <span class="dock-tool-label">Cut Y</span>
+              </button>
+              <button id="btnSectionZ" class="dock-tool-btn" title="Section Z">
+                <span class="material-icons-round">content_cut</span>
+                <span class="dock-tool-label">Cut Z</span>
+              </button>
+              <button id="btnSectionBox" class="dock-tool-btn" title="Section box">
+                <span class="material-icons-round">crop_free</span>
+                <span class="dock-tool-label">Box</span>
+              </button>
+              <button id="btnClearSections" class="dock-tool-btn" title="Clear sections">
+                <span class="material-icons-round">clear_all</span>
+                <span class="dock-tool-label">Clear</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="dock-group">
+            <button class="dock-toggle" data-dock-toggle title="Visual">
+              <span class="material-icons-round">visibility</span>
+              <span>Visual</span>
+            </button>
+            <div class="dock-flyout">
+              <button id="btnTransparency" class="dock-tool-btn" title="X-ray mode">
+                <span class="material-icons-round">blur_on</span>
+                <span class="dock-tool-label">X-Ray</span>
+              </button>
+              <button id="btnWireframe" class="dock-tool-btn" title="Edge overlay">
+                <span class="material-icons-round">grid_on</span>
+                <span class="dock-tool-label">Edges</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="dock-group">
+            <button class="dock-toggle" data-dock-toggle title="Collab">
+              <span class="material-icons-round">groups</span>
+              <span>Collab</span>
+            </button>
+            <div class="dock-flyout">
+              <button id="btnIssuePinMode" class="dock-tool-btn" title="Issue pin mode">
+                <span class="material-icons-round">place</span>
+                <span class="dock-tool-label">Issue</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="status-bar">
+          <span id="statusText" class="status-item">Ready</span>
+          <span id="selectionCount" class="status-pill">0 selected</span>
+          <span id="elementCount" class="status-pill">0 elements</span>
+          <span id="visibleCount" class="status-pill">0 visible</span>
+          <span id="perfInfo" class="status-item status-right"></span>
+        </div>
+      </section>
+
+      <aside class="side-panel">
+        <div class="panel-tabs">
+          <button class="tab-btn active" data-tab="explorer">Explorer</button>
+          <button class="tab-btn" data-tab="models">Models</button>
+          <button class="tab-btn" data-tab="properties">Properties</button>
+          <button class="tab-btn" data-tab="viewpoints">Viewpoints</button>
+          <button class="tab-btn" data-tab="issues">Issues</button>
+          <button class="tab-btn" data-tab="help">Help</button>
+        </div>
+
+        <div class="tab-panel active" id="panel-explorer">
+          <div class="section-title">Search</div>
+          <div class="search-row">
+            <input id="searchInput" class="text-input" placeholder="Name / GlobalId / type" />
+            <button id="btnSearch" class="btn btn-secondary btn-compact">Go</button>
+            <button id="btnClearSearch" class="btn btn-secondary btn-compact">Clear</button>
+          </div>
+
+          <div class="section-title">Class Filters</div>
+          <div id="classFilterList" class="filter-list"></div>
+
+          <div class="section-title">Level Filters</div>
+          <div id="levelFilterList" class="filter-list"></div>
+
+          <div class="row-actions">
+            <button id="btnApplyFilters" class="btn btn-secondary btn-compact">Apply Filters</button>
+            <button id="btnClearFilters" class="btn btn-secondary btn-compact">Reset Filters</button>
+          </div>
+
+          <div class="section-title">Search Results</div>
+          <div id="elementResults" class="list-box"></div>
+
+          <div class="section-title">Spatial Tree</div>
+          <div id="spatialTree" class="tree-box"></div>
+        </div>
+
+        <div class="tab-panel" id="panel-models">
+          <div class="section-title">Federated Models</div>
+          <div class="panel-subtitle panel-subtitle-inline">Visibility, opacity and manual XYZ/RXYZ alignment</div>
+          <div id="federationTree" class="federation-tree"></div>
+
+          <div class="section-title">Visual Settings</div>
+          <div class="visual-settings">
+            <label class="visual-select-row" for="visualStyleSelect">
+              <span>Style</span>
+              <select id="visualStyleSelect" class="text-input visual-style-select">
+                <option value="basic">Basic</option>
+                <option value="pen">Pen</option>
+                <option value="color-pen">Color Pen</option>
+                <option value="color-shadows">Color Shadows</option>
+                <option value="color-pen-shadows" selected>Color Pen Shadows</option>
+              </select>
+            </label>
+
+            <label class="visual-toggle">
+              <input id="toggleGrid" type="checkbox" checked />
+              <span>Show Grid</span>
+            </label>
+
+            <label class="visual-color-row" for="backgroundColorInput">
+              <span>Background</span>
+              <input id="backgroundColorInput" type="color" value="#0b1220" />
+            </label>
+
+            <div class="visual-presets">
+              <button type="button" class="visual-preset-btn" data-bg-preset="#0b1220" style="--preset:#0b1220;"
+                title="Night Blue"></button>
+              <button type="button" class="visual-preset-btn" data-bg-preset="#c6d5e8" style="--preset:#c6d5e8;"
+                title="Day Sky"></button>
+              <button type="button" class="visual-preset-btn" data-bg-preset="#1b1f24" style="--preset:#1b1f24;"
+                title="Graphite"></button>
+              <button type="button" class="visual-preset-btn" data-bg-preset="#e9ecef" style="--preset:#e9ecef;"
+                title="Light Gray"></button>
+              <button type="button" class="visual-preset-btn" data-bg-preset="#8ec0f4" style="--preset:#8ec0f4;"
+                title="BIM Sky"></button>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="panel-properties">
+          <div id="propsEmpty" class="props-empty">
+            <span class="material-icons-round">touch_app</span>
+            <p>Select element(s) to inspect properties</p>
+          </div>
+
+          <div id="propsContent" class="props-content" hidden>
+            <div class="section-title">Element</div>
+            <div class="property-grid">
+              <div class="prop-row"><span class="prop-key">Type</span><span id="propType" class="prop-val">-</span>
+              </div>
+              <div class="prop-row"><span class="prop-key">Name</span><span id="propName" class="prop-val">-</span>
+              </div>
+              <div class="prop-row"><span class="prop-key">GlobalId</span><span id="propGlobalId"
+                  class="prop-val">-</span></div>
+              <div class="prop-row"><span class="prop-key">Description</span><span id="propDescription"
+                  class="prop-val">-</span></div>
+              <div class="prop-row"><span class="prop-key">Storey</span><span id="propStory" class="prop-val">-</span>
+              </div>
+            </div>
+
+            <div class="section-title">Attributes</div>
+            <div id="propAttributes" class="property-grid"></div>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="panel-viewpoints">
+          <div class="section-title">Save Viewpoint</div>
+          <div class="search-row">
+            <input id="viewpointName" class="text-input" placeholder="Viewpoint name" />
+            <button id="btnSaveViewpoint" class="btn btn-secondary btn-compact">Save</button>
+          </div>
+          <div class="row-actions">
+            <button id="btnApplySelectedViewpoint" class="btn btn-secondary btn-compact">Apply</button>
+            <button id="btnDeleteSelectedViewpoint" class="btn btn-secondary btn-compact">Delete</button>
+          </div>
+          <div id="viewpointList" class="list-box"></div>
+        </div>
+
+        <div class="tab-panel" id="panel-issues">
+          <div class="section-title">Create Issue</div>
+          <input id="issueTitle" class="text-input" placeholder="Issue title" />
+          <textarea id="issueDescription" class="text-area" placeholder="Issue description"></textarea>
+          <div class="search-row">
+            <select id="issuePriority" class="text-input">
+              <option value="Critical">Critical</option>
+              <option value="High">High</option>
+              <option value="Medium" selected>Medium</option>
+              <option value="Low">Low</option>
+            </select>
+            <select id="issueStatus" class="text-input">
+              <option value="Open" selected>Open</option>
+              <option value="In Progress">In Progress</option>
+              <option value="Resolved">Resolved</option>
+              <option value="Closed">Closed</option>
+            </select>
+          </div>
+          <input id="issueAssignee" class="text-input" placeholder="Assignee" />
+          <div class="row-actions">
+            <button id="btnCreateIssue" class="btn btn-secondary btn-compact">Create from Selection</button>
+            <button id="btnDeleteIssue" class="btn btn-secondary btn-compact">Delete Selected</button>
+          </div>
+
+          <div class="section-title">Issues</div>
+          <div id="issuesList" class="list-box"></div>
+
+          <div class="section-title">Comments</div>
+          <div class="search-row">
+            <input id="issueCommentInput" class="text-input" placeholder="Add comment" />
+            <button id="btnAddIssueComment" class="btn btn-secondary btn-compact">Add</button>
+          </div>
+          <div id="issueComments" class="list-box compact"></div>
+        </div>
+
+        <div class="tab-panel" id="panel-help">
+          <div class="section-title">Keyboard Shortcuts</div>
+          <div class="help-list">
+            <div><kbd>F</kbd> Fit model</div>
+            <div><kbd>1</kbd> Orbit mode</div>
+            <div><kbd>2</kbd> Plan mode</div>
+            <div><kbd>3</kbd> First-person mode</div>
+            <div><kbd>M</kbd> Toggle multi-select</div>
+            <div><kbd>L</kbd> Length measurement</div>
+            <div><kbd>A</kbd> Area measurement</div>
+            <div><kbd>G</kbd> Toggle grid</div>
+            <div><kbd>X</kbd> Toggle X-ray</div>
+            <div><kbd>E</kbd> Toggle edges</div>
+            <div><kbd>I</kbd> Toggle issue pin mode</div>
+            <div><kbd>W</kbd> Gizmo translate mode</div>
+            <div><kbd>E</kbd> Gizmo rotate mode (when gizmo active)</div>
+            <div><kbd>R</kbd> Reset model transform (when gizmo active)</div>
+            <div><kbd>Esc</kbd> Cancel active tool</div>
+            <div><kbd>Del</kbd> Delete selected issue</div>
+          </div>
+
+          <div class="section-title">Tips</div>
+          <div class="help-list">
+            <div>Use filters in Explorer to isolate classes and levels.</div>
+            <div>Save viewpoints before creating issues for better traceability.</div>
+            <div>Use Export to persist standalone session data.</div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script type="module" src="./viewer.ts"></script>
+</body>
+
+</html>
