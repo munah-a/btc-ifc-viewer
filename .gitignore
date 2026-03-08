@@ -2,3 +2,6 @@ node_modules/
 dist/
 .vite/
 *.local
+playwright-report/
+test-results/
+.tmp-playwright/

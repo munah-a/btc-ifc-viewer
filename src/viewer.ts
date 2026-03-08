@@ -9,6 +9,66 @@ type SelectionMode = 'single' | 'multi';
 type MeasureMode = 'none' | 'length' | 'area';
 type NavigationMode = 'Orbit' | 'Plan' | 'FirstPerson';
 type VisualStyle = 'basic' | 'pen' | 'color-pen' | 'color-shadows' | 'color-pen-shadows';
+type CubeFaceKey = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom';
+type CubeEdgeKey =
+  | 'top-front'
+  | 'top-back'
+  | 'top-right'
+  | 'top-left'
+  | 'bottom-front'
+  | 'bottom-back'
+  | 'bottom-right'
+  | 'bottom-left'
+  | 'front-right'
+  | 'front-left'
+  | 'back-right'
+  | 'back-left';
+type CubeCornerKey =
+  | 'top-front-right'
+  | 'top-front-left'
+  | 'top-back-right'
+  | 'top-back-left'
+  | 'bottom-front-right'
+  | 'bottom-front-left'
+  | 'bottom-back-right'
+  | 'bottom-back-left';
+type CubeTargetKey = CubeFaceKey | CubeEdgeKey | CubeCornerKey;
+type CubeTargetKind = 'face' | 'edge' | 'corner';
+type PropertySectionId = 'identity' | 'type' | 'dimensions' | 'location' | 'levels' | 'materials' | 'quantities' | 'relations' | 'raw';
+
+interface ViewCubeTargetDefinition {
+  key: CubeTargetKey;
+  kind: CubeTargetKind;
+  label: string;
+  title: string;
+  vector: readonly [number, number, number];
+}
+
+interface PropertyRowData {
+  key: string;
+  value: string;
+  searchText: string;
+}
+
+interface PropertySectionData {
+  id: PropertySectionId;
+  title: string;
+  defaultOpen: boolean;
+  rows: PropertyRowData[];
+}
+
+interface ExtractedPropertyFact {
+  label: string;
+  value: string;
+  category: string;
+  setName: string;
+  path: string;
+}
+
+interface GeometryProbe {
+  center: { x: number; y: number; z: number };
+  size: { x: number; y: number; z: number };
+}
 
 interface IssueCommentRecord {
   id: string;
@@ -124,6 +184,76 @@ const MAX_BROWSER_CLASSES_PER_LEVEL = 28;
 const MAX_BROWSER_ELEMENTS_PER_CLASS = 26;
 const MAX_BROWSER_SPATIAL_DEPTH = 7;
 const MAX_BROWSER_SPATIAL_CHILDREN = 80;
+const CUBE_FACE_KEYS: CubeFaceKey[] = ['front', 'back', 'right', 'left', 'top', 'bottom'];
+const VIEW_CUBE_HOME_VECTOR: readonly [number, number, number] = [1, 1, 1];
+const VIEW_CUBE_HALF_SIZE = 31;
+const VIEW_CUBE_PERSPECTIVE = 140;
+const VIEW_CUBE_TARGETS: ViewCubeTargetDefinition[] = [
+  { key: 'front', kind: 'face', label: 'FRONT', title: 'Front view', vector: [0, 0, 1] },
+  { key: 'back', kind: 'face', label: 'BACK', title: 'Back view', vector: [0, 0, -1] },
+  { key: 'right', kind: 'face', label: 'RIGHT', title: 'Right view', vector: [1, 0, 0] },
+  { key: 'left', kind: 'face', label: 'LEFT', title: 'Left view', vector: [-1, 0, 0] },
+  { key: 'top', kind: 'face', label: 'TOP', title: 'Top view', vector: [0, 1, 0] },
+  { key: 'bottom', kind: 'face', label: 'BOTTOM', title: 'Bottom view', vector: [0, -1, 0] },
+  { key: 'top-front', kind: 'edge', label: '', title: 'Top front view', vector: [0, 1, 1] },
+  { key: 'top-back', kind: 'edge', label: '', title: 'Top back view', vector: [0, 1, -1] },
+  { key: 'top-right', kind: 'edge', label: '', title: 'Top right view', vector: [1, 1, 0] },
+  { key: 'top-left', kind: 'edge', label: '', title: 'Top left view', vector: [-1, 1, 0] },
+  { key: 'bottom-front', kind: 'edge', label: '', title: 'Bottom front view', vector: [0, -1, 1] },
+  { key: 'bottom-back', kind: 'edge', label: '', title: 'Bottom back view', vector: [0, -1, -1] },
+  { key: 'bottom-right', kind: 'edge', label: '', title: 'Bottom right view', vector: [1, -1, 0] },
+  { key: 'bottom-left', kind: 'edge', label: '', title: 'Bottom left view', vector: [-1, -1, 0] },
+  { key: 'front-right', kind: 'edge', label: '', title: 'Front right view', vector: [1, 0, 1] },
+  { key: 'front-left', kind: 'edge', label: '', title: 'Front left view', vector: [-1, 0, 1] },
+  { key: 'back-right', kind: 'edge', label: '', title: 'Back right view', vector: [1, 0, -1] },
+  { key: 'back-left', kind: 'edge', label: '', title: 'Back left view', vector: [-1, 0, -1] },
+  { key: 'top-front-right', kind: 'corner', label: '', title: 'Top front right view', vector: [1, 1, 1] },
+  { key: 'top-front-left', kind: 'corner', label: '', title: 'Top front left view', vector: [-1, 1, 1] },
+  { key: 'top-back-right', kind: 'corner', label: '', title: 'Top back right view', vector: [1, 1, -1] },
+  { key: 'top-back-left', kind: 'corner', label: '', title: 'Top back left view', vector: [-1, 1, -1] },
+  { key: 'bottom-front-right', kind: 'corner', label: '', title: 'Bottom front right view', vector: [1, -1, 1] },
+  { key: 'bottom-front-left', kind: 'corner', label: '', title: 'Bottom front left view', vector: [-1, -1, 1] },
+  { key: 'bottom-back-right', kind: 'corner', label: '', title: 'Bottom back right view', vector: [1, -1, -1] },
+  { key: 'bottom-back-left', kind: 'corner', label: '', title: 'Bottom back left view', vector: [-1, -1, -1] },
+];
+const VIEW_CUBE_TARGETS_BY_KEY = new Map<CubeTargetKey, ViewCubeTargetDefinition>(
+  VIEW_CUBE_TARGETS.map((target) => [target.key, target] as const),
+);
+const PROPERTY_SECTION_DEFINITIONS: Array<Omit<PropertySectionData, 'rows'>> = [
+  { id: 'identity', title: 'Identity', defaultOpen: true },
+  { id: 'type', title: 'Type', defaultOpen: true },
+  { id: 'dimensions', title: 'Dimensions', defaultOpen: true },
+  { id: 'location', title: 'Location', defaultOpen: true },
+  { id: 'levels', title: 'Levels', defaultOpen: true },
+  { id: 'materials', title: 'Materials', defaultOpen: true },
+  { id: 'quantities', title: 'Quantities', defaultOpen: true },
+  { id: 'relations', title: 'Relations', defaultOpen: false },
+  { id: 'raw', title: 'Raw IFC', defaultOpen: false },
+];
+const IFC_FACT_VALUE_KEYS = [
+  'NominalValue',
+  'LengthValue',
+  'AreaValue',
+  'VolumeValue',
+  'CountValue',
+  'WeightValue',
+  'TimeValue',
+  'PositiveLengthValue',
+  'MassValue',
+  'Width',
+  'Depth',
+  'Height',
+  'Thickness',
+  'LayerThickness',
+  'Elevation',
+];
+const DIMENSION_KEYWORDS = ['thickness', 'width', 'height', 'length', 'depth', 'diameter', 'radius', 'slope', 'span', 'perimeter'];
+const QUANTITY_KEYWORDS = ['area', 'volume', 'count', 'mass', 'weight', 'gross', 'net', 'perimeter', 'quantity', 'length'];
+const LOCATION_KEYWORDS = ['location', 'placement', 'coordinate', 'elevation', 'axis', 'direction', 'reference level', 'offset', 'origin', 'x', 'y', 'z'];
+const LEVEL_KEYWORDS = ['storey', 'level', 'floor', 'roof', 'sub level', 'contained in structure'];
+const MATERIAL_KEYWORDS = ['material', 'layer', 'constituent', 'finish', 'grade', 'profile'];
+const TYPE_KEYWORDS = ['type', 'family', 'assembly', 'classification', 'reference'];
+const RELATION_KEYWORDS = ['association', 'opening', 'void', 'fills', 'defines', 'typed', 'connected', 'decomposes', 'group'];
 
 const toSetMap = (plain: Record<string, number[] | Set<number>>): OBC.ModelIdMap => {
   const result: OBC.ModelIdMap = {};
@@ -222,8 +352,6 @@ class ViewerApp {
     loadingProgress: required<HTMLDivElement>('loadingProgress'),
     emptyState: required<HTMLDivElement>('emptyState'),
     viewerHint: required<HTMLDivElement>('viewerHint'),
-    modelName: required<HTMLDivElement>('modelName'),
-    headerModeLabel: required<HTMLDivElement>('headerModeLabel'),
     statusText: required<HTMLSpanElement>('statusText'),
     selectionCount: required<HTMLSpanElement>('selectionCount'),
     elementCount: required<HTMLSpanElement>('elementCount'),
@@ -252,13 +380,15 @@ class ViewerApp {
     btnTransparency: required<HTMLButtonElement>('btnTransparency'),
     btnWireframe: required<HTMLButtonElement>('btnWireframe'),
     btnIssuePinMode: required<HTMLButtonElement>('btnIssuePinMode'),
-    cubeTop: required<HTMLButtonElement>('cubeTop'),
-    cubeFront: required<HTMLButtonElement>('cubeFront'),
-    cubeRight: required<HTMLButtonElement>('cubeRight'),
-    cubeLeft: required<HTMLButtonElement>('cubeLeft'),
-    cubeBack: required<HTMLButtonElement>('cubeBack'),
-    cubeBottom: required<HTMLButtonElement>('cubeBottom'),
+    cubeHome: required<HTMLButtonElement>('cubeHome'),
     viewCubeBody: required<HTMLDivElement>('viewCubeBody'),
+    viewCubeHotspots: required<HTMLDivElement>('viewCubeHotspots'),
+    cubeFaceFront: required<HTMLDivElement>('cubeFaceFront'),
+    cubeFaceBack: required<HTMLDivElement>('cubeFaceBack'),
+    cubeFaceRight: required<HTMLDivElement>('cubeFaceRight'),
+    cubeFaceLeft: required<HTMLDivElement>('cubeFaceLeft'),
+    cubeFaceTop: required<HTMLDivElement>('cubeFaceTop'),
+    cubeFaceBottom: required<HTMLDivElement>('cubeFaceBottom'),
     viewerDock: required<HTMLDivElement>('viewerDock'),
     modelBrowserTree: required<HTMLDivElement>('modelBrowserTree'),
     federationTree: required<HTMLDivElement>('federationTree'),
@@ -283,7 +413,8 @@ class ViewerApp {
     propGlobalId: required<HTMLSpanElement>('propGlobalId'),
     propDescription: required<HTMLSpanElement>('propDescription'),
     propStory: required<HTMLSpanElement>('propStory'),
-    propAttributes: required<HTMLDivElement>('propAttributes'),
+    propFilterInput: required<HTMLInputElement>('propFilterInput'),
+    propSections: required<HTMLDivElement>('propSections'),
     viewpointName: required<HTMLInputElement>('viewpointName'),
     btnSaveViewpoint: required<HTMLButtonElement>('btnSaveViewpoint'),
     btnApplySelectedViewpoint: required<HTMLButtonElement>('btnApplySelectedViewpoint'),
@@ -354,11 +485,28 @@ class ViewerApp {
   private suppressAutoFit = false;
   private activeGizmoModelId: string | null = null;
   private gizmoDragging = false;
+  private propertyFilterText = '';
+  private readonly cubeFaceElements: Record<CubeFaceKey, HTMLDivElement> = {
+    front: this.dom.cubeFaceFront,
+    back: this.dom.cubeFaceBack,
+    right: this.dom.cubeFaceRight,
+    left: this.dom.cubeFaceLeft,
+    top: this.dom.cubeFaceTop,
+    bottom: this.dom.cubeFaceBottom,
+  };
+  private readonly cubeHotspots = new Map<CubeTargetKey, HTMLButtonElement>();
   private readonly cubeTarget = new THREE.Vector3();
   private readonly cubeCamDir = new THREE.Vector3();
+  private readonly cubeBasis = new THREE.Quaternion();
+  private readonly cubeBasisInverse = new THREE.Quaternion();
+  private readonly cubeDisplayQuaternion = new THREE.Quaternion();
+  private readonly cubeProjectedPoint = new THREE.Vector3();
+  private readonly cubeProjectedNormal = new THREE.Vector3();
+  private readonly cubeLocalDirection = new THREE.Vector3();
   private shaderWarningFilterInstalled = false;
 
   constructor() {
+    this.setupViewCube();
     this.bindUiEvents();
   }
 
@@ -401,6 +549,22 @@ class ViewerApp {
     this.shaderWarningFilterInstalled = true;
   }
 
+  private setupViewCube(): void {
+    for (const target of VIEW_CUBE_TARGETS) {
+      const button = document.createElement('button');
+      button.id = `cubeTarget-${target.key}`;
+      button.type = 'button';
+      button.className = `view-cube-hotspot kind-${target.kind}`;
+      button.dataset.cubeTarget = target.key;
+      button.dataset.visible = 'false';
+      button.title = target.title;
+      button.setAttribute('aria-label', target.title);
+      button.textContent = target.label;
+      this.dom.viewCubeHotspots.append(button);
+      this.cubeHotspots.set(target.key, button);
+    }
+  }
+
   private bindUiEvents(): void {
     this.dom.btnUpload.addEventListener('click', () => this.dom.fileInput.click());
     this.dom.btnUploadEmpty.addEventListener('click', () => this.dom.fileInput.click());
@@ -424,6 +588,10 @@ class ViewerApp {
     this.dom.tabButtons.forEach((button) => {
       button.addEventListener('click', () => this.activateTab(button.dataset.tab || 'explorer'));
     });
+    this.dom.propFilterInput.addEventListener('input', () => {
+      this.propertyFilterText = this.dom.propFilterInput.value.trim().toLowerCase();
+      this.applyPropertiesFilter();
+    });
     this.bindDockEvents();
     this.bindModelBrowserEvents();
     this.bindFederationTreeEvents();
@@ -434,12 +602,14 @@ class ViewerApp {
     this.dom.btnFitAll.addEventListener('click', () => this.fitToModel());
     this.dom.btnFront.addEventListener('click', () => this.setFrontView());
     this.dom.btnTop.addEventListener('click', () => this.setTopView());
-    this.dom.cubeFront.addEventListener('click', () => this.setFrontView());
-    this.dom.cubeTop.addEventListener('click', () => this.setTopView());
-    this.dom.cubeRight.addEventListener('click', () => this.setRightView());
-    this.dom.cubeLeft.addEventListener('click', () => this.setLeftView());
-    this.dom.cubeBack.addEventListener('click', () => this.setBackView());
-    this.dom.cubeBottom.addEventListener('click', () => this.setBottomView());
+    this.dom.cubeHome.addEventListener('click', () => this.setHomeView());
+    this.dom.viewCubeHotspots.addEventListener('click', (event) => {
+      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-cube-target]');
+      if (!button) return;
+      const key = button.dataset.cubeTarget as CubeTargetKey | undefined;
+      if (!key) return;
+      this.navigateToCubeTarget(key);
+    });
 
     this.dom.btnSelectSingle.addEventListener('click', () => this.applySelectionMode('single'));
     this.dom.btnSelectMulti.addEventListener('click', () => this.applySelectionMode('multi'));
@@ -985,7 +1155,6 @@ class ViewerApp {
       };
       this.federatedModels.set(resolvedModelId, modelRecord);
       this.updateElementCounter();
-      this.updateHeaderModelName(fileName);
       this.renderModelBrowser();
       this.renderFederatedTree();
 
@@ -1217,24 +1386,6 @@ class ViewerApp {
     let total = 0;
     for (const model of this.federatedModels.values()) total += model.elementCount;
     this.dom.elementCount.textContent = `${total} elements`;
-  }
-
-  private updateHeaderModelName(lastLoadedName?: string): void {
-    const count = this.federatedModels.size;
-    if (count === 0) {
-      this.dom.modelName.textContent = 'No model loaded';
-      return;
-    }
-    if (count === 1) {
-      const only = this.federatedModels.values().next().value as FederatedModelRecord | undefined;
-      this.dom.modelName.textContent = only?.fileName ?? '1 model loaded';
-      return;
-    }
-    if (lastLoadedName) {
-      this.dom.modelName.textContent = `${count} models loaded (latest: ${lastLoadedName})`;
-      return;
-    }
-    this.dom.modelName.textContent = `${count} models loaded`;
   }
 
   private getClassIdsForModelLevel(modelId: string, level: string, className: string): Set<number> {
@@ -2021,7 +2172,9 @@ class ViewerApp {
     this.applyXRay();
     this.applyEdges();
 
-    await this.fragments.core.update(true);
+    if (this.fragments.list.size > 0 || this.federatedModels.size > 0) {
+      await this.fragments.core.update(true);
+    }
 
     if (persist) this.persistLocalState();
     if (updateStatus) this.setStatus(`Visual style: ${this.getVisualStyleLabel(resolvedStyle)}`);
@@ -2194,6 +2347,7 @@ class ViewerApp {
     this.fireAndForget(this.updateVisibilityCount(), 'Update visibility');
     this.renderModelBrowser();
     this.renderFederatedTree();
+    this.updateViewCubeFromCamera();
     this.setStatus(`${model.visible ? 'Shown' : 'Hidden'}: ${model.fileName}`);
   }
 
@@ -2312,6 +2466,7 @@ class ViewerApp {
     }
 
     if (this.edgesEnabled) this.applyEdges();
+    this.updateViewCubeFromCamera();
     this.fireAndForget(this.fragments.core.update(true), 'Apply transform');
   }
 
@@ -2336,15 +2491,9 @@ class ViewerApp {
     const center = bbox.getCenter(new THREE.Vector3());
     const size = bbox.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
-    void this.world.camera.controls.setLookAt(
-      center.x + maxDim,
-      center.y + maxDim * 0.75,
-      center.z + maxDim,
-      center.x,
-      center.y,
-      center.z,
-      true,
-    );
+    const basis = new THREE.Quaternion();
+    model.object.getWorldQuaternion(basis);
+    this.navigateToDirection(center, maxDim, basis, VIEW_CUBE_HOME_VECTOR);
   }
 
   private async isolateLevelForModel(modelId: string, level: string): Promise<void> {
@@ -2560,9 +2709,6 @@ class ViewerApp {
       ? `Reading IFC file ${batchIndex}/${batchTotal}...`
       : 'Reading IFC file...';
     this.dom.loadingProgress.style.width = '8%';
-    this.dom.modelName.textContent = batchTotal > 1
-      ? `Loading ${batchIndex}/${batchTotal}: ${file.name}`
-      : file.name;
     this.setStatus('Loading model...');
 
     let timeoutHandle: number | undefined;
@@ -3038,13 +3184,33 @@ class ViewerApp {
     const isObjectRegistered = (): boolean => (
       !!modelObject && [...this.federatedModels.values()].some((record) => record.object === modelObject)
     );
-    if (modelId && (this.federatedModels.has(modelId) || this.registeringModelIds.has(modelId))) return;
+    const isFullyRegistered = (): boolean => {
+      if (modelId && this.federatedModels.has(modelId) && !this.registeringModelIds.has(modelId)) return true;
+      if (isObjectRegistered() && (!modelId || !this.registeringModelIds.has(modelId))) return true;
+      return false;
+    };
+    const waitForRegistration = async (timeoutMs = 30000): Promise<void> => {
+      const pollMs = 40;
+      const startedAt = performance.now();
+      while (performance.now() - startedAt < timeoutMs) {
+        if (isFullyRegistered()) return;
+        await new Promise((resolve) => window.setTimeout(resolve, pollMs));
+      }
+      throw new Error(`Model registration timed out: ${modelId || 'unknown model id'}`);
+    };
+
+    if (isFullyRegistered()) return;
+    if (modelId && this.registeringModelIds.has(modelId)) {
+      await waitForRegistration();
+      return;
+    }
     if (isObjectRegistered()) return;
 
     const existingEntry = [...this.fragments.list.entries()].find(([, entry]) => entry === model);
     if (existingEntry) {
       const [entryId, entryModel] = existingEntry;
       await this.onModelAdded(String(entryId), entryModel);
+      await waitForRegistration();
       return;
     }
 
@@ -3053,6 +3219,7 @@ class ViewerApp {
       if (directEntry) {
         const [entryId, entryModel] = directEntry;
         await this.onModelAdded(entryId, entryModel);
+        await waitForRegistration();
         return;
       }
     }
@@ -3067,6 +3234,7 @@ class ViewerApp {
       if (match) {
         const [entryId, entryModel] = match;
         await this.onModelAdded(String(entryId), entryModel);
+        await waitForRegistration();
         return;
       }
 
@@ -3075,14 +3243,20 @@ class ViewerApp {
         if (byId) {
           const [entryId, entryModel] = byId;
           await this.onModelAdded(entryId, entryModel);
+          await waitForRegistration();
           return;
         }
-        if (this.federatedModels.has(modelId)) return;
+        if (this.federatedModels.has(modelId)) {
+          await waitForRegistration();
+          return;
+        }
       }
-      if (isObjectRegistered()) return;
+      if (isObjectRegistered()) {
+        await waitForRegistration();
+        return;
+      }
     }
-
-    throw new Error(`Model registration timed out: ${modelId || 'unknown model id'}`);
+    await waitForRegistration();
   }
 
   private getModelBoundingBox(): THREE.Box3 | null {
@@ -3092,74 +3266,182 @@ class ViewerApp {
     return bbox;
   }
 
+  private getViewCubeAnchorModel(): FederatedModelRecord | null {
+    if (this.activeGizmoModelId) {
+      const activeModel = this.federatedModels.get(this.activeGizmoModelId);
+      if (activeModel?.visible) return activeModel;
+    }
+    for (const model of this.federatedModels.values()) {
+      if (model.visible) return model;
+    }
+    return this.federatedModels.values().next().value ?? null;
+  }
+
+  private getViewCubeBasisQuaternion(target = new THREE.Quaternion()): THREE.Quaternion {
+    const anchorModel = this.getViewCubeAnchorModel();
+    if (!anchorModel) return target.identity();
+    anchorModel.object.getWorldQuaternion(target);
+    return target.normalize();
+  }
+
+  private getViewCubeAxes(basis: THREE.Quaternion): { right: THREE.Vector3; up: THREE.Vector3; front: THREE.Vector3 } {
+    return {
+      right: new THREE.Vector3(1, 0, 0).applyQuaternion(basis).normalize(),
+      up: new THREE.Vector3(0, 1, 0).applyQuaternion(basis).normalize(),
+      front: new THREE.Vector3(0, 0, 1).applyQuaternion(basis).normalize(),
+    };
+  }
+
+  private getViewCubeNavigationDistance(maxDim: number, localDirection: THREE.Vector3): number {
+    const components =
+      Number(Math.abs(localDirection.x) > 0.01)
+      + Number(Math.abs(localDirection.y) > 0.01)
+      + Number(Math.abs(localDirection.z) > 0.01);
+    if (components >= 3) return maxDim * 2.45;
+    if (components === 2) return maxDim * 2.25;
+    return maxDim * 2;
+  }
+
+  private resolveViewCubeCameraUp(
+    localDirection: THREE.Vector3,
+    worldDirection: THREE.Vector3,
+    axes: { right: THREE.Vector3; up: THREE.Vector3; front: THREE.Vector3 },
+  ): THREE.Vector3 {
+    const candidates: THREE.Vector3[] = [];
+    const axialX = Math.abs(localDirection.x) > 0.999 && Math.abs(localDirection.y) < 0.001 && Math.abs(localDirection.z) < 0.001;
+    const axialY = Math.abs(localDirection.y) > 0.999 && Math.abs(localDirection.x) < 0.001 && Math.abs(localDirection.z) < 0.001;
+    const axialZ = Math.abs(localDirection.z) > 0.999 && Math.abs(localDirection.x) < 0.001 && Math.abs(localDirection.y) < 0.001;
+
+    if (axialY) {
+      candidates.push(localDirection.y >= 0 ? axes.front.clone() : axes.front.clone().negate(), axes.right.clone());
+    } else if (axialX) {
+      candidates.push(axes.up.clone(), localDirection.x >= 0 ? axes.front.clone() : axes.front.clone().negate());
+    } else if (axialZ) {
+      candidates.push(axes.up.clone(), localDirection.z >= 0 ? axes.right.clone() : axes.right.clone().negate());
+    } else {
+      candidates.push(axes.up.clone(), axes.front.clone(), axes.right.clone());
+    }
+
+    for (const candidate of candidates) {
+      candidate.addScaledVector(worldDirection, -candidate.dot(worldDirection));
+      if (candidate.lengthSq() > 0.0001) return candidate.normalize();
+    }
+    return new THREE.Vector3(0, 1, 0);
+  }
+
+  private navigateToDirection(
+    center: THREE.Vector3,
+    maxDim: number,
+    basis: THREE.Quaternion,
+    directionTuple: readonly [number, number, number],
+  ): void {
+    if (!this.world?.camera) return;
+    const localDirection = new THREE.Vector3(directionTuple[0], directionTuple[1], directionTuple[2]).normalize();
+    const worldDirection = localDirection.clone().applyQuaternion(basis).normalize();
+    const distance = this.getViewCubeNavigationDistance(maxDim, localDirection);
+    const axes = this.getViewCubeAxes(basis);
+    const up = this.resolveViewCubeCameraUp(localDirection, worldDirection, axes);
+    const eye = center.clone().addScaledVector(worldDirection, distance);
+    this.world.camera.three.up.copy(up);
+    this.world.camera.three.updateMatrixWorld();
+    void this.world.camera.controls.setLookAt(eye.x, eye.y, eye.z, center.x, center.y, center.z, true);
+  }
+
   private fitToModel(): void {
     const bbox = this.getModelBoundingBox();
     if (!bbox || bbox.isEmpty()) return;
     const center = bbox.getCenter(new THREE.Vector3());
     const size = bbox.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
-    void this.world.camera.controls.setLookAt(center.x + maxDim, center.y + maxDim * 0.75, center.z + maxDim, center.x, center.y, center.z, true);
+    this.navigateToDirection(center, maxDim, this.getViewCubeBasisQuaternion(new THREE.Quaternion()), VIEW_CUBE_HOME_VECTOR);
   }
 
   private setFrontView(): void {
-    const bbox = this.getModelBoundingBox();
-    if (!bbox || bbox.isEmpty()) return;
-    const center = bbox.getCenter(new THREE.Vector3());
-    const size = bbox.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    void this.world.camera.controls.setLookAt(center.x, center.y, center.z + maxDim * 2, center.x, center.y, center.z, true);
+    this.navigateToCubeTarget('front');
   }
 
   private setTopView(): void {
-    const bbox = this.getModelBoundingBox();
-    if (!bbox || bbox.isEmpty()) return;
-    const center = bbox.getCenter(new THREE.Vector3());
-    const size = bbox.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    void this.world.camera.controls.setLookAt(center.x, center.y + maxDim * 2, center.z, center.x, center.y, center.z, true);
+    this.navigateToCubeTarget('top');
   }
 
   private setRightView(): void {
-    const bbox = this.getModelBoundingBox();
-    if (!bbox || bbox.isEmpty()) return;
-    const center = bbox.getCenter(new THREE.Vector3());
-    const size = bbox.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    void this.world.camera.controls.setLookAt(center.x + maxDim * 2, center.y, center.z, center.x, center.y, center.z, true);
+    this.navigateToCubeTarget('right');
   }
 
   private setLeftView(): void {
-    const bbox = this.getModelBoundingBox();
-    if (!bbox || bbox.isEmpty()) return;
-    const center = bbox.getCenter(new THREE.Vector3());
-    const size = bbox.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    void this.world.camera.controls.setLookAt(center.x - maxDim * 2, center.y, center.z, center.x, center.y, center.z, true);
+    this.navigateToCubeTarget('left');
   }
 
   private setBackView(): void {
-    const bbox = this.getModelBoundingBox();
-    if (!bbox || bbox.isEmpty()) return;
-    const center = bbox.getCenter(new THREE.Vector3());
-    const size = bbox.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    void this.world.camera.controls.setLookAt(center.x, center.y, center.z - maxDim * 2, center.x, center.y, center.z, true);
+    this.navigateToCubeTarget('back');
   }
 
   private setBottomView(): void {
+    this.navigateToCubeTarget('bottom');
+  }
+
+  private setHomeView(): void {
     const bbox = this.getModelBoundingBox();
     if (!bbox || bbox.isEmpty()) return;
     const center = bbox.getCenter(new THREE.Vector3());
     const size = bbox.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
-    void this.world.camera.controls.setLookAt(center.x, center.y - maxDim * 2, center.z, center.x, center.y, center.z, true);
+    this.navigateToDirection(center, maxDim, this.getViewCubeBasisQuaternion(new THREE.Quaternion()), VIEW_CUBE_HOME_VECTOR);
+  }
+
+  private navigateToCubeTarget(key: CubeTargetKey): void {
+    const target = VIEW_CUBE_TARGETS_BY_KEY.get(key);
+    if (!target) return;
+    const bbox = this.getModelBoundingBox();
+    if (!bbox || bbox.isEmpty()) return;
+    const center = bbox.getCenter(new THREE.Vector3());
+    const size = bbox.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    this.navigateToDirection(center, maxDim, this.getViewCubeBasisQuaternion(new THREE.Quaternion()), target.vector);
+  }
+
+  private updateViewCubeHotspots(activeKey: CubeTargetKey | null): void {
+    const centerX = this.dom.viewCubeHotspots.clientWidth / 2 || 56;
+    const centerY = this.dom.viewCubeHotspots.clientHeight / 2 || 56;
+
+    for (const target of VIEW_CUBE_TARGETS) {
+      const button = this.cubeHotspots.get(target.key);
+      if (!button) continue;
+
+      const [x, y, z] = target.vector;
+      this.cubeProjectedPoint.set(x, y, z).multiplyScalar(VIEW_CUBE_HALF_SIZE).applyQuaternion(this.cubeDisplayQuaternion);
+      const perspectiveScale = VIEW_CUBE_PERSPECTIVE / (VIEW_CUBE_PERSPECTIVE - this.cubeProjectedPoint.z);
+      const screenX = centerX + this.cubeProjectedPoint.x * perspectiveScale;
+      const screenY = centerY - this.cubeProjectedPoint.y * perspectiveScale;
+
+      let visible = false;
+      if (target.kind === 'face') {
+        this.cubeProjectedNormal.set(x, y, z).normalize().applyQuaternion(this.cubeDisplayQuaternion);
+        visible = this.cubeProjectedNormal.z > 0.08;
+      } else if (target.kind === 'edge') {
+        visible = this.cubeProjectedPoint.z > -VIEW_CUBE_HALF_SIZE * 0.18;
+      } else {
+        visible = this.cubeProjectedPoint.z > -VIEW_CUBE_HALF_SIZE * 0.34;
+      }
+
+      const hotspotScale = target.kind === 'face' ? perspectiveScale * 0.92 : target.kind === 'edge' ? perspectiveScale * 0.86 : perspectiveScale * 0.78;
+      button.dataset.visible = visible ? 'true' : 'false';
+      button.style.pointerEvents = visible ? 'auto' : 'none';
+      button.style.left = `${screenX.toFixed(2)}px`;
+      button.style.top = `${screenY.toFixed(2)}px`;
+      button.style.transform = `translate(-50%, -50%) scale(${hotspotScale.toFixed(3)})`;
+      button.style.zIndex = String(Math.round(100 + this.cubeProjectedPoint.z));
+      button.classList.toggle('is-active', visible && activeKey === target.key && target.kind === 'face');
+    }
   }
 
   private updateViewCubeFromCamera(): void {
     if (!this.world?.camera) return;
     const camera = this.world.camera.three;
-    const inverse = camera.quaternion.clone().invert();
-    const euler = new THREE.Euler().setFromQuaternion(inverse, 'XYZ');
+    this.getViewCubeBasisQuaternion(this.cubeBasis);
+    this.cubeBasisInverse.copy(this.cubeBasis).invert();
+    this.cubeDisplayQuaternion.copy(camera.quaternion).invert().multiply(this.cubeBasis);
+    const euler = new THREE.Euler().setFromQuaternion(this.cubeDisplayQuaternion, 'XYZ');
     // CSS 3D: Y-down, Three.js: Y-up → negate X and Y rotations
     const rx = -THREE.MathUtils.radToDeg(euler.x);
     const ry = -THREE.MathUtils.radToDeg(euler.y);
@@ -3168,25 +3450,32 @@ class ViewerApp {
 
     this.world.camera.controls.getTarget(this.cubeTarget);
     this.cubeCamDir.copy(camera.position).sub(this.cubeTarget).normalize();
+    this.cubeLocalDirection.copy(this.cubeCamDir).applyQuaternion(this.cubeBasisInverse).normalize();
 
-    let active: 'top' | 'front' | 'right' | 'left' | 'back' | 'bottom' = 'front';
-    const ax = Math.abs(this.cubeCamDir.x);
-    const ay = Math.abs(this.cubeCamDir.y);
-    const az = Math.abs(this.cubeCamDir.z);
-    if (ay >= ax && ay >= az) {
-      active = this.cubeCamDir.y >= 0 ? 'top' : 'bottom';
-    } else if (ax >= ay && ax >= az) {
-      active = this.cubeCamDir.x >= 0 ? 'right' : 'left';
-    } else {
-      active = this.cubeCamDir.z >= 0 ? 'front' : 'back';
+    let activeKey: CubeTargetKey | null = null;
+    let bestDot = -Infinity;
+    for (const target of VIEW_CUBE_TARGETS) {
+      const [x, y, z] = target.vector;
+      const length = Math.hypot(x, y, z);
+      const dot = (this.cubeLocalDirection.x * x + this.cubeLocalDirection.y * y + this.cubeLocalDirection.z * z) / length;
+      if (dot > bestDot) {
+        bestDot = dot;
+        activeKey = target.key;
+      }
     }
 
-    this.dom.cubeTop.classList.toggle('active', active === 'top');
-    this.dom.cubeFront.classList.toggle('active', active === 'front');
-    this.dom.cubeRight.classList.toggle('active', active === 'right');
-    this.dom.cubeLeft.classList.toggle('active', active === 'left');
-    this.dom.cubeBack.classList.toggle('active', active === 'back');
-    this.dom.cubeBottom.classList.toggle('active', active === 'bottom');
+    const homeLength = Math.hypot(VIEW_CUBE_HOME_VECTOR[0], VIEW_CUBE_HOME_VECTOR[1], VIEW_CUBE_HOME_VECTOR[2]);
+    const homeDot = (
+      this.cubeLocalDirection.x * VIEW_CUBE_HOME_VECTOR[0]
+      + this.cubeLocalDirection.y * VIEW_CUBE_HOME_VECTOR[1]
+      + this.cubeLocalDirection.z * VIEW_CUBE_HOME_VECTOR[2]
+    ) / homeLength;
+
+    for (const faceKey of CUBE_FACE_KEYS) {
+      this.cubeFaceElements[faceKey].classList.toggle('is-active', activeKey === faceKey);
+    }
+    this.dom.cubeHome.classList.toggle('is-active', homeDot > 0.992);
+    this.updateViewCubeHotspots(activeKey);
   }
 
   private applySelectionMode(mode: SelectionMode): void {
@@ -3204,7 +3493,6 @@ class ViewerApp {
     this.dom.btnModeOrbit.classList.toggle('active', mode === 'Orbit');
     this.dom.btnModePlan.classList.toggle('active', mode === 'Plan');
     this.dom.btnModeFirstPerson.classList.toggle('active', mode === 'FirstPerson');
-    this.dom.headerModeLabel.textContent = mode;
     this.persistLocalState();
   }
 
@@ -3611,11 +3899,383 @@ class ViewerApp {
     output.push([prefix, String(normalized)]);
   }
 
+  private prettifyPropertyLabel(label: string): string {
+    const compact = label
+      .replace(/\[\d+\]/g, ' ')
+      .split('.')
+      .filter((part) => part.length > 0)
+      .slice(-2)
+      .join(' ');
+    const spaced = compact
+      .replace(/^_+/, '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!spaced) return label;
+    return spaced.replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+
+  private createPropertySections(): Record<PropertySectionId, PropertySectionData> {
+    const sections = {} as Record<PropertySectionId, PropertySectionData>;
+    for (const definition of PROPERTY_SECTION_DEFINITIONS) {
+      sections[definition.id] = { ...definition, rows: [] };
+    }
+    return sections;
+  }
+
+  private addPropertySectionRow(
+    sections: Record<PropertySectionId, PropertySectionData>,
+    sectionId: PropertySectionId,
+    key: string,
+    value: string,
+    extraSearch = '',
+  ): void {
+    const normalizedKey = this.prettifyPropertyLabel(key);
+    const normalizedValue = value.trim();
+    if (!normalizedKey || !normalizedValue || normalizedValue === '-' || normalizedValue === '{}' || normalizedValue === '[]') return;
+
+    const section = sections[sectionId];
+    const duplicate = section.rows.some((row) => (
+      row.key.toLowerCase() === normalizedKey.toLowerCase()
+      && row.value.toLowerCase() === normalizedValue.toLowerCase()
+    ));
+    if (duplicate) return;
+
+    section.rows.push({
+      key: normalizedKey,
+      value: normalizedValue,
+      searchText: `${section.title} ${normalizedKey} ${normalizedValue} ${extraSearch}`.toLowerCase(),
+    });
+  }
+
+  private collectRawPropertyEntries(data: Record<string, unknown>): { rows: Array<[string, string]>; truncated: boolean } {
+    const rows: Array<[string, string]> = [];
+    const visited = new WeakSet<object>();
+    const flattenState = { truncated: false };
+
+    for (const [key, value] of Object.entries(data)) {
+      this.flattenPropertyEntries(value, key, rows, visited, flattenState, 0);
+      if (flattenState.truncated) break;
+    }
+
+    return { rows, truncated: flattenState.truncated };
+  }
+
+  private collectPropertyFacts(
+    value: unknown,
+    output: ExtractedPropertyFact[],
+    visited: WeakSet<object>,
+    path = '',
+    setName = '',
+    depth = 0,
+  ): void {
+    if (depth > MAX_PROPERTY_DEPTH + 6) return;
+
+    const normalized = this.unwrapIfcValue(value);
+    if (normalized === null || normalized === undefined) return;
+
+    if (Array.isArray(normalized)) {
+      normalized.forEach((entry, index) => {
+        this.collectPropertyFacts(entry, output, visited, `${path}[${index}]`, setName, depth + 1);
+      });
+      return;
+    }
+
+    if (typeof normalized !== 'object') return;
+    const record = normalized as Record<string, unknown>;
+    if (visited.has(record)) return;
+    visited.add(record);
+
+    const category = this.toPropertyString(record._category, '');
+    const categoryUpper = category.toUpperCase();
+    let nextSetName = setName;
+    if (
+      categoryUpper.includes('IFCPROPERTYSET')
+      || categoryUpper.includes('IFCELEMENTQUANTITY')
+      || categoryUpper.includes('IFCMATERIALPROPERTIES')
+      || categoryUpper.includes('IFCPROFILEPROPERTIES')
+      || categoryUpper.includes('IFCMATERIALPROFILESET')
+      || categoryUpper.includes('IFCMATERIALLAYERSET')
+    ) {
+      nextSetName = this.readPrimitiveValue(this.getRecordValueCaseInsensitive(record, 'Name')) || setName;
+    }
+
+    output.push(...this.extractFactsFromRecord(record, category, nextSetName, path));
+
+    for (const [key, entry] of Object.entries(record)) {
+      const nextPath = path ? `${path}.${key}` : key;
+      this.collectPropertyFacts(entry, output, visited, nextPath, nextSetName, depth + 1);
+    }
+  }
+
+  private extractFactsFromRecord(
+    record: Record<string, unknown>,
+    category: string,
+    setName: string,
+    path: string,
+  ): ExtractedPropertyFact[] {
+    const facts: ExtractedPropertyFact[] = [];
+    const categoryUpper = category.toUpperCase();
+    const name = this.readPrimitiveValue(this.getRecordValueCaseInsensitive(record, 'Name'))
+      || this.readPrimitiveValue(this.getRecordValueCaseInsensitive(record, 'LongName'));
+
+    const pushFact = (label: string, value: string): void => {
+      const trimmedLabel = label.trim();
+      const trimmedValue = value.trim();
+      if (!trimmedLabel || !trimmedValue || trimmedValue === '-' || trimmedValue === '{}' || trimmedValue === '[]') return;
+      facts.push({ label: trimmedLabel, value: trimmedValue, category, setName, path });
+    };
+
+    if (categoryUpper.includes('IFCPROPERTYSINGLEVALUE')) {
+      pushFact(name, this.toPropertyString(this.getRecordValueCaseInsensitive(record, 'NominalValue'), ''));
+      return facts;
+    }
+
+    if (categoryUpper.includes('IFCPROPERTYLISTVALUE')) {
+      pushFact(name, this.toPropertyString(this.getRecordValueCaseInsensitive(record, 'ListValues'), ''));
+      return facts;
+    }
+
+    if (categoryUpper.includes('IFCPROPERTYENUMERATEDVALUE')) {
+      pushFact(name, this.toPropertyString(this.getRecordValueCaseInsensitive(record, 'EnumerationValues'), ''));
+      return facts;
+    }
+
+    if (categoryUpper.includes('IFCPROPERTYBOUNDEDVALUE')) {
+      const lower = this.toPropertyString(this.getRecordValueCaseInsensitive(record, 'LowerBoundValue'), '');
+      const upper = this.toPropertyString(this.getRecordValueCaseInsensitive(record, 'UpperBoundValue'), '');
+      const boundedValue = [lower && `Lower: ${lower}`, upper && `Upper: ${upper}`].filter(Boolean).join(' | ');
+      pushFact(name, boundedValue);
+      return facts;
+    }
+
+    if (categoryUpper.includes('IFCQUANTITY')) {
+      const valueKey = IFC_FACT_VALUE_KEYS.find((key) => this.toPropertyString(this.getRecordValueCaseInsensitive(record, key), '').length > 0);
+      if (valueKey) pushFact(name || this.prettifyPropertyLabel(valueKey), this.toPropertyString(this.getRecordValueCaseInsensitive(record, valueKey), ''));
+      return facts;
+    }
+
+    if (categoryUpper.includes('IFCMATERIALLAYER')) {
+      const materialName = this.findNameLikeValue(this.getRecordValueCaseInsensitive(record, 'Material'), new WeakSet<object>(), 0)
+        || name;
+      if (materialName) pushFact('Material', materialName);
+      pushFact('Layer Thickness', this.toPropertyString(this.getRecordValueCaseInsensitive(record, 'LayerThickness'), ''));
+      return facts;
+    }
+
+    if (categoryUpper === 'IFCMATERIAL') {
+      if (name) pushFact('Material', name);
+      return facts;
+    }
+
+    if (categoryUpper.includes('IFCMATERIALPROFILE')) {
+      if (name) pushFact('Material Profile', name);
+      const materialName = this.findNameLikeValue(this.getRecordValueCaseInsensitive(record, 'Material'), new WeakSet<object>(), 0);
+      if (materialName) pushFact('Material', materialName);
+      return facts;
+    }
+
+    if (categoryUpper.includes('IFCMATERIALCONSTITUENT')) {
+      if (name) pushFact('Material Constituent', name);
+      const materialName = this.findNameLikeValue(this.getRecordValueCaseInsensitive(record, 'Material'), new WeakSet<object>(), 0);
+      if (materialName) pushFact('Material', materialName);
+      return facts;
+    }
+
+    return facts;
+  }
+
+  private classifyPropertyFact(fact: ExtractedPropertyFact): PropertySectionId {
+    const haystack = `${fact.setName} ${fact.label} ${fact.category} ${fact.path}`.toLowerCase();
+    if (MATERIAL_KEYWORDS.some((keyword) => haystack.includes(keyword)) || fact.category.toUpperCase().includes('IFCMATERIAL')) {
+      return 'materials';
+    }
+    if (DIMENSION_KEYWORDS.some((keyword) => haystack.includes(keyword))) return 'dimensions';
+    if (QUANTITY_KEYWORDS.some((keyword) => haystack.includes(keyword)) || fact.category.toUpperCase().includes('QUANTITY')) {
+      return 'quantities';
+    }
+    if (LEVEL_KEYWORDS.some((keyword) => haystack.includes(keyword))) return 'levels';
+    if (LOCATION_KEYWORDS.some((keyword) => haystack.includes(keyword))) return 'location';
+    if (TYPE_KEYWORDS.some((keyword) => haystack.includes(keyword))) return 'type';
+    if (RELATION_KEYWORDS.some((keyword) => haystack.includes(keyword))) return 'relations';
+    return 'identity';
+  }
+
+  private summarizeRelationValue(value: unknown): string {
+    const normalized = this.unwrapIfcValue(value);
+    if (normalized === null || normalized === undefined) return '';
+
+    const summarizeOne = (entry: unknown): string => {
+      const objectValue = this.unwrapIfcValue(entry);
+      if (objectValue && typeof objectValue === 'object' && !Array.isArray(objectValue)) {
+        const record = objectValue as Record<string, unknown>;
+        const category = this.toPropertyString(record._category, '');
+        const name = this.findNameLikeValue(record, new WeakSet<object>(), 0);
+        return [name, category].filter(Boolean).join(' • ');
+      }
+      return this.toPropertyString(objectValue, '');
+    };
+
+    if (Array.isArray(normalized)) {
+      const entries = normalized.map((entry) => summarizeOne(entry)).filter((entry) => entry.length > 0);
+      if (entries.length === 0) return `${normalized.length} relation${normalized.length === 1 ? '' : 's'}`;
+      const preview = entries.slice(0, 3).join(' | ');
+      const suffix = entries.length > 3 ? ` (+${entries.length - 3} more)` : '';
+      return this.truncatePropertyValue(`${entries.length} entries: ${preview}${suffix}`);
+    }
+
+    return summarizeOne(normalized);
+  }
+
+  private addKeywordMatchedRows(
+    sections: Record<PropertySectionId, PropertySectionData>,
+    sectionId: PropertySectionId,
+    rows: Array<[string, string]>,
+    keywords: string[],
+    pathPrefix = '',
+  ): void {
+    for (const [path, value] of rows) {
+      const haystack = `${pathPrefix} ${path}`.toLowerCase();
+      if (!keywords.some((keyword) => haystack.includes(keyword))) continue;
+      this.addPropertySectionRow(sections, sectionId, path, value, path);
+    }
+  }
+
+  private buildPropertySections(
+    data: Record<string, unknown>,
+    firstSelection: { modelId: string; localId: number },
+    modelVolume: string,
+    geometryProbe: GeometryProbe | null,
+  ): PropertySectionData[] {
+    const sections = this.createPropertySections();
+    const itemName = this.toPropertyString(data.Name, '') || `Element ${firstSelection.localId}`;
+    const typeValue = [
+      this.toPropertyString(data.ObjectType, ''),
+      this.toPropertyString(data.PredefinedType, ''),
+      this.toPropertyString(data.type, ''),
+      this.toPropertyString(data._category, ''),
+    ].find((entry) => entry.length > 0) || '-';
+
+    this.addPropertySectionRow(sections, 'identity', 'Name', itemName);
+    this.addPropertySectionRow(sections, 'identity', 'Global Id', this.toPropertyString(data.GlobalId, '-'));
+    this.addPropertySectionRow(sections, 'identity', 'Description', this.toPropertyString(data.Description, '-'));
+    this.addPropertySectionRow(sections, 'identity', 'Tag', this.toPropertyString(data.Tag, ''));
+    this.addPropertySectionRow(sections, 'identity', 'Category', this.toPropertyString(data._category, ''));
+
+    this.addPropertySectionRow(sections, 'type', 'Type', typeValue);
+    this.addPropertySectionRow(sections, 'type', 'Object Type', this.toPropertyString(data.ObjectType, ''));
+    this.addPropertySectionRow(sections, 'type', 'Predefined Type', this.toPropertyString(data.PredefinedType, ''));
+    this.addPropertySectionRow(sections, 'type', 'Type Relation', this.summarizeRelationValue(data.IsTypedBy));
+
+    const storey = this.modelIndices.get(firstSelection.modelId)?.itemToLevel.get(firstSelection.localId) || this.extractStoreyNameFromItemData(data) || '-';
+    this.addPropertySectionRow(sections, 'levels', 'Storey', storey);
+    this.addPropertySectionRow(sections, 'levels', 'Contained In Structure', this.summarizeRelationValue(data.ContainedInStructure));
+    this.addPropertySectionRow(sections, 'levels', 'Decomposes', this.summarizeRelationValue(data.Decomposes));
+
+    this.addPropertySectionRow(sections, 'location', 'Object Placement', this.summarizeRelationValue(data.ObjectPlacement));
+    if (geometryProbe) {
+      this.addPropertySectionRow(sections, 'location', 'Center X', geometryProbe.center.x.toFixed(3));
+      this.addPropertySectionRow(sections, 'location', 'Center Y', geometryProbe.center.y.toFixed(3));
+      this.addPropertySectionRow(sections, 'location', 'Center Z', geometryProbe.center.z.toFixed(3));
+      this.addPropertySectionRow(sections, 'dimensions', 'Extent X', geometryProbe.size.x.toFixed(3));
+      this.addPropertySectionRow(sections, 'dimensions', 'Extent Y', geometryProbe.size.y.toFixed(3));
+      this.addPropertySectionRow(sections, 'dimensions', 'Extent Z', geometryProbe.size.z.toFixed(3));
+
+      const slabLikeText = `${itemName} ${typeValue} ${this.toPropertyString(data._category, '')}`.toLowerCase();
+      if (/(slab|floor|deck|roof|ceiling|covering)/.test(slabLikeText)) {
+        const inferredThickness = Math.min(geometryProbe.size.x, geometryProbe.size.y, geometryProbe.size.z);
+        this.addPropertySectionRow(sections, 'dimensions', 'Thickness (Approx)', inferredThickness.toFixed(3), 'geometry thickness');
+      }
+    }
+
+    this.addPropertySectionRow(sections, 'relations', 'Property Definitions', this.summarizeRelationValue(data.IsDefinedBy));
+    this.addPropertySectionRow(sections, 'relations', 'Associations', this.summarizeRelationValue(data.HasAssociations));
+    this.addPropertySectionRow(sections, 'relations', 'Openings', this.summarizeRelationValue(data.HasOpenings));
+    this.addPropertySectionRow(sections, 'relations', 'Voids Elements', this.summarizeRelationValue(data.VoidsElements));
+    this.addPropertySectionRow(sections, 'relations', 'Fills Voids', this.summarizeRelationValue(data.FillsVoids));
+
+    if (modelVolume) this.addPropertySectionRow(sections, 'quantities', 'Volume', modelVolume);
+
+    const factRows: ExtractedPropertyFact[] = [];
+    this.collectPropertyFacts(data, factRows, new WeakSet<object>());
+    for (const fact of factRows) {
+      const sectionId = this.classifyPropertyFact(fact);
+      const key = fact.setName ? `${fact.setName} / ${fact.label}` : fact.label;
+      this.addPropertySectionRow(sections, sectionId, key, fact.value, `${fact.setName} ${fact.category} ${fact.path}`);
+    }
+
+    const { rows: rawRows, truncated } = this.collectRawPropertyEntries(data);
+    this.addKeywordMatchedRows(sections, 'dimensions', rawRows, DIMENSION_KEYWORDS);
+    this.addKeywordMatchedRows(sections, 'location', rawRows, LOCATION_KEYWORDS);
+    this.addKeywordMatchedRows(sections, 'levels', rawRows, LEVEL_KEYWORDS);
+    this.addKeywordMatchedRows(sections, 'materials', rawRows, MATERIAL_KEYWORDS);
+    this.addKeywordMatchedRows(sections, 'relations', rawRows, RELATION_KEYWORDS);
+
+    for (const [key, value] of rawRows) {
+      this.addPropertySectionRow(sections, 'raw', key, value, key);
+    }
+    if (truncated) this.addPropertySectionRow(sections, 'raw', 'Info', `Properties truncated to ${MAX_PROPERTY_ROWS} rows for readability`);
+
+    for (const section of Object.values(sections)) {
+      section.rows.sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
+    }
+
+    return PROPERTY_SECTION_DEFINITIONS
+      .map((definition) => sections[definition.id])
+      .filter((section) => section.rows.length > 0);
+  }
+
+  private renderPropertySections(sections: PropertySectionData[]): void {
+    this.dom.propSections.innerHTML = sections.map((section) => `
+      <details class="prop-section" data-prop-section data-search="${escapeHtml(section.title.toLowerCase())}" ${section.defaultOpen ? 'open' : ''}>
+        <summary class="prop-section-summary">
+          <span class="material-icons-round">chevron_right</span>
+          <span>${escapeHtml(section.title)}</span>
+          <span class="prop-section-count" data-prop-count>${section.rows.length}</span>
+        </summary>
+        <div class="prop-section-body">
+          <div class="property-grid">
+            ${section.rows.map((row) => `
+              <div class="prop-row" data-prop-row data-search="${escapeHtml(row.searchText)}">
+                <span class="prop-key">${escapeHtml(row.key)}</span>
+                <span class="prop-val">${escapeHtml(row.value)}</span>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </details>
+    `).join('');
+  }
+
+  private applyPropertiesFilter(): void {
+    const filter = this.propertyFilterText;
+    const sections = Array.from(this.dom.propSections.querySelectorAll<HTMLElement>('[data-prop-section]'));
+
+    for (const section of sections) {
+      const sectionSearch = section.dataset.search || '';
+      const sectionMatches = !filter || sectionSearch.includes(filter);
+      const rows = Array.from(section.querySelectorAll<HTMLElement>('[data-prop-row]'));
+      let visibleCount = 0;
+
+      for (const row of rows) {
+        const rowSearch = row.dataset.search || '';
+        const visible = sectionMatches || !filter || rowSearch.includes(filter);
+        row.hidden = !visible;
+        if (visible) visibleCount += 1;
+      }
+
+      section.hidden = visibleCount === 0;
+      const count = section.querySelector<HTMLElement>('[data-prop-count]');
+      if (count) count.textContent = String(visibleCount);
+    }
+  }
+
   private async updatePropertiesPanel(): Promise<void> {
     if (isMapEmpty(this.selectedItems)) {
       this.dom.propsEmpty.hidden = false;
       this.dom.propsContent.hidden = true;
-      this.dom.propAttributes.innerHTML = '';
+      this.dom.propSections.innerHTML = '';
       return;
     }
 
@@ -3644,42 +4304,34 @@ class ViewerApp {
     this.dom.propDescription.textContent = this.toPropertyString(data.Description, '-');
     this.dom.propStory.textContent = this.modelIndices.get(firstSelection.modelId)?.itemToLevel.get(firstSelection.localId) || '-';
 
-    const attributes: Array<[string, string]> = [];
-    const skipKeys = new Set(['Name', 'GlobalId', 'Description', 'ObjectType', 'PredefinedType']);
-    const visited = new WeakSet<object>();
-    const flattenState = { truncated: false };
-    for (const [key, value] of Object.entries(data)) {
-      if (skipKeys.has(key)) continue;
-      this.flattenPropertyEntries(value, key, attributes, visited, flattenState, 0);
-      if (flattenState.truncated) break;
-    }
-
+    let volumeText = '';
+    let geometryProbe: GeometryProbe | null = null;
     try {
       const volume = await model.getItemsVolume([firstSelection.localId]);
-      attributes.unshift(['Volume', `${volume.toFixed(3)} m3`]);
+      volumeText = `${volume.toFixed(3)} m3`;
     } catch {
       // optional
     }
 
-    const deduped = new Map<string, string>();
-    for (const [key, value] of attributes) {
-      if (!key) continue;
-      if (!deduped.has(key)) deduped.set(key, value);
+    try {
+      const boxes = await this.fragments.getBBoxes({ [firstSelection.modelId]: new Set([firstSelection.localId]) });
+      if (boxes.length > 0) {
+        const bbox = new THREE.Box3();
+        for (const box of boxes) bbox.union(box);
+        const center = bbox.getCenter(new THREE.Vector3());
+        const size = bbox.getSize(new THREE.Vector3());
+        geometryProbe = {
+          center: { x: center.x, y: center.y, z: center.z },
+          size: { x: size.x, y: size.y, z: size.z },
+        };
+      }
+    } catch {
+      // optional
     }
-    if (flattenState.truncated && !deduped.has('Info')) {
-      deduped.set('Info', `Properties truncated to ${MAX_PROPERTY_ROWS} rows for readability`);
-    }
-    const sortedAttributes = [...deduped.entries()].sort(([a], [b]) => a.localeCompare(b));
-    if (sortedAttributes.length === 0) sortedAttributes.push(['Info', 'No additional attributes']);
 
-    this.dom.propAttributes.innerHTML = sortedAttributes
-      .map(([key, value]) => `
-        <div class="prop-row">
-          <span class="prop-key">${escapeHtml(key)}</span>
-          <span class="prop-val">${escapeHtml(value)}</span>
-        </div>
-      `)
-      .join('');
+    const sections = this.buildPropertySections(data, firstSelection, volumeText, geometryProbe);
+    this.renderPropertySections(sections);
+    this.applyPropertiesFilter();
 
     this.dom.propsEmpty.hidden = true;
     this.dom.propsContent.hidden = false;

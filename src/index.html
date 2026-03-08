@@ -23,11 +23,6 @@
         </div>
       </div>
 
-      <div class="header-center" hidden>
-        <div id="modelName" class="model-name">No model loaded</div>
-        <div id="headerModeLabel" class="header-pill">Orbit</div>
-      </div>
-
       <div class="header-right">
         <button id="btnExportScreenshot" class="btn btn-secondary" title="Export PNG screenshot">
           <span class="material-icons-round">photo_camera</span>
@@ -89,15 +84,20 @@
         </div>
 
         <div class="view-cube" id="viewCube" aria-label="View cube">
+          <button id="cubeHome" class="view-cube-home" type="button" title="Home view" aria-label="Home view">
+            <span class="material-icons-round">home</span>
+            <span>Home</span>
+          </button>
           <div class="view-cube-stage">
             <div class="view-cube-body" id="viewCubeBody">
-              <button id="cubeFront" class="view-cube-face face-front" title="Front view">FRONT</button>
-              <button id="cubeBack" class="view-cube-face face-back" title="Back view">BACK</button>
-              <button id="cubeRight" class="view-cube-face face-right" title="Right view">RIGHT</button>
-              <button id="cubeLeft" class="view-cube-face face-left" title="Left view">LEFT</button>
-              <button id="cubeTop" class="view-cube-face face-top" title="Top view">TOP</button>
-              <button id="cubeBottom" class="view-cube-face face-bottom" title="Bottom view">BOTTOM</button>
+              <div id="cubeFaceFront" class="view-cube-face face-front" data-cube-face="front">FRONT</div>
+              <div id="cubeFaceBack" class="view-cube-face face-back" data-cube-face="back">BACK</div>
+              <div id="cubeFaceRight" class="view-cube-face face-right" data-cube-face="right">RIGHT</div>
+              <div id="cubeFaceLeft" class="view-cube-face face-left" data-cube-face="left">LEFT</div>
+              <div id="cubeFaceTop" class="view-cube-face face-top" data-cube-face="top">TOP</div>
+              <div id="cubeFaceBottom" class="view-cube-face face-bottom" data-cube-face="bottom">BOTTOM</div>
             </div>
+            <div id="viewCubeHotspots" class="view-cube-hotspots" aria-label="View cube navigation targets"></div>
           </div>
         </div>
 
@@ -358,8 +358,14 @@
               </div>
             </div>
 
-            <div class="section-title">Attributes</div>
-            <div id="propAttributes" class="property-grid"></div>
+            <div class="properties-toolbar">
+              <label class="properties-filter" for="propFilterInput">
+                <span class="material-icons-round">filter_list</span>
+                <input id="propFilterInput" class="text-input" placeholder="Filter properties" />
+              </label>
+            </div>
+
+            <div id="propSections" class="props-sections"></div>
           </div>
         </div>
 
