@@ -70,7 +70,7 @@
   --bg-2: #D8DCE8;
   --bg-3: #CDD2E0;
   --surface: rgba(228, 231, 240, 0.96);
-  --surface-soft: rgba(216, 220, 232, 0.5);
+  --surface-soft: rgba(35, 63, 132, 0.04);
 
   --accent: #B00D45;
   --accent-2: #8E0A37;
@@ -140,6 +140,7 @@ button, input, textarea, select {
   width: 20px;
   height: 20px;
   object-fit: contain;
+  color: var(--text-0);
 }
 
 .titlebar-appname {
@@ -566,7 +567,7 @@ button, input, textarea, select {
 }
 
 .browser-node:not(.is-model) > .browser-summary:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-soft);
 }
 
 .browser-twist {
@@ -632,7 +633,7 @@ button, input, textarea, select {
 .browser-node.is-model {
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-soft);
 }
 
 .browser-node.is-model > .browser-summary {
@@ -652,7 +653,7 @@ button, input, textarea, select {
 .visual-settings {
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-soft);
   padding: 10px;
   display: grid;
   gap: 10px;
@@ -710,20 +711,21 @@ button, input, textarea, select {
 }
 
 .visual-preset-btn {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.35);
+  border: 2px solid var(--border-strong);
   background: var(--preset, #0D0E14);
   cursor: pointer;
 }
 
 .visual-preset-btn:hover {
   transform: scale(1.08);
+  border-color: var(--text-2);
 }
 
 .visual-preset-btn.active {
-  border-color: #fff;
+  border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-hover);
 }
 
@@ -731,7 +733,7 @@ button, input, textarea, select {
 .federated-model {
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-soft);
   padding: 9px;
   display: grid;
   gap: 8px;
@@ -827,7 +829,7 @@ button, input, textarea, select {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: rgba(20, 23, 38, 0.55);
+  background: var(--bg-0);
   color: var(--text-0);
   padding: 6px 8px;
   font-size: 12px;
@@ -835,14 +837,14 @@ button, input, textarea, select {
 
 .federated-transform-grid input:focus {
   outline: none;
-  border-color: rgba(213, 14, 82, 0.5);
+  border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-muted);
 }
 
 .federated-levels details {
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-soft);
 }
 
 .federated-levels summary {
@@ -864,7 +866,7 @@ button, input, textarea, select {
 .federated-level-btn {
   border: 1px solid transparent;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-soft);
   color: var(--text-1);
   font-size: 11px;
   text-align: left;
@@ -874,7 +876,7 @@ button, input, textarea, select {
 
 .federated-level-btn:hover {
   background: var(--accent-muted);
-  border-color: rgba(213, 14, 82, 0.3);
+  border-color: var(--accent-hover);
 }
 
 .federated-level-empty {
@@ -890,7 +892,7 @@ button, input, textarea, select {
 }
 
 .federated-model-btn {
-  border: 1px solid rgba(213, 14, 82, 0.3);
+  border: 1px solid var(--accent-hover);
   border-radius: 4px;
   background: var(--accent-muted);
   color: var(--text-0);
@@ -905,8 +907,8 @@ button, input, textarea, select {
 }
 
 .federated-model-btn.is-active {
-  border-color: rgba(213, 14, 82, 0.6);
-  background: rgba(213, 14, 82, 0.28);
+  border-color: var(--accent);
+  background: var(--accent-hover);
 }
 
 /* ═══ Viewport Section ═══ */
@@ -1055,7 +1057,7 @@ button, input, textarea, select {
 select.text-input {
   width: 100%;
   border: 1px solid var(--border);
-  background: rgba(20, 23, 38, 0.5);
+  background: var(--bg-0);
   color: var(--text-0);
   border-radius: var(--r-sm);
   padding: 7px 10px;
@@ -1067,7 +1069,7 @@ select.text-input {
 .text-area:focus,
 select.text-input:focus {
   outline: none;
-  border-color: rgba(213, 14, 82, 0.5);
+  border-color: var(--accent);
   box-shadow: 0 0 0 2px var(--accent-muted);
 }
 
@@ -1109,7 +1111,7 @@ select.text-input:focus {
 
 .btn-secondary {
   background: var(--accent-muted);
-  border-color: rgba(213, 14, 82, 0.3);
+  border-color: var(--accent-hover);
   color: var(--text-0);
 }
 
@@ -1133,7 +1135,7 @@ select.text-input:focus {
 .tree-box {
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: rgba(20, 23, 38, 0.4);
+  background: var(--bg-0);
   min-height: 50px;
   max-height: 180px;
   overflow: auto;
@@ -1153,7 +1155,7 @@ select.text-input:focus {
   border-radius: 4px;
   padding: 6px;
   margin-bottom: 4px;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-soft);
   font-size: 12px;
   color: var(--text-1);
 }
@@ -1181,7 +1183,7 @@ select.text-input:focus {
 .result-item.active,
 .issue-item.active,
 .viewpoint-item.active {
-  border-color: rgba(213, 14, 82, 0.45);
+  border-color: var(--accent);
   background: var(--accent-hover);
   color: var(--text-0);
 }
@@ -1225,7 +1227,7 @@ select.text-input:focus {
   gap: 8px;
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: rgba(20, 23, 38, 0.4);
+  background: var(--bg-0);
   padding: 0 10px;
 }
 
@@ -1260,7 +1262,7 @@ select.text-input:focus {
 .prop-section {
   border: 1px solid var(--border);
   border-radius: var(--r-sm);
-  background: rgba(20, 23, 38, 0.25);
+  background: var(--bg-0);
   overflow: hidden;
 }
 
@@ -1467,7 +1469,7 @@ kbd {
   padding: 10px 8px 8px;
   border-radius: 4px;
   border: 1px solid var(--border);
-  background: rgba(20, 23, 38, 0.7);
+  background: var(--surface);
   backdrop-filter: blur(6px);
   box-shadow: var(--shadow-1);
   pointer-events: none;
@@ -1484,7 +1486,7 @@ kbd {
   padding: 2px 7px;
   border: 1px solid var(--border-strong);
   border-radius: 3px;
-  background: rgba(20, 23, 38, 0.96);
+  background: var(--surface);
   color: var(--text-0);
   font-size: 9px;
   font-weight: 700;
@@ -1619,7 +1621,7 @@ kbd {
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background: rgba(26, 29, 46, 0.9);
+  background: var(--surface);
   box-shadow: var(--shadow-2);
   backdrop-filter: blur(9px);
 }
@@ -1647,7 +1649,7 @@ kbd {
 
 .dock-group.open .dock-toggle,
 .dock-toggle:hover {
-  border-color: rgba(213, 14, 82, 0.45);
+  border-color: var(--accent);
   background: var(--accent-hover);
   color: var(--lt-blue);
 }
@@ -1686,7 +1688,7 @@ kbd {
 
 .dock-tool-btn {
   border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--surface-soft);
   color: var(--text-1);
   border-radius: 4px;
   width: 46px;
@@ -1701,13 +1703,13 @@ kbd {
 }
 
 .dock-tool-btn:hover {
-  border-color: rgba(213, 14, 82, 0.35);
+  border-color: var(--accent-hover);
   background: var(--accent-hover);
 }
 
 .dock-tool-btn.active {
   background: var(--accent-hover);
-  border-color: rgba(213, 14, 82, 0.4);
+  border-color: var(--accent);
   color: var(--lt-blue);
 }
 
@@ -1740,7 +1742,7 @@ kbd {
   padding: 2px 8px;
   font-size: 10px;
   color: var(--text-1);
-  background: rgba(213, 14, 82, 0.1);
+  background: var(--accent-muted);
   font-family: 'Cascadia Code', 'SF Mono', 'Fira Code', 'Consolas', monospace;
 }
 
@@ -1998,7 +2000,7 @@ kbd {
     padding: 6px;
     border: 1px solid var(--border);
     border-radius: 4px;
-    background: rgba(26, 29, 46, 0.92);
+    background: var(--surface);
     box-shadow: var(--shadow-2);
     backdrop-filter: blur(9px);
     z-index: 16;
@@ -2040,7 +2042,7 @@ kbd {
     height: 42px;
     border-radius: 4px;
     border: 1px solid transparent;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--surface-soft);
   }
 
   .app-toolbar .dock-tool-btn .material-icons-round {
