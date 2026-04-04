@@ -846,6 +846,8 @@ class ViewerApp {
     this.dom.toggleTheme.addEventListener('change', () => {
       this.themeMode = this.dom.toggleTheme.checked ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', this.themeMode);
+      const themeBg = this.themeMode === 'light' ? '#c6d5e8' : DEFAULT_BACKGROUND_COLOR;
+      this.setBackgroundColor(themeBg, false);
       this.persistLocalState();
     });
 
