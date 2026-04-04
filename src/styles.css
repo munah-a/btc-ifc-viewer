@@ -254,8 +254,8 @@ button, input, textarea, select {
   flex: 1;
   min-width: 0;
   max-width: 150px;
-  height: 28px;
-  padding: 4px 8px;
+  height: auto;
+  padding: 5px 8px;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);
   background: var(--bg-0);
