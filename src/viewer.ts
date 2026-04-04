@@ -123,6 +123,7 @@ interface PersistedViewerState {
   edges: boolean;
   gridVisible?: boolean;
   backgroundColor?: string;
+  theme?: 'dark' | 'light';
   viewpoints: SavedViewpoint[];
   issues: Omit<IssueRecord, 'markerId'>[];
 }
@@ -331,6 +332,14 @@ const downloadBlob = (name: string, blob: Blob): void => {
   URL.revokeObjectURL(url);
 };
 
+const debounce = <T extends (...args: any[]) => void>(fn: T, ms: number): T => {
+  let timer: ReturnType<typeof setTimeout>;
+  return ((...args: any[]) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  }) as unknown as T;
+};
+
 const required = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
   if (!element) throw new Error(`Missing required DOM element #${id}`);
@@ -338,6 +347,21 @@ const required = <T extends HTMLElement>(id: string): T => {
 };
 
 class ViewerApp {
+  private readonly abortController = new AbortController();
+  private fpsAnimationFrameId: number | null = null;
+
+  private get signal(): AbortSignal {
+    return this.abortController.signal;
+  }
+
+  private listen<K extends keyof HTMLElementEventMap>(
+    target: EventTarget,
+    type: K | string,
+    listener: EventListenerOrEventListenerObject,
+  ): void {
+    target.addEventListener(type as string, listener, { signal: this.signal });
+  }
+
   private readonly dom = {
     viewerContainer: required<HTMLDivElement>('viewer-container'),
     btnUpload: required<HTMLButtonElement>('btnUpload'),
@@ -393,6 +417,7 @@ class ViewerApp {
     modelBrowserTree: required<HTMLDivElement>('modelBrowserTree'),
     federationTree: required<HTMLDivElement>('federationTree'),
     toggleGrid: required<HTMLInputElement>('toggleGrid'),
+    toggleTheme: required<HTMLInputElement>('toggleTheme'),
     visualStyleSelect: required<HTMLSelectElement>('visualStyleSelect'),
     backgroundColorInput: required<HTMLInputElement>('backgroundColorInput'),
     backgroundPresetButtons: Array.from(document.querySelectorAll<HTMLButtonElement>('[data-bg-preset]')),
@@ -439,7 +464,7 @@ class ViewerApp {
   private fragments!: OBC.FragmentsManager;
   private clipper!: OBC.Clipper;
   private hider!: OBC.Hider;
-  private raycaster!: any;
+  private raycaster!: ReturnType<OBC.Raycasters['get']>;
   private lengthMeasurement!: OBCF.LengthMeasurement;
   private areaMeasurement!: OBCF.AreaMeasurement;
   private markerManager!: OBCF.Marker;
@@ -455,6 +480,7 @@ class ViewerApp {
   private visualStyle: VisualStyle = 'color-pen-shadows';
   private issuePinMode = false;
   private gridVisible = true;
+  private themeMode: 'dark' | 'light' = 'dark';
   private backgroundColor = DEFAULT_BACKGROUND_COLOR;
   private gridHelper: THREE.Object3D | null = null;
   private readonly appliedModelOpacity = new Map<string, number>();
@@ -506,8 +532,87 @@ class ViewerApp {
   private shaderWarningFilterInstalled = false;
 
   constructor() {
+    this.patchEventListenersWithAbort();
     this.setupViewCube();
     this.bindUiEvents();
+  }
+
+  /**
+   * Patches addEventListener on all cached DOM elements so that every listener
+   * is automatically tied to this.abortController.signal.
+   * Calling destroy() aborts the controller and removes all listeners at once.
+   */
+  private patchEventListenersWithAbort(): void {
+    const signal = this.signal;
+    const patchTarget = (el: EventTarget): void => {
+      const original = el.addEventListener.bind(el);
+      (el as any).addEventListener = (
+        type: string,
+        listener: EventListenerOrEventListenerObject | null,
+        options?: boolean | AddEventListenerOptions,
+      ) => {
+        if (typeof options === 'boolean') {
+          original(type, listener, { capture: options, signal });
+        } else {
+          original(type, listener, { ...options, signal });
+        }
+      };
+    };
+
+    for (const value of Object.values(this.dom)) {
+      if (value instanceof EventTarget) {
+        patchTarget(value);
+      } else if (Array.isArray(value)) {
+        value.forEach((el) => { if (el instanceof EventTarget) patchTarget(el); });
+      }
+    }
+  }
+
+  /**
+   * Tears down the viewer: aborts all event listeners, cancels animation frames,
+   * disposes THREE.js resources, and clears data structures.
+   */
+  destroy(): void {
+    // 1. Abort all event listeners at once
+    this.abortController.abort();
+
+    // 2. Cancel animation frames
+    if (this.fpsAnimationFrameId !== null) {
+      cancelAnimationFrame(this.fpsAnimationFrameId);
+      this.fpsAnimationFrameId = null;
+    }
+
+    // 3. Dispose THREE.js resources
+    this.edgeMaterial.dispose();
+    for (const overlay of this.edgeOverlays) {
+      overlay.geometry.dispose();
+      if (overlay.material instanceof THREE.Material) overlay.material.dispose();
+    }
+    this.edgeOverlays = [];
+
+    // Dispose transform controls
+    if (this.transformControls) {
+      this.transformControls.dispose();
+      this.transformControls = null;
+    }
+
+    // 4. Clear data structures
+    this.federatedModels.clear();
+    this.modelIdAliases.clear();
+    this.modelIndices.clear();
+    this.registeringModelIds.clear();
+    this.appliedModelOpacity.clear();
+    this.cubeHotspots.clear();
+    clearMap(this.selectedItems);
+    this.viewpoints = [];
+    this.issues = [];
+    this.modelObjects = [];
+    this.pendingModelMetaQueue.length = 0;
+
+    // 5. Dispose components
+    if (this.components) {
+      this.components.dispose();
+    }
   }
 
   async init(): Promise<void> {
@@ -588,10 +693,10 @@ class ViewerApp {
     this.dom.tabButtons.forEach((button) => {
       button.addEventListener('click', () => this.activateTab(button.dataset.tab || 'explorer'));
     });
-    this.dom.propFilterInput.addEventListener('input', () => {
+    this.dom.propFilterInput.addEventListener('input', debounce(() => {
       this.propertyFilterText = this.dom.propFilterInput.value.trim().toLowerCase();
       this.applyPropertiesFilter();
-    });
+    }, 300));
     this.bindDockEvents();
     this.bindModelBrowserEvents();
     this.bindFederationTreeEvents();
@@ -663,20 +768,39 @@ class ViewerApp {
     });
 
     this.dom.btnSectionX.addEventListener('click', () => {
-      this.addSectionPlane(new THREE.Vector3(1, 0, 0));
-      this.dom.btnSectionX.classList.toggle('active');
+      if (this.dom.btnSectionX.classList.contains('active')) {
+        this.clearSections();
+      } else {
+        this.clearSections(false);
+        this.addSectionPlane(new THREE.Vector3(-1, 0, 0));
+        this.dom.btnSectionX.classList.add('active');
+      }
     });
     this.dom.btnSectionY.addEventListener('click', () => {
-      this.addSectionPlane(new THREE.Vector3(0, 1, 0));
-      this.dom.btnSectionY.classList.toggle('active');
+      if (this.dom.btnSectionY.classList.contains('active')) {
+        this.clearSections();
+      } else {
+        this.clearSections(false);
+        this.addSectionPlane(new THREE.Vector3(0, 0, -1));
+        this.dom.btnSectionY.classList.add('active');
+      }
     });
     this.dom.btnSectionZ.addEventListener('click', () => {
-      this.addSectionPlane(new THREE.Vector3(0, 0, 1));
-      this.dom.btnSectionZ.classList.toggle('active');
+      if (this.dom.btnSectionZ.classList.contains('active')) {
+        this.clearSections();
+      } else {
+        this.clearSections(false);
+        this.addSectionPlane(new THREE.Vector3(0, -1, 0));
+        this.dom.btnSectionZ.classList.add('active');
+      }
     });
     this.dom.btnSectionBox.addEventListener('click', () => {
-      this.createSectionBox();
-      this.dom.btnSectionBox.classList.add('active');
+      if (this.dom.btnSectionBox.classList.contains('active')) {
+        this.clearSections();
+      } else {
+        this.createSectionBox();
+        this.dom.btnSectionBox.classList.add('active');
+      }
     });
     this.dom.btnClearSections.addEventListener('click', () => {
       this.clearSections();
@@ -716,6 +840,12 @@ class ViewerApp {
 
     this.dom.toggleGrid.addEventListener('change', () => {
       this.setGridVisible(this.dom.toggleGrid.checked, true);
+      this.persistLocalState();
+    });
+
+    this.dom.toggleTheme.addEventListener('change', () => {
+      this.themeMode = this.dom.toggleTheme.checked ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', this.themeMode);
       this.persistLocalState();
     });
 
@@ -1003,11 +1133,13 @@ class ViewerApp {
 
     this.components.init();
 
-    // Temporary debug exposure — remove in production
-    (window as any).__viewer = this;
-    (window as any).__components = this.components;
-    (window as any).__world = this.world;
-    (window as any).__THREE = THREE;
+    // Expose debug handles only in development.
+    if (import.meta.env.DEV) {
+      (window as any).__viewer = this;
+      (window as any).__components = this.components;
+      (window as any).__world = this.world;
+      (window as any).__THREE = THREE;
+    }
 
     const grids = this.components.get(OBC.Grids);
     const grid = grids.create(this.world);
@@ -2634,10 +2766,10 @@ class ViewerApp {
     const capped = results.slice(0, 180);
     this.dom.elementResults.innerHTML = capped
       .map((result) => `
-        <div class="result-item" data-model-id="${result.modelId}" data-local-id="${result.localId}">
-          <div><strong>${result.name}</strong></div>
-          <div>${result.type}</div>
-          <div>${result.globalId}</div>
+        <div class="result-item" data-model-id="${escapeHtml(result.modelId)}" data-local-id="${result.localId}">
+          <div><strong>${escapeHtml(result.name)}</strong></div>
+          <div>${escapeHtml(result.type)}</div>
+          <div>${escapeHtml(result.globalId)}</div>
         </div>
       `)
       .join('');
@@ -2753,17 +2885,6 @@ class ViewerApp {
         timeoutHandle = undefined;
       }
 
-      // Workaround for web-ifc #1833: extract real material colors and apply them
-      // TEMPORARILY DISABLED — testing native fragment colors without override
-      // if (requestId === this.loadRequestId) {
-      //   this.dom.loadingText.textContent = 'Applying material colors...';
-      //   try {
-      //     await this.extractAndApplyMaterialColors(data, loadedModel);
-      //   } catch (colorErr) {
-      //     console.warn('[Viewer] Material color extraction failed (non-fatal):', colorErr);
-      //   }
-      // }
-
       const elapsed = ((performance.now() - start) / 1000).toFixed(1);
       if (requestId !== this.loadRequestId) return false;
 
@@ -2804,14 +2925,9 @@ class ViewerApp {
     return false;
   }
 
-  /**
-   * Workaround for web-ifc issue #1833:
-   * web-ifc 0.0.74+ ignores IfcMaterialDefinitionRepresentation colors and only
-   * uses geometry-level IfcStyledItem colors (which default to gray in Revit exports).
-   * This method independently parses the IFC data to extract the real material colors
-   * and applies them to the loaded fragment model.
-   */
-  private async extractAndApplyMaterialColors(ifcData: Uint8Array, model: any): Promise<void> {
+  // NOTE: extractAndApplyMaterialColors was removed — the workaround for web-ifc#1833
+  // is no longer needed with native fragment colors. See git history if re-enabling.
+  private async _unused_extractAndApplyMaterialColors(ifcData: Uint8Array, model: any): Promise<void> {
     const ifcApi = new WebIFC.IfcAPI();
     // Load WASM from public folder (web-ifc.wasm is served by Vite with correct MIME type)
     ifcApi.SetWasmPath('/', true);
@@ -3521,7 +3637,26 @@ class ViewerApp {
     }
     const center = bbox.getCenter(new THREE.Vector3());
     this.clipper.enabled = true;
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, normal, center);
+    const planeId = this.clipper.createFromNormalAndCoplanarPoint(this.world, normal, center);
+    // Exempt the gizmo from clipping and depth-test so the arrow is always visible
+    // (renders on top of model geometry and not clipped by section planes)
+    const plane = this.clipper.list.get(planeId);
+    if (plane) {
+      const renderer = this.world.renderer!.three as THREE.WebGLRenderer;
+      renderer.localClippingEnabled = true;
+      const gizmoHelper = (plane as any)._controls.getHelper();
+      gizmoHelper.traverse((child: THREE.Object3D) => {
+        const mesh = child as THREE.Mesh;
+        if (mesh.material) {
+          const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+          mats.forEach((m: THREE.Material) => {
+            m.clippingPlanes = [];
+            m.depthTest = false;
+          });
+        }
+        child.renderOrder = 999;
+      });
+    }
     this.setStatus('Section plane added');
   }
 
@@ -3534,12 +3669,12 @@ class ViewerApp {
     this.clearSections(false);
     this.clipper.enabled = true;
     const { min, max } = bbox;
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(1, 0, 0), new THREE.Vector3(max.x, 0, 0));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(-1, 0, 0), new THREE.Vector3(min.x, 0, 0));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, max.y, 0));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, min.y, 0));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, max.z));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, min.z));
+    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(-1, 0, 0), new THREE.Vector3(max.x, 0, 0));
+    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(1, 0, 0), new THREE.Vector3(min.x, 0, 0));
+    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, max.y, 0));
+    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, min.y, 0));
+    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, max.z));
+    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, min.z));
     this.setStatus('Section box created');
   }
 
@@ -3747,15 +3882,45 @@ class ViewerApp {
 
     const keys = Object.keys(record);
     if (keys.length === 0) return '{}';
-    const preview = keys.slice(0, 5).join(', ');
-    return keys.length > 5 ? `{${preview}, ...}` : `{${preview}}`;
+    return `[Object: ${keys.length} properties]`;
   }
 
-  private toPropertyString(value: unknown, fallback = '-'): string {
+  private formatNumber(value: number, contextHint = ''): string {
+    if (Number.isNaN(value)) return 'NaN';
+    if (!Number.isFinite(value)) return String(value);
+    if (Number.isInteger(value) || Math.abs(value - Math.round(value)) < 1e-9) {
+      return String(Math.round(value));
+    }
+    const hint = contextHint.toLowerCase();
+    if (hint.includes('angle') || hint.includes('slope') || hint.includes('rotation') || hint.includes('tilt')) {
+      return value.toFixed(1);
+    }
+    if (hint.includes('count') || hint.includes('number')) {
+      return String(Math.round(value));
+    }
+    if (Math.abs(value) >= 1000) return value.toFixed(2);
+    if (Math.abs(value) >= 1) return value.toFixed(3);
+    return value.toFixed(4);
+  }
+
+  private inferUnitSuffix(label: string): string {
+    const lower = label.toLowerCase();
+    if (lower.includes('area')) return ' m\u00B2';
+    if (lower.includes('volume')) return ' m\u00B3';
+    if (lower.includes('length') || lower.includes('width') || lower.includes('height')
+      || lower.includes('thickness') || lower.includes('depth') || lower.includes('radius')
+      || lower.includes('diameter') || lower.includes('perimeter') || lower.includes('span')) return ' m';
+    if (lower.includes('mass') || lower.includes('weight')) return ' kg';
+    if (lower.includes('angle') || lower.includes('slope') || lower.includes('tilt')) return '\u00B0';
+    return '';
+  }
+
+  private toPropertyString(value: unknown, fallback = '-', contextHint = ''): string {
     const normalized = this.unwrapIfcValue(value);
     if (normalized === null || normalized === undefined) return fallback;
     if (typeof normalized === 'string') return normalized.trim().length > 0 ? normalized : fallback;
-    if (typeof normalized === 'number' || typeof normalized === 'boolean' || typeof normalized === 'bigint') return String(normalized);
+    if (typeof normalized === 'number') return this.formatNumber(normalized, contextHint);
+    if (typeof normalized === 'boolean' || typeof normalized === 'bigint') return String(normalized);
     if (normalized instanceof Date) return normalized.toISOString();
     if (Array.isArray(normalized)) {
       if (normalized.length === 0) return '[]';
@@ -3791,9 +3956,12 @@ class ViewerApp {
       return;
     }
 
+    if (typeof normalized === 'number') {
+      output.push([prefix, this.formatNumber(normalized, prefix)]);
+      return;
+    }
     if (
       typeof normalized === 'string'
-      || typeof normalized === 'number'
       || typeof normalized === 'boolean'
       || typeof normalized === 'bigint'
     ) {
@@ -3904,7 +4072,7 @@ class ViewerApp {
       .replace(/\[\d+\]/g, ' ')
       .split('.')
       .filter((part) => part.length > 0)
-      .slice(-2)
+      .slice(-1)
       .join(' ');
     const spaced = compact
       .replace(/^_+/, '')
@@ -4052,7 +4220,11 @@ class ViewerApp {
 
     if (categoryUpper.includes('IFCQUANTITY')) {
       const valueKey = IFC_FACT_VALUE_KEYS.find((key) => this.toPropertyString(this.getRecordValueCaseInsensitive(record, key), '').length > 0);
-      if (valueKey) pushFact(name || this.prettifyPropertyLabel(valueKey), this.toPropertyString(this.getRecordValueCaseInsensitive(record, valueKey), ''));
+      if (valueKey) {
+        const rawValue = this.toPropertyString(this.getRecordValueCaseInsensitive(record, valueKey), '', valueKey);
+        const unit = this.inferUnitSuffix(valueKey);
+        pushFact(name || this.prettifyPropertyLabel(valueKey), rawValue + unit);
+      }
       return facts;
     }
 
@@ -4110,19 +4282,19 @@ class ViewerApp {
       const objectValue = this.unwrapIfcValue(entry);
       if (objectValue && typeof objectValue === 'object' && !Array.isArray(objectValue)) {
         const record = objectValue as Record<string, unknown>;
-        const category = this.toPropertyString(record._category, '');
         const name = this.findNameLikeValue(record, new WeakSet<object>(), 0);
-        return [name, category].filter(Boolean).join(' • ');
+        return name || '';
       }
       return this.toPropertyString(objectValue, '');
     };
 
     if (Array.isArray(normalized)) {
       const entries = normalized.map((entry) => summarizeOne(entry)).filter((entry) => entry.length > 0);
-      if (entries.length === 0) return `${normalized.length} relation${normalized.length === 1 ? '' : 's'}`;
-      const preview = entries.slice(0, 3).join(' | ');
+      if (entries.length === 0) return '';
+      if (entries.length === 1) return entries[0];
+      const preview = entries.slice(0, 3).join(', ');
       const suffix = entries.length > 3 ? ` (+${entries.length - 3} more)` : '';
-      return this.truncatePropertyValue(`${entries.length} entries: ${preview}${suffix}`);
+      return this.truncatePropertyValue(`${preview}${suffix}`);
     }
 
     return summarizeOne(normalized);
@@ -4138,7 +4310,9 @@ class ViewerApp {
     for (const [path, value] of rows) {
       const haystack = `${pathPrefix} ${path}`.toLowerCase();
       if (!keywords.some((keyword) => haystack.includes(keyword))) continue;
-      this.addPropertySectionRow(sections, sectionId, path, value, path);
+      const unit = this.inferUnitSuffix(path);
+      const displayValue = (unit && /^-?\d+(\.\d+)?$/.test(value.trim())) ? value + unit : value;
+      this.addPropertySectionRow(sections, sectionId, path, displayValue, path);
     }
   }
 
@@ -4175,17 +4349,17 @@ class ViewerApp {
 
     this.addPropertySectionRow(sections, 'location', 'Object Placement', this.summarizeRelationValue(data.ObjectPlacement));
     if (geometryProbe) {
-      this.addPropertySectionRow(sections, 'location', 'Center X', geometryProbe.center.x.toFixed(3));
-      this.addPropertySectionRow(sections, 'location', 'Center Y', geometryProbe.center.y.toFixed(3));
-      this.addPropertySectionRow(sections, 'location', 'Center Z', geometryProbe.center.z.toFixed(3));
-      this.addPropertySectionRow(sections, 'dimensions', 'Extent X', geometryProbe.size.x.toFixed(3));
-      this.addPropertySectionRow(sections, 'dimensions', 'Extent Y', geometryProbe.size.y.toFixed(3));
-      this.addPropertySectionRow(sections, 'dimensions', 'Extent Z', geometryProbe.size.z.toFixed(3));
+      this.addPropertySectionRow(sections, 'location', 'Center X', `${geometryProbe.center.x.toFixed(3)} m`);
+      this.addPropertySectionRow(sections, 'location', 'Center Y', `${geometryProbe.center.y.toFixed(3)} m`);
+      this.addPropertySectionRow(sections, 'location', 'Center Z', `${geometryProbe.center.z.toFixed(3)} m`);
+      this.addPropertySectionRow(sections, 'dimensions', 'Extent X', `${geometryProbe.size.x.toFixed(3)} m`);
+      this.addPropertySectionRow(sections, 'dimensions', 'Extent Y', `${geometryProbe.size.y.toFixed(3)} m`);
+      this.addPropertySectionRow(sections, 'dimensions', 'Extent Z', `${geometryProbe.size.z.toFixed(3)} m`);
 
       const slabLikeText = `${itemName} ${typeValue} ${this.toPropertyString(data._category, '')}`.toLowerCase();
       if (/(slab|floor|deck|roof|ceiling|covering)/.test(slabLikeText)) {
         const inferredThickness = Math.min(geometryProbe.size.x, geometryProbe.size.y, geometryProbe.size.z);
-        this.addPropertySectionRow(sections, 'dimensions', 'Thickness (Approx)', inferredThickness.toFixed(3), 'geometry thickness');
+        this.addPropertySectionRow(sections, 'dimensions', 'Thickness (Approx)', `${inferredThickness.toFixed(3)} m`, 'geometry thickness');
       }
     }
 
@@ -4201,8 +4375,7 @@ class ViewerApp {
     this.collectPropertyFacts(data, factRows, new WeakSet<object>());
     for (const fact of factRows) {
       const sectionId = this.classifyPropertyFact(fact);
-      const key = fact.setName ? `${fact.setName} / ${fact.label}` : fact.label;
-      this.addPropertySectionRow(sections, sectionId, key, fact.value, `${fact.setName} ${fact.category} ${fact.path}`);
+      this.addPropertySectionRow(sections, sectionId, fact.label, fact.value, `${fact.setName} ${fact.category} ${fact.path}`);
     }
 
     const { rows: rawRows, truncated } = this.collectRawPropertyEntries(data);
@@ -4213,7 +4386,9 @@ class ViewerApp {
     this.addKeywordMatchedRows(sections, 'relations', rawRows, RELATION_KEYWORDS);
 
     for (const [key, value] of rawRows) {
-      this.addPropertySectionRow(sections, 'raw', key, value, key);
+      const unit = this.inferUnitSuffix(key);
+      const displayValue = (unit && /^-?\d+(\.\d+)?$/.test(value.trim())) ? value + unit : value;
+      this.addPropertySectionRow(sections, 'raw', key, displayValue, key);
     }
     if (truncated) this.addPropertySectionRow(sections, 'raw', 'Info', `Properties truncated to ${MAX_PROPERTY_ROWS} rows for readability`);
 
@@ -4308,7 +4483,7 @@ class ViewerApp {
     let geometryProbe: GeometryProbe | null = null;
     try {
       const volume = await model.getItemsVolume([firstSelection.localId]);
-      volumeText = `${volume.toFixed(3)} m3`;
+      volumeText = `${volume.toFixed(3)} m\u00B3`;
     } catch {
       // optional
     }
@@ -4464,16 +4639,20 @@ class ViewerApp {
     this.setStatus(`Applied viewpoint: ${viewpoint.name}`);
   }
 
-  private deleteSelectedViewpoint(): void {
+  private async deleteSelectedViewpoint(): Promise<void> {
     if (!this.selectedViewpointId) {
       this.setStatus('Select a viewpoint first');
       return;
     }
 
+    const confirmed = await this.confirm('Delete this viewpoint? This cannot be undone.', 'Delete', 'Cancel');
+    if (!confirmed) return;
+
     this.viewpoints = this.viewpoints.filter((entry) => entry.id !== this.selectedViewpointId);
     this.selectedViewpointId = this.viewpoints[0]?.id ?? null;
     this.updateViewpointList();
     this.persistLocalState();
+    this.showToast('Viewpoint deleted', 'success');
     this.setStatus('Viewpoint deleted');
   }
 
@@ -4486,9 +4665,11 @@ class ViewerApp {
     this.dom.viewpointList.innerHTML = this.viewpoints
       .map((entry) => {
         const active = entry.id === this.selectedViewpointId ? 'active' : '';
+        const escapedId = escapeHtml(entry.id);
+        const escapedName = escapeHtml(entry.name);
         return `
-          <div class="viewpoint-item ${active}" data-viewpoint-id="${entry.id}">
-            <div><strong>${entry.name}</strong></div>
+          <div class="viewpoint-item ${active}" data-viewpoint-id="${escapedId}">
+            <div><strong>${escapedName}</strong></div>
             <div>${new Date(entry.createdAt).toLocaleString()}</div>
           </div>
         `;
@@ -4605,12 +4786,16 @@ class ViewerApp {
     this.dom.issuesList.innerHTML = this.issues
       .map((issue) => {
         const active = issue.id === this.activeIssueId ? 'active' : '';
-        const linked = issue.localIds.length > 0 ? `${issue.localIds.length} linked` : 'No element link';
+        const linkedText = issue.localIds.length > 0 ? `${issue.localIds.length} linked` : 'No element link';
+        const escapedId = escapeHtml(issue.id);
+        const escapedTitle = escapeHtml(issue.title);
+        const escapedState = escapeHtml(`${issue.status} | ${issue.priority}`);
+        const escapedLinked = escapeHtml(linkedText);
         return `
-          <div class="issue-item ${active}" data-issue-id="${issue.id}">
-            <div><strong>${issue.title}</strong></div>
-            <div>${issue.status} | ${issue.priority}</div>
-            <div>${linked}</div>
+          <div class="issue-item ${active}" data-issue-id="${escapedId}">
+            <div><strong>${escapedTitle}</strong></div>
+            <div>${escapedState}</div>
+            <div>${escapedLinked}</div>
           </div>
         `;
       })
@@ -4669,11 +4854,14 @@ class ViewerApp {
     this.setStatus(`Selected issue: ${issue.title}`);
   }
 
-  private deleteSelectedIssue(): void {
+  private async deleteSelectedIssue(): Promise<void> {
     if (!this.activeIssueId) {
       this.setStatus('Select an issue first');
       return;
     }
+
+    const confirmed = await this.confirm('Delete this issue? This cannot be undone.', 'Delete', 'Cancel');
+    if (!confirmed) return;
 
     const issue = this.issues.find((entry) => entry.id === this.activeIssueId);
     if (issue?.markerId) this.markerManager.delete(issue.markerId);
@@ -4684,6 +4872,7 @@ class ViewerApp {
     this.updateIssuesList();
     this.updateIssueComments();
     this.persistLocalState();
+    this.showToast('Issue deleted', 'success');
     this.setStatus('Issue deleted');
   }
 
@@ -4731,8 +4920,8 @@ class ViewerApp {
     this.dom.issueComments.innerHTML = issue.comments
       .map((comment) => `
         <div class="comment-item">
-          <div><strong>${comment.author}</strong> - ${new Date(comment.createdAt).toLocaleString()}</div>
-          <div>${comment.text}</div>
+          <div><strong>${escapeHtml(comment.author)}</strong> - ${new Date(comment.createdAt).toLocaleString()}</div>
+          <div>${escapeHtml(comment.text)}</div>
         </div>
       `)
       .join('');
@@ -4773,9 +4962,13 @@ class ViewerApp {
       const restoredXray = parsed.xray;
       const restoredEdges = parsed.edges;
       this.gridVisible = parsed.gridVisible ?? this.gridVisible;
+      this.themeMode = parsed.theme ?? 'dark';
       this.backgroundColor = this.normalizeHexColor(parsed.backgroundColor ?? this.backgroundColor);
       this.viewpoints = parsed.viewpoints;
       this.issues = parsed.issues.map((issue) => ({ ...issue }));
+
+      document.documentElement.setAttribute('data-theme', this.themeMode);
+      this.dom.toggleTheme.checked = this.themeMode === 'light';
 
       this.applySelectionMode(this.selectionMode);
       this.applyNavigationMode(this.navigationMode);
@@ -4828,6 +5021,7 @@ class ViewerApp {
       edges: this.edgesEnabled,
       gridVisible: this.gridVisible,
       backgroundColor: this.backgroundColor,
+      theme: this.themeMode,
       viewpoints: this.viewpoints,
       issues,
     };
@@ -4855,9 +5049,13 @@ class ViewerApp {
       const restoredXray = parsed.xray;
       const restoredEdges = parsed.edges;
       this.gridVisible = parsed.gridVisible ?? this.gridVisible;
+      this.themeMode = parsed.theme ?? 'dark';
       this.backgroundColor = this.normalizeHexColor(parsed.backgroundColor ?? this.backgroundColor);
       this.viewpoints = parsed.viewpoints ?? [];
       this.issues = (parsed.issues ?? []).map((issue) => ({ ...issue }));
+
+      document.documentElement.setAttribute('data-theme', this.themeMode);
+      this.dom.toggleTheme.checked = this.themeMode === 'light';
 
       await this.setVisualStyle(this.visualStyle, false, false);
       this.xrayEnabled = restoredXray;
@@ -4990,6 +5188,72 @@ class ViewerApp {
     this.dom.statusText.textContent = message;
   }
 
+  /** Show a floating toast notification that auto-dismisses. */
+  private showToast(message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info', durationMs = 4000): void {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'toast-container';
+      document.body.appendChild(container);
+    }
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.setAttribute('role', 'alert');
+    toast.setAttribute('aria-live', 'assertive');
+    toast.textContent = message;
+    container.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('toast-visible'));
+    setTimeout(() => {
+      toast.classList.remove('toast-visible');
+      toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+      setTimeout(() => toast.remove(), 500);
+    }, durationMs);
+  }
+
+  /** Show a modal confirmation dialog. Returns a promise that resolves true on confirm, false on cancel. */
+  private confirm(message: string, confirmLabel = 'Confirm', cancelLabel = 'Cancel'): Promise<boolean> {
+    return new Promise((resolve) => {
+      const overlay = document.createElement('div');
+      overlay.className = 'confirm-overlay';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-label', 'Confirmation');
+
+      const dialog = document.createElement('div');
+      dialog.className = 'confirm-dialog';
+
+      const msg = document.createElement('p');
+      msg.className = 'confirm-message';
+      msg.textContent = message;
+
+      const actions = document.createElement('div');
+      actions.className = 'confirm-actions';
+
+      const btnCancel = document.createElement('button');
+      btnCancel.className = 'confirm-btn confirm-btn-cancel';
+      btnCancel.textContent = cancelLabel;
+
+      const btnConfirm = document.createElement('button');
+      btnConfirm.className = 'confirm-btn confirm-btn-confirm';
+      btnConfirm.textContent = confirmLabel;
+
+      const cleanup = (result: boolean) => {
+        overlay.remove();
+        resolve(result);
+      };
+
+      btnCancel.addEventListener('click', () => cleanup(false));
+      btnConfirm.addEventListener('click', () => cleanup(true));
+      overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
+
+      actions.append(btnCancel, btnConfirm);
+      dialog.append(msg, actions);
+      overlay.appendChild(dialog);
+      document.body.appendChild(overlay);
+      btnConfirm.focus();
+    });
+  }
+
   private startFpsMonitor(): void {
     const tick = (): void => {
       this.frameCount += 1;
@@ -5000,9 +5264,9 @@ class ViewerApp {
         this.fpsLastTs = now;
         this.dom.perfInfo.textContent = `${fps} FPS`;
       }
-      requestAnimationFrame(tick);
+      this.fpsAnimationFrameId = requestAnimationFrame(tick);
     };
-    requestAnimationFrame(tick);
+    this.fpsAnimationFrameId = requestAnimationFrame(tick);
   }
 }
 
