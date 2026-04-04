@@ -65,11 +65,11 @@
 /* ═══ Light Theme ═══ */
 
 :root[data-theme="light"] {
-  --bg-0: #F0F2F8;
-  --bg-1: #E4E7F0;
-  --bg-2: #D8DCE8;
-  --bg-3: #CDD2E0;
-  --surface: rgba(228, 231, 240, 0.96);
+  --bg-0: #FFFFFF;
+  --bg-1: #F5F6FA;
+  --bg-2: #ECEEF5;
+  --bg-3: #E2E4ED;
+  --surface: rgba(245, 246, 250, 0.97);
   --surface-soft: rgba(35, 63, 132, 0.04);
 
   --accent: #B00D45;
@@ -84,15 +84,15 @@
   --danger: #dc2626;
   --warn: #d97706;
 
-  --text-0: #141726;
-  --text-1: #1A2E5F;
-  --text-2: #4A5568;
+  --text-0: #1A1D2E;
+  --text-1: #3A3F52;
+  --text-2: #6B7080;
 
-  --border: rgba(35, 63, 132, 0.15);
-  --border-strong: rgba(35, 63, 132, 0.25);
+  --border: #D0D3DE;
+  --border-strong: #B0B4C4;
 
-  --shadow-1: 0 4px 16px rgba(0, 0, 0, 0.08);
-  --shadow-2: 0 10px 30px rgba(0, 0, 0, 0.12);
+  --shadow-1: 0 4px 16px rgba(0, 0, 0, 0.10);
+  --shadow-2: 0 10px 30px rgba(0, 0, 0, 0.15);
 }
 
 /* ═══ Reset ═══ */
@@ -191,8 +191,9 @@ button, input, textarea, select {
   top: 100%;
   left: 0;
   min-width: 200px;
-  background: var(--bg-2);
+  background: var(--bg-1);
   border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-1);
   padding: 4px 0;
   z-index: 100;
 }
@@ -254,11 +255,12 @@ button, input, textarea, select {
   min-width: 0;
   max-width: 150px;
   padding: 3px 6px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);
   background: var(--bg-0);
   color: var(--text-0);
   font-size: 12px;
+  cursor: pointer;
 }
 
 .menu-inline-control input[type="color"] {
