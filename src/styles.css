@@ -254,12 +254,14 @@ button, input, textarea, select {
   flex: 1;
   min-width: 0;
   max-width: 150px;
-  padding: 3px 6px;
+  height: 26px;
+  padding: 2px 8px;
   border: 1px solid var(--border-strong);
   border-radius: var(--r-sm);
   background: var(--bg-0);
   color: var(--text-0);
   font-size: 12px;
+  line-height: 1.4;
   cursor: pointer;
 }
 
@@ -287,8 +289,9 @@ button, input, textarea, select {
 
 .menu-presets {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   justify-content: flex-start;
+  padding: 2px 0;
 }
 
 /* ═══ Toolbar (36px) ═══ */
@@ -713,17 +716,18 @@ button, input, textarea, select {
 }
 
 .visual-preset-btn {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   border-radius: 999px;
-  border: 2px solid var(--border-strong);
+  border: 2px solid var(--text-2);
   background: var(--preset, #0D0E14);
   cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
 .visual-preset-btn:hover {
-  transform: scale(1.08);
-  border-color: var(--text-2);
+  transform: scale(1.12);
+  border-color: var(--text-0);
 }
 
 .visual-preset-btn.active {
