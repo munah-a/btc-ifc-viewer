@@ -47,9 +47,9 @@ test.describe('console cleanliness (§4 program acceptance)', () => {
     });
     page.on('pageerror', (error) => violations.push(`pageerror: ${error.message}`));
 
-    // Boot
+    // Boot (match the full init message — static HTML ships plain 'Ready')
     await page.goto('/');
-    await waitForStatus(page, 'Ready', 60_000);
+    await waitForStatus(page, 'Ready - load IFC', 60_000);
 
     // Model load (conversion + registration + indexing)
     await page.setInputFiles('#fileInput', ifcPath);

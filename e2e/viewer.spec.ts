@@ -28,9 +28,10 @@ const viewerUrl = '/';
 const waitForAppReady = async (page: Page): Promise<void> => {
   await page.goto(viewerUrl);
   // init() ends with the 'Ready - load IFC model(s)' status; nothing races it
-  // anymore since W1.5 deleted the F4 grid hack.
+  // anymore since W1.5 deleted the F4 grid hack. Match the full message — the
+  // static HTML ships plain 'Ready' before the module boots.
   await page.waitForFunction(
-    () => (document.querySelector('#statusText')?.textContent || '').includes('Ready'),
+    () => (document.querySelector('#statusText')?.textContent || '').includes('Ready - load IFC'),
     undefined,
     { timeout: 60_000 },
   );
