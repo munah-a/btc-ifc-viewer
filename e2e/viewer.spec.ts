@@ -36,17 +36,20 @@ const waitForAppReady = async (page: Page): Promise<void> => {
   );
 };
 
-// A model is fully registered when its index exists (W1.4: indexing is the
-// last await inside registration; the old registeringModelIds set is gone).
+// A model is fully registered when its index exists AND the load path has
+// posted its final status (W1.4: the registration promise resolves before
+// 'Model loaded successfully'; the old registeringModelIds set is gone).
 const waitForModelCount = async (page: Page, count: number): Promise<void> => {
   await page.waitForFunction(
     (expected) => {
       const viewer = (window as any).__viewer;
       const elementText = document.querySelector('#elementCount')?.textContent || '';
+      const statusText = document.querySelector('#statusText')?.textContent || '';
       return !!viewer
         && viewer.federatedModels?.size === expected
         && viewer.modelIndices?.size === expected
-        && elementText !== '0 elements';
+        && elementText !== '0 elements'
+        && statusText.includes('Model loaded successfully');
     },
     count,
     { timeout: 180_000 },
