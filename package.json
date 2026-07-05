@@ -5,8 +5,12 @@
   "description": "ThatOpen Engine BIM Viewer - Proof of Concept",
   "type": "module",
   "scripts": {
+    "vendor-assets": "node scripts/vendor-assets.mjs",
+    "predev": "node scripts/vendor-assets.mjs",
     "dev": "vite",
+    "predev:e2e": "node scripts/vendor-assets.mjs",
     "dev:e2e": "vite --config vite.e2e.config.ts",
+    "prebuild": "node scripts/vendor-assets.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",

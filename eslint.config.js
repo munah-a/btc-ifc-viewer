@@ -38,9 +38,16 @@ export default tseslint.config(
     },
   },
   {
-    // Plain JS/MJS files (configs, build scripts) — no type information available.
+    // Plain JS/MJS files (configs, build scripts) — no type information
+    // available; they run under Node.
     files: ['**/*.js', '**/*.mjs'],
     extends: [tseslint.configs.disableTypeChecked],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+      },
+    },
   },
   {
     // src/viewer.ts: the ThatOpen boundary is untyped by design until W2.2

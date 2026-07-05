@@ -1144,18 +1144,21 @@ class ViewerApp {
     this.gridHelper.visible = this.gridVisible;
     if (grid.material?.uniforms?.uColor) grid.material.uniforms.uColor.value = new THREE.Color(0x25334a);
 
+    // Self-hosted runtime assets (A2/P2): web-ifc.wasm and the fragments
+    // worker are vendored from node_modules into public/ by
+    // scripts/vendor-assets.mjs (prebuild/predev) — no CDN at runtime (C1).
     this.ifcLoader = this.components.get(OBC.IfcLoader);
     await this.ifcLoader.setup({
       autoSetWasm: false,
       wasm: {
-        path: 'https://unpkg.com/web-ifc@0.0.74/',
+        path: import.meta.env.BASE_URL,
         absolute: true,
       },
     });
     this.ifcLoader.settings.webIfc.CIRCLE_SEGMENTS = 24;
 
     this.fragments = this.components.get(OBC.FragmentsManager);
-    const workerUrl = 'https://thatopen.github.io/engine_fragment/resources/worker.mjs';
+    const workerUrl = `${import.meta.env.BASE_URL}worker.mjs`;
     const fetchedWorker = await fetch(workerUrl);
     const workerBlob = await fetchedWorker.blob();
     const workerFile = new File([workerBlob], 'worker.mjs', { type: 'text/javascript' });
