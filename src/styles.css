@@ -431,58 +431,6 @@ button, input, textarea, select {
   display: none;
 }
 
-/* ═══ Old Header — kept for structural compat ═══ */
-
-.app-header {
-  display: none;
-}
-
-.header-left, .header-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.header-left { flex: 1 1 auto; min-width: 0; }
-.header-right { flex: 0 0 auto; justify-content: flex-end; }
-
-.logo {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.logo-icon-img {
-  width: 30px;
-  height: 30px;
-  object-fit: contain;
-}
-
-.logo-text {
-  font-weight: 700;
-  font-size: 17px;
-  letter-spacing: -0.02em;
-}
-
-.beta-tag {
-  padding: 2px 7px;
-  border-radius: 4px;
-  background: var(--accent);
-  color: #fff;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  line-height: 1;
-}
-
-.logo-subtitle {
-  color: var(--text-2);
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 /* ═══ Main Grid ═══ */
 
 .app-main {
@@ -654,64 +602,9 @@ button, input, textarea, select {
 }
 
 /* Visual settings */
-.visual-settings {
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  background: var(--surface-soft);
-  padding: 10px;
-  display: grid;
-  gap: 10px;
-}
-
-.visual-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-1);
-}
-
-.visual-toggle input[type="checkbox"] {
-  accent-color: var(--accent);
-}
-
-.visual-select-row {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-1);
-}
-
 .visual-style-select {
   width: 100%;
   padding-right: 28px;
-}
-
-.visual-color-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  color: var(--text-1);
-}
-
-.visual-color-row input[type="color"] {
-  width: 42px;
-  height: 28px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0;
-  background: transparent;
-  cursor: pointer;
-}
-
-.visual-presets {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 
 .visual-preset-btn {
@@ -748,13 +641,6 @@ button, input, textarea, select {
 }
 
 .federated-model-header { display: grid; gap: 3px; }
-
-.federated-model-name {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-0);
-  word-break: break-word;
-}
 
 .federated-model-name-btn {
   border: none;
@@ -2110,8 +1996,6 @@ kbd {
   }
 
   .status-bar { display: none; }
-
-  .app-accent-bar { display: none; }
 
   .view-cube { display: none; }
 

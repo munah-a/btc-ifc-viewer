@@ -30,6 +30,7 @@ Verdicts: ✅ confirmed by adversarial verifier · 🔬 confirmed by live-runnin
 | A13 | Low | — | `viewer.ts:492, 937, 3822 + styles.css` | Brand magenta `#c8145c` in 4 places; magic numbers (chunkSize 360, timeout 120000, xray 0.28…). → Promote to constants block; brand color from CSS custom property. |
 | A14 | Low | — | `tsconfig.json:12-17` | Inert emit options under noEmit; missing noUnusedLocals/noUnusedParameters/noUncheckedIndexedAccess. → Clean + enable. |
 | A15 | Low | — | `viewer.ts:5259-5272` | FPS counter measures rAF cadence not render work; overwrites load metrics within 1s. → Hook renderer events; separate status slot. |
+| A16 | Low | ✅ (found by tsc in W0) | `viewer.ts:2242-2278` (pre-W0.4 lines) | `applyHiddenLineColors` / `applyConsistentLighting` never called anywhere (same class of dead code as A3, not listed there), leaving `resetModelColors` / `restoreOriginalLighting` as permanent no-ops guarded by never-set flags. → Dead pair deleted in W0.4 (deletion forced by the new `noUnusedLocals` gate); the no-op guard functions remain called from `setVisualStyle` — collapse them when visual styles are extracted (W2.3). |
 
 ## F. Features (broken behavior)
 
