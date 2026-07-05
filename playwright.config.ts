@@ -15,6 +15,10 @@ export default defineConfig({
   ],
   workers: 1,
   use: {
+    // Bound every action/navigation: Playwright's default is unlimited, which
+    // turned a single non-actionable click into a full test-timeout hang (T10).
+    actionTimeout: 15 * 1000,
+    navigationTimeout: 30 * 1000,
     baseURL: 'http://127.0.0.1:4173/',
     headless: true,
     screenshot: 'only-on-failure',

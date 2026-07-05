@@ -91,6 +91,7 @@ Verdicts: ✅ confirmed by adversarial verifier · 🔬 confirmed by live-runnin
 | T7 | Med | ✅ | — | Zero unit tests / no runner. → Vitest (pairs with Wave 2 extraction). |
 | T8 | Low | — | `tsconfig.json:19`, `playwright.config.ts:26` | e2e + configs type-checked by nothing; chromium-only. → tsconfig.node.json; add firefox/webkit happy path later. |
 | T9 | Low | — | `deploy.yml` | Actions pinned to mutable major tags. → Pin to SHAs. |
+| T10 | High | 🔬 (found by the W0 suite run against the prod build) | `e2e/viewer.spec.ts` (monolith `openDock` helper, pre-W0.9) + `styles.css` dock rules | The suite could not pass on current main at all: `openDock` clicked `[data-dock-toggle][title=…]`, but since the ui-overhaul merge those toggles are `display:none` at desktop widths (dock tools render inline), so the click never became actionable — and with Playwright's default unlimited `actionTimeout` each such step hung for the full 12-min test timeout (the T5 "36-min effective timeout" in practice). → Fixed in W0.9: dock-tool buttons clicked directly; `actionTimeout: 15s` + `navigationTimeout: 30s` set in playwright.config.ts. The dock-toggle UI itself is redesigned in W3.2/W3.3. |
 
 ## Verified-good (don't "fix")
 
