@@ -1130,8 +1130,10 @@ class ViewerApp {
 
     this.components.init();
 
-    // Expose debug handles only in development.
-    if (import.meta.env.DEV) {
+    // Expose test/debug handles only in builds made with the explicit VITE_E2E
+    // define (vite.e2e.config.ts) so e2e can exercise the real production
+    // artifact (AUDIT T4). Plain dev/prod builds ship without these hooks.
+    if (import.meta.env.VITE_E2E === 'true') {
       (window as any).__viewer = this;
       (window as any).__components = this.components;
       (window as any).__world = this.world;

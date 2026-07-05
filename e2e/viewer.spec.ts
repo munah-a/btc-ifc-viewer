@@ -20,7 +20,8 @@ type ModelContext = {
 };
 
 const ifcPath = path.join(process.cwd(), 'e2e', 'fixtures', 'school_str.ifc');
-const viewerUrl = 'http://127.0.0.1:4173/btc-ifc-viewer/';
+// Resolved against playwright.config.ts baseURL (production preview at '/').
+const viewerUrl = '/';
 
 const waitForAppReady = async (page: Page): Promise<void> => {
   await page.goto(viewerUrl);
