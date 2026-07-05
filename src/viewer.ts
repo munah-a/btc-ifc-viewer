@@ -16,6 +16,7 @@ import {
   type SelectionMode,
   type VisualStyle,
 } from './core/persistence';
+import { DEFAULT_MODEL_UNITS, resolveModelUnits, unitSuffixForLabel, type ModelUnits } from './core/units';
 
 type MeasureMode = 'none' | 'length' | 'area';
 type CubeFaceKey = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom';
@@ -449,6 +450,10 @@ class ViewerApp {
   private modelObjects: THREE.Object3D[] = [];
   private readonly federatedModels = new Map<string, FederatedModelRecord>();
   private modelIndices = new Map<string, ModelIndex>();
+  // F5: per-model display units resolved from the model's unit entities;
+  // the properties panel uses the selected element's model units.
+  private readonly modelUnits = new Map<string, ModelUnits>();
+  private activePropertyUnits: ModelUnits = DEFAULT_MODEL_UNITS;
   // Load-lifecycle bookkeeping (A6/A10): metadata keyed by the model id passed
   // to ifcLoader.load; stale ids track timed-out loads for late disposal.
   private readonly modelRegistry = new ModelRegistry();
@@ -560,6 +565,7 @@ class ViewerApp {
     // 4. Clear data structures
     this.federatedModels.clear();
     this.modelIndices.clear();
+    this.modelUnits.clear();
     this.modelRegistry.clear();
     this.modelRegistrations.clear();
     this.appliedModelOpacity.clear();
@@ -1288,6 +1294,7 @@ class ViewerApp {
     if (this.activeGizmoModelId === modelId) this.detachModelGizmo();
     this.federatedModels.delete(modelId);
     this.modelIndices.delete(modelId);
+    this.modelUnits.delete(modelId);
     this.modelRegistrations.delete(modelId);
     this.appliedModelOpacity.delete(modelId);
     delete this.selectedItems[modelId];
@@ -1356,6 +1363,14 @@ class ViewerApp {
     this.renderFederatedTree();
 
     await this.indexModel(modelId, model);
+    // F5: resolve the model's display units from its own unit entities;
+    // failures fall back to the metric defaults.
+    try {
+      this.modelUnits.set(modelId, resolveModelUnits(await this.fetchUnitRows(model)));
+    } catch (error) {
+      console.debug(`Unit resolution failed for ${modelId}; using defaults`, error);
+      this.modelUnits.set(modelId, DEFAULT_MODEL_UNITS);
+    }
     this.renderSpatialTree();
     this.renderModelBrowser();
     this.renderFederatedTree();
@@ -3414,16 +3429,22 @@ class ViewerApp {
     return value.toFixed(4);
   }
 
+  // F5: units come from the model's IfcUnitAssignment members; the keyword
+  // mapping in core/units.ts only classifies the quantity kind and falls
+  // back to the legacy metric suffixes when the model has no unit data.
   private inferUnitSuffix(label: string): string {
-    const lower = label.toLowerCase();
-    if (lower.includes('area')) return ' m\u00B2';
-    if (lower.includes('volume')) return ' m\u00B3';
-    if (lower.includes('length') || lower.includes('width') || lower.includes('height')
-      || lower.includes('thickness') || lower.includes('depth') || lower.includes('radius')
-      || lower.includes('diameter') || lower.includes('perimeter') || lower.includes('span')) return ' m';
-    if (lower.includes('mass') || lower.includes('weight')) return ' kg';
-    if (lower.includes('angle') || lower.includes('slope') || lower.includes('tilt')) return '\u00B0';
-    return '';
+    return unitSuffixForLabel(label, this.activePropertyUnits);
+  }
+
+  /** Rows of the model's unit entities (IfcSIUnit/IfcConversionBasedUnit). */
+  private async fetchUnitRows(model: any): Promise<unknown[]> {
+    const categories = await model.getItemsOfCategories([/IFCSIUNIT/, /IFCCONVERSIONBASEDUNIT/]) as Record<string, number[]>;
+    const ids = Object.values(categories).flat();
+    if (ids.length === 0) return [];
+    return await model.getItemsData(ids, {
+      attributesDefault: true,
+      relationsDefault: { attributes: false, relations: false },
+    }) as unknown[];
   }
 
   private toPropertyString(value: unknown, fallback = '-', contextHint = ''): string {
@@ -3975,6 +3996,8 @@ class ViewerApp {
     if (!firstSelection) return;
     const model = this.getFragmentsModel(firstSelection.modelId);
     if (!model) return;
+    // F5: property suffixes use the selected element's model units.
+    this.activePropertyUnits = this.modelUnits.get(firstSelection.modelId) ?? DEFAULT_MODEL_UNITS;
 
     const itemData = await model.getItemsData([firstSelection.localId], {
       attributesDefault: true,
