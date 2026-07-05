@@ -92,17 +92,6 @@ document.addEventListener('click', () => {
   document.querySelectorAll('.menu-dropdown.open').forEach((d) => d.classList.remove('open'));
 });
 
-// Grid off by default — dispatch change after viewer init.
-// (AUDIT F4: this 500 ms hack races init and is deleted in W1.5 — kept
-// verbatim in this commit so the CSP move stays behavior-neutral.)
-setTimeout(() => {
-  const grid = document.getElementById('toggleGrid') as HTMLInputElement | null;
-  if (grid && grid.checked) {
-    grid.checked = false;
-    grid.dispatchEvent(new Event('change'));
-  }
-}, 500);
-
 // Tab scroll buttons
 const tabsWrap = document.querySelector<HTMLElement>('.panel-tabs-wrap');
 const tabsContainer = document.querySelector<HTMLElement>('.panel-tabs');

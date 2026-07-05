@@ -125,6 +125,8 @@ interface PersistedViewerState {
   edges: boolean;
   gridVisible?: boolean;
   backgroundColor?: string;
+  /** F8: each theme remembers its own background. */
+  backgroundByTheme?: { dark: string; light: string };
   theme?: 'dark' | 'light';
   viewpoints: SavedViewpoint[];
   issues: Omit<IssueRecord, 'markerId'>[];
@@ -178,6 +180,7 @@ interface FederatedModelRecord {
 
 const STORAGE_KEY = 'bim_for_field_viewer_state_v1';
 const DEFAULT_BACKGROUND_COLOR = '#0b1220';
+const DEFAULT_LIGHT_BACKGROUND_COLOR = '#c6d5e8';
 // F2: viewpoint thumbnails are downscaled JPEGs; anything bigger than this
 // (i.e. a full-resolution capture) never enters the localStorage payload.
 const VIEWPOINT_THUMBNAIL_MAX_DIM = 320;
@@ -471,9 +474,18 @@ class ViewerApp {
   private edgesEnabled = false;
   private visualStyle: VisualStyle = 'color-pen-shadows';
   private issuePinMode = false;
-  private gridVisible = true;
+  // F4: grid defaults off — the single source of truth (the old 500 ms
+  // checkbox-reset hack in index.html raced init and clobbered persisted
+  // preferences and the status bar).
+  private gridVisible = false;
   private themeMode: 'dark' | 'light' = 'dark';
   private backgroundColor = DEFAULT_BACKGROUND_COLOR;
+  // F8: per-theme background memory — the theme toggle swaps stored values
+  // instead of force-overwriting a custom background.
+  private backgroundByTheme: Record<'dark' | 'light', string> = {
+    dark: DEFAULT_BACKGROUND_COLOR,
+    light: DEFAULT_LIGHT_BACKGROUND_COLOR,
+  };
   private gridHelper: THREE.Object3D | null = null;
   private readonly appliedModelOpacity = new Map<string, number>();
   private hiddenLineColorOverride = false;
@@ -840,8 +852,9 @@ class ViewerApp {
     this.dom.toggleTheme.addEventListener('change', () => {
       this.themeMode = this.dom.toggleTheme.checked ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', this.themeMode);
-      const themeBg = this.themeMode === 'light' ? '#c6d5e8' : DEFAULT_BACKGROUND_COLOR;
-      this.setBackgroundColor(themeBg, false);
+      // F8: restore this theme's remembered background (custom colors survive
+      // theme round-trips instead of being force-reset to defaults).
+      this.setBackgroundColor(this.backgroundByTheme[this.themeMode], false);
       this.persistLocalState();
     });
 
@@ -865,7 +878,8 @@ class ViewerApp {
 
     this.dom.visualStyleSelect.addEventListener('change', () => {
       const style = this.parseVisualStyle(this.dom.visualStyleSelect.value);
-      this.fireAndForget(this.setVisualStyle(style, true, true), 'Set visual style');
+      // Explicit user style change is the only path that resets toggles (F3).
+      this.fireAndForget(this.setVisualStyle(style, true, true, true), 'Set visual style');
     });
 
     this.dom.btnSearch.addEventListener('click', () => {
@@ -2155,6 +2169,7 @@ class ViewerApp {
   private setBackgroundColor(color: string, updateStatus: boolean): void {
     const normalized = this.normalizeHexColor(color);
     this.backgroundColor = normalized;
+    this.backgroundByTheme[this.themeMode] = normalized;
     const threeColor = new THREE.Color(normalized);
     if (this.world?.scene?.three) this.world.scene.three.background = threeColor;
     // Sync the renderer clear color so PEN style (which bypasses the scene color pass)
@@ -2298,7 +2313,7 @@ class ViewerApp {
     this.consistentLightOverride = false;
   }
 
-  private async setVisualStyle(style: VisualStyle, updateStatus: boolean, persist: boolean): Promise<void> {
+  private async setVisualStyle(style: VisualStyle, updateStatus: boolean, persist: boolean, resetToggles = false): Promise<void> {
     const resolvedStyle = this.parseVisualStyle(style);
     this.visualStyle = resolvedStyle;
     this.dom.visualStyleSelect.value = resolvedStyle;
@@ -2307,11 +2322,15 @@ class ViewerApp {
     this.restoreOriginalLighting();
     this.configurePostproduction(resolvedStyle);
 
-    // Reset independent toggles when switching styles
-    this.xrayEnabled = false;
-    this.edgesEnabled = false;
-    this.dom.btnTransparency.classList.toggle('active', false);
-    this.dom.btnWireframe.classList.toggle('active', false);
+    // F3: X-ray/edges are reset only on an explicit user style change —
+    // model loads and state restores re-apply the current toggles instead
+    // of wiping them.
+    if (resetToggles) {
+      this.xrayEnabled = false;
+      this.edgesEnabled = false;
+      this.dom.btnTransparency.classList.toggle('active', false);
+      this.dom.btnWireframe.classList.toggle('active', false);
+    }
     this.applyXRay();
     this.applyEdges();
 
@@ -4472,6 +4491,10 @@ class ViewerApp {
       this.gridVisible = parsed.gridVisible ?? this.gridVisible;
       this.themeMode = parsed.theme ?? 'dark';
       this.backgroundColor = this.normalizeHexColor(parsed.backgroundColor ?? this.backgroundColor);
+      if (parsed.backgroundByTheme) {
+        this.backgroundByTheme.dark = this.normalizeHexColor(parsed.backgroundByTheme.dark, DEFAULT_BACKGROUND_COLOR);
+        this.backgroundByTheme.light = this.normalizeHexColor(parsed.backgroundByTheme.light, DEFAULT_LIGHT_BACKGROUND_COLOR);
+      }
       this.viewpoints = parsed.viewpoints;
       this.issues = parsed.issues.map((issue) => ({ ...issue }));
 
@@ -4539,6 +4562,7 @@ class ViewerApp {
       edges: this.edgesEnabled,
       gridVisible: this.gridVisible,
       backgroundColor: this.backgroundColor,
+      backgroundByTheme: { ...this.backgroundByTheme },
       theme: this.themeMode,
       viewpoints,
       issues,
@@ -4579,6 +4603,10 @@ class ViewerApp {
       this.gridVisible = parsed.gridVisible ?? this.gridVisible;
       this.themeMode = parsed.theme ?? 'dark';
       this.backgroundColor = this.normalizeHexColor(parsed.backgroundColor ?? this.backgroundColor);
+      if (parsed.backgroundByTheme) {
+        this.backgroundByTheme.dark = this.normalizeHexColor(parsed.backgroundByTheme.dark, DEFAULT_BACKGROUND_COLOR);
+        this.backgroundByTheme.light = this.normalizeHexColor(parsed.backgroundByTheme.light, DEFAULT_LIGHT_BACKGROUND_COLOR);
+      }
       this.viewpoints = parsed.viewpoints ?? [];
       this.issues = (parsed.issues ?? []).map((issue) => ({ ...issue }));
 

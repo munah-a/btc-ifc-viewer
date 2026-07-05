@@ -26,12 +26,10 @@ const viewerUrl = '/';
 
 const waitForAppReady = async (page: Page): Promise<void> => {
   await page.goto(viewerUrl);
-  // Waiting for 'Ready' in #statusText is racy: the F4 grid hack (500 ms
-  // timer in index.html) overwrites it with 'Grid hidden' whenever init
-  // finishes fast (AUDIT F4, fixed in W1.5). The FPS monitor only starts
-  // after init() fully completes, so a rendered FPS value is deterministic.
+  // init() ends with the 'Ready - load IFC model(s)' status; nothing races it
+  // anymore since W1.5 deleted the F4 grid hack.
   await page.waitForFunction(
-    () => /\d+ FPS/.test(document.querySelector('#perfInfo')?.textContent || ''),
+    () => (document.querySelector('#statusText')?.textContent || '').includes('Ready'),
     undefined,
     { timeout: 60_000 },
   );
@@ -522,6 +520,21 @@ test.describe('models panel', () => {
     await waitForStatus(page, 'Background color set to #c6d5e8');
     await expect(page.locator('#backgroundColorInput')).toHaveValue('#c6d5e8');
 
+    // AUDIT F8: a custom background survives a theme round-trip — the theme
+    // toggle swaps per-theme memory instead of force-resetting defaults.
+    await page.click('[data-bg-preset="#1b1f24"]');
+    await waitForStatus(page, 'Background color set to #1b1f24');
+    await page.click('#toggleTheme');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await expect(page.locator('#backgroundColorInput')).toHaveValue('#c6d5e8');
+    await page.click('#toggleTheme');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.locator('#backgroundColorInput')).toHaveValue('#1b1f24');
+
+    // Restore the default dark background for subsequent tests.
+    await page.click('[data-bg-preset="#0b1220"]');
+    await waitForStatus(page, 'Background color set to #0b1220');
+
     await page.locator('.app-titlebar').click();
     await expect(page.locator('#visualStyleSelect')).toBeHidden();
   });
@@ -587,8 +600,28 @@ test.describe('federation & load lifecycle', () => {
   test('second model federates with correct metadata and unloads cleanly', async ({ appPage: page }) => {
     const elementsBefore = await page.locator('#elementCount').textContent();
 
+    // AUDIT F3: X-ray/edges must survive a model load (setVisualStyle used to
+    // wipe them on every registration).
+    await page.click('#btnTransparency');
+    await waitForStatus(page, 'X-ray enabled');
+    await page.click('#btnWireframe');
+    await waitForStatus(page, 'Edge overlay enabled');
+
     await page.setInputFiles('#fileInput', secondIfcPath);
     await waitForModelCount(page, 2);
+
+    await expect(page.locator('#btnTransparency')).toHaveClass(/active/);
+    await expect(page.locator('#btnWireframe')).toHaveClass(/active/);
+    expect(await page.evaluate(() => {
+      const viewer = (window as any).__viewer;
+      return { xray: viewer.xrayEnabled, edges: viewer.edgesEnabled };
+    })).toEqual({ xray: true, edges: true });
+
+    // Restore toggles before the panel assertions below.
+    await page.click('#btnTransparency');
+    await waitForStatus(page, 'X-ray disabled');
+    await page.click('#btnWireframe');
+    await waitForStatus(page, 'Edge overlay disabled');
 
     await page.click('.tab-btn[data-tab="models"]');
     await expect(page.locator('.federated-model')).toHaveCount(2);
