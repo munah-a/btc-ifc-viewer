@@ -95,41 +95,99 @@ late W3.
 | W5 | Performance & field readiness | Split chunks (initial JS ≤ ~350KB gzip shell); IndexedDB model cache; on-demand render; PWA offline shell | ☐ not started |
 | W6 | Deferred backlog | (not scheduled — see §7) | — |
 
+**Program acceptance criteria (user directive, 2026-07-06 — applies to EVERY wave gate from W1 on,
+and to the final program exit):**
+1. **Zero browser console errors AND warnings** during app boot, model load, and full feature
+   exercise (checked via Playwright console capture + preview tools; the pre-existing suppressed
+   three.js shader warning must be resolved properly by W2.3, not silenced).
+2. **Fully responsive UI** — desktop (≥1380px), tablet (768–1023px), phone (≤767px) all functional;
+   verified at each gate even before W3 lands the redesign (pre-W3: no *regressions*; W3+: full spec).
+3. **Functional click-through with real models loaded** — every button, input, slider, menu item and
+   keyboard shortcut exercised against a loaded IFC fixture (e2e/fixtures/*.ifc) and verified to do
+   what its label says. Broken-by-design items already logged in AUDIT.md are exempt until their wave.
+Wave orchestrators must include a console-capture + viewport sweep + interactive sweep in their gate
+evidence. The PO re-verifies in the live browser before opening each wave PR.
+
 ## 5. Wave task breakdowns
 
 ### Wave 0 — Pipeline & safety net *(no behavior changes; everything later lands on this)*
 
-- [ ] **W0.1 Type-check works and runs.** Fix T2: add `"types": ["vite/client"]`, remove inert emit
+- [x] **W0.1 Type-check works and runs.** Fix T2: add `"types": ["vite/client"]`, remove inert emit
   options (A14), enable `noUnusedLocals`/`noUnusedParameters`. Add scripts:
   `"typecheck": "tsc --noEmit"`. Add `tsconfig.node.json` covering `e2e/` + configs (T8).
   Gate: `npm run typecheck` exits 0.
-- [ ] **W0.2 Lint/format + test harness.** ESLint (typescript-eslint recommended-type-checked) +
+  > Deviation: `noUnusedLocals` flags the A3 dead code, so W0.4 was executed immediately after W0.1
+  > (before W0.2/W0.3) to turn the gate green. `typecheck` checks both tsconfig projects.
+- [x] **W0.2 Lint/format + test harness.** ESLint (typescript-eslint recommended-type-checked) +
   Prettier + scripts. Autofix; hand-fix the remainder. Add **Vitest** now (config + one smoke test +
   `"test:unit"` script) so W1 can write unit tests. Gate: `npm run lint` and `npm run test:unit` exit 0.
-- [ ] **W0.3 Dependencies.** `npm audit fix` (clears critical fast-xml-parser chain, T3); pin
+  > Deviation: the `no-unsafe-*`/`no-explicit-any` family is disabled for `src/viewer.ts` (A8 — typed
+  > boundary lands W2.2) and `e2e/` (T6 — typed test api lands W2.5), with rationale comments in
+  > eslint.config.js; re-enable per file as those land. Repo-wide `prettier --write` was configured but
+  > NOT run, to preserve AUDIT.md line references until the W2 extraction (run `npm run format` then).
+- [x] **W0.3 Dependencies.** `npm audit fix` (clears critical fast-xml-parser chain, T3); pin
   `web-ifc` exact `0.0.74`; add `.github/dependabot.yml`; record vite-8 major upgrade as W6 item.
   Gate: `npm audit --omit=dev --audit-level=high` clean.
-- [ ] **W0.4 Delete dead code.** A3 (viewer.ts:2932-3296 + unused views + `listen()` decision per A5)
+  > Deviation: `npm audit fix` alone could not clear fast-xml-parser — the fixed
+  > @thatopen/components 3.4.3+ peers three>=0.182 + web-ifc>=0.0.77 + fragments~3.4 (off-limits per
+  > the pinned stack). Fixed instead with a scoped npm override: fast-xml-parser `^5.7.2` (resolves
+  > 5.9.3) inside @thatopen/components 3.3.x — same major @thatopen itself ships in 3.4.6. Remove the
+  > override when the stack is upgraded (W6). Remaining 2 advisories are dev-only (vite<=6.4.2/esbuild),
+  > cleared by the W6 vite-8 upgrade.
+- [x] **W0.4 Delete dead code.** A3 (viewer.ts:2932-3296 + unused views + `listen()` decision per A5)
   and U10 dead CSS blocks. Gate: build output shrinks; typecheck/lint clean.
-- [ ] **W0.5 Self-host runtime assets (A2/P2).** Copy `node_modules/web-ifc/web-ifc.wasm` and
+  > Deviation: two additional dead functions (`applyHiddenLineColors`/`applyConsistentLighting`) found
+  > by the new noUnusedLocals gate — logged as **A16** in AUDIT.md and deleted here. `listen()` decision:
+  > deleted (A5's listener rerouting happens in W2.3). 431 TS + 116 CSS lines removed.
+- [x] **W0.5 Self-host runtime assets (A2/P2).** Copy `node_modules/web-ifc/web-ifc.wasm` and
   `node_modules/@thatopen/fragments/dist/Worker/worker.mjs` into `public/` via a build script
   (`scripts/vendor-assets.mjs`, run in `prebuild`/`predev`) so versions track package-lock. Point
   `ifcLoader.setup` at `import.meta.env.BASE_URL`, fetch worker locally. Delete the dev-only wasm
   MIME plugin if Vite serves it correctly now. Gate: app boots with network blocked to unpkg/github.io.
-- [ ] **W0.6 Deploy config (P8, P5).** Env-driven base (`base: process.env.VITE_BASE ?? '/'`; Pages
+  > Note: vendored files are gitignored (generated); bundle keeps 4 inert `unpkg` strings inside the
+  > library's own `autoSetWasm()` which we disable (`autoSetWasm:false`) — verified unreachable by the
+  > host-blocked boot+load check. index.html still pulls Material Icons from Google Fonts — that CDN
+  > dependency is scheduled for W3.1 (self-hosted subset), per the plan.
+- [x] **W0.6 Deploy config (P8, P5).** Env-driven base (`base: process.env.VITE_BASE ?? '/'`; Pages
   workflow sets `/btc-ifc-viewer/`); add `vercel.json` (build output, headers incl. long-cache for
   hashed assets); move `public/*.ifc` → `e2e/fixtures/` (P5); real favicon; decide Vercel = primary,
   Pages = mirror. Gate: both deploys serve working app.
-- [ ] **W0.7 E2E can test the real artifact (T4).** Replace `import.meta.env.DEV` gating of
+  > Deviation: the Vercel verification deploy was created with plain `vercel deploy` (no `--prod`) but
+  > the platform assigned it `target: production` anyway (project CLI-default behavior) and the URL sits
+  > behind Vercel SSO deployment protection. Build is Ready and serves; PO should review the project's
+  > production-branch + deployment-protection settings before W4. Decision recorded: **Vercel primary
+  > (base `/`), Pages mirror (base `/btc-ifc-viewer/`)**. Favicon is a brand-mark SVG placeholder until
+  > W3.1's iconmark derivative.
+- [x] **W0.7 E2E can test the real artifact (T4).** Replace `import.meta.env.DEV` gating of
   `__viewer`/`__world` with explicit `VITE_E2E` define; `vite.e2e.config.ts` builds prod-mode with the
   define; Playwright `webServer` = `build && preview`. Gate: suite passes against built output
   (F1 will make search step fail — mark `test.fixme` referencing F1 until W1, keep rest green).
-- [ ] **W0.8 CI gate (T1).** New `.github/workflows/ci.yml` on `pull_request` + `push:main`:
+  > Note: DEV gating fully replaced — plain `npm run dev` no longer exposes `__viewer` (use
+  > `npm run dev:e2e`). The F1 `test.fixme` lives on the standalone search test created by the W0.9
+  > split ('selection & search › search finds elements and selects from results').
+- [x] **W0.8 CI gate (T1).** New `.github/workflows/ci.yml` on `pull_request` + `push:main`:
   typecheck → lint → test:unit → audit(high, prod) → build → `playwright install chromium --with-deps` → e2e.
   `deploy.yml` gains `needs: ci` (or job-level gate). Pin actions to SHAs (T9). Gate: red CI blocks deploy.
-- [ ] **W0.9 Minimal e2e split (T5, partial).** Split the monolith into ~6 `describe` blocks sharing a
+  > Note: implemented as a reusable workflow — ci.yml triggers on `pull_request` + `workflow_call`;
+  > deploy.yml calls it as job `ci` and `build` has `needs: ci` (push:main runs CI through that call).
+  > SHAs resolved via `git ls-remote`, cross-checked with `gh api`.
+- [x] **W0.9 Minimal e2e split (T5, partial).** Split the monolith into ~6 `describe` blocks sharing a
   loaded-model fixture; replace the seven 750ms sleeps with state waits. Deep rework deferred to W2/W3.
-- [ ] **W0.10 Update this plan** (checkboxes, Status Log, measured artifact/bundle sizes).
+  > Note: 7 describe blocks / 12 tests sharing a worker-scoped loaded-model fixture (model converts
+  > once per worker); the seven 750 ms camera sleeps became `expect.poll` direction/position waits and
+  > the 250 ms resize sleep became a double-rAF settle. Executed before W0.8 so the suite run could
+  > validate W0.7+W0.9 together.
+  > Deviation (larger than planned — the monolith was un-runnable on current main): running against
+  > the real artifact surfaced **T10** (new AUDIT finding): `openDock` clicked dock toggles that are
+  > `display:none` at desktop widths since the ui-overhaul, hanging 12 min per step under Playwright's
+  > unlimited default actionTimeout. Test-side fixes: direct tool-button clicks; `actionTimeout` 15 s /
+  > `navigationTimeout` 30 s; app-ready wait keyed on the FPS monitor (the F4 grid hack clobbers the
+  > 'Ready' status when init is fast); style/grid/background driven via the View menubar dropdown
+  > (U2 — no longer in the side panel); U8 confirm dialog acknowledged on viewpoint/issue deletes;
+  > element screenshots → viewport screenshots (2-stable-frame check starves at ~2 FPS headless WebGL,
+  > P6); `#cubeHome` before hotspot clicks (hotspots only render facing the camera). Final run vs
+  > production preview: **11 passed, 1 skipped (F1 fixme), 0 failed, 21.6 min**.
+- [x] **W0.10 Update this plan** (checkboxes, Status Log, measured artifact/bundle sizes).
 
 ### Wave 1 — Correctness *(all specs in AUDIT.md; add a regression test per fix)*
 
@@ -308,3 +366,4 @@ force-pushes or merges without explicit approval.
 | 2026-07-05 | PO (Claude) | Plan v2 after independent review (verdict: ISSUES_FOUND, 5 major/5 minor, all resolved): F6 assigned to W1.4; F5 moved W2→new W1.9 (W2 stays behavior-preserving); Vitest moved to W0.2; W1/W4 gates restated to exact IDs/envelope; WO input rule = full plan doc; `.frag` served direct from Blob CDN (no function egress); DELETE endpoint + anon quota key (salted-IP surrogate ownerId) specified; cost envelope ≤$20/mo, R2 trigger >$10/mo egress ×2 months; frame-ancestors domains named; P8 cited in W0.6. Re-review: pending. |
 | 2026-07-05 | PO (Claude) | Re-review verdict: **APPROVED**, zero orphaned finding IDs. 4 minor touch-ups applied → plan v3 (final): test:unit added to W0.8 CI sequence; W1 gate marks A15/U11 as partial; `.frag` cache-control moved to Blob put-time in W4.3; frame-ancestors list corrected (`*.notion.so`, added `*.cloud.microsoft`). **Plan is execution-ready. Next: user merges/commits docs, unblocks design import (for W3), and green-lights W0.** |
 | 2026-07-05 | PO (Claude) | **Design blocker RESOLVED**: user dropped the Claude Design handoff bundle at `BIM Viewer UIUX Branding-handoff/` (284 KB — commit with repo). Scouted: `BTC IFC Viewer.dc.html` (1,122 lines, desktop + mobile variants, two full theme token sets), "Precision Architect" design system (`colors_and_type.css`, README), brand assets (logo-primary/logo-white/iconmark SVGs). W3 re-specced against real files and marked ready. Noted: prototype pulls Outfit/Inter + Material Symbols from Google Fonts — W3.1 self-hosts/subsets them per C1/A2. All waves now unblocked. |
+| 2026-07-06 | W0 orchestrator | **Wave 0 complete** on `wave/0-pipeline` (W0.1–W0.10 ticked, deviations annotated inline). Gates: typecheck ✓, lint ✓, test:unit ✓, `npm audit --omit=dev --audit-level=high` **0 vulns** (2 dev-only vite/esbuild advisories remain → W6 vite-8), build ✓, full e2e vs **production preview**: **11 passed / 1 skipped (F1 fixme) / 0 failed, 21.6 min**; offline gate ✓ (boot + 1526-element model load with unpkg + thatopen.github.io blocked, 0 attempted requests; prod bundle contains no reachable CDN refs and no test hooks). Measurements: bundle **5,716.70 kB (996.85 kB gzip, 1 chunk)** vs baseline 5,725.61/999.32 (P1 splitting is W5.1); **dist 8.04 MB** (was 28.20 — P5) incl. vendored web-ifc.wasm 1.29 MB + worker.mjs 1.30 MB. New findings: **A16** (dead visual-override pair — deleted), **T10** (e2e monolith un-runnable on current main: display:none dock toggles + unlimited actionTimeout → fixed in W0.9 rewrite). PO notes: (1) `vercel deploy` without `--prod` still produced a `target: production` deployment (URL is SSO-protected; build Ready) — review the project's production-branch/deployment-protection settings before W4; (2) fast-xml-parser cleared via scoped npm override `^5.7.2` (peer conflict blocks @thatopen 3.4 on the pinned stack) — drop the override at the W6 stack upgrade; (3) plain `npm run dev` no longer exposes `__viewer` — use `dev:e2e` when debugging with hooks; (4) suite runtime is conversion-dominated (~2 min fixture per worker; each CI retry rebuilds it) — CI job budgeted 45 min; (5) the §4 console/viewport/interactive sweep gate was added to the plan mid-wave: this wave's evidence covers pageerror-free boot+load and the full-suite interactive exercise at 1600×1000 (+1600×500 in-test); a dedicated console-warning capture and tablet/phone viewport sweep were NOT run — recommend PO fold them into the W1 gate. |
