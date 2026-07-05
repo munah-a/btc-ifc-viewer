@@ -1077,6 +1077,17 @@ select.text-input:focus {
   cursor: pointer;
 }
 
+/* F2: downscaled snapshot thumbnails rendered in the viewpoint list */
+.viewpoint-thumb {
+  display: block;
+  width: 100%;
+  max-height: 120px;
+  object-fit: cover;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+
 .result-item:hover,
 .issue-item:hover,
 .viewpoint-item:hover,

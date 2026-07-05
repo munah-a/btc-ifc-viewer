@@ -177,6 +177,11 @@ interface FederatedModelRecord {
 
 const STORAGE_KEY = 'bim_for_field_viewer_state_v1';
 const DEFAULT_BACKGROUND_COLOR = '#0b1220';
+// F2: viewpoint thumbnails are downscaled JPEGs; anything bigger than this
+// (i.e. a full-resolution capture) never enters the localStorage payload.
+const VIEWPOINT_THUMBNAIL_MAX_DIM = 320;
+const VIEWPOINT_THUMBNAIL_JPEG_QUALITY = 0.72;
+const MAX_PERSISTED_SNAPSHOT_CHARS = 150_000;
 const MAX_PROPERTY_ROWS = 280;
 const MAX_PROPERTY_DEPTH = 4;
 const MAX_PROPERTY_VALUE_LENGTH = 220;
@@ -4052,12 +4057,8 @@ class ViewerApp {
       origin: { x: plane.origin.x, y: plane.origin.y, z: plane.origin.z },
     }));
 
-    const renderer = this.world.renderer;
-    if (!renderer) {
-      this.setStatus('Renderer unavailable for snapshot');
-      return;
-    }
-    const snapshot = renderer.three.domElement.toDataURL('image/png');
+    // F2: downscaled JPEG thumbnail rendered immediately before capture.
+    const snapshot = this.captureViewpointThumbnail();
 
     const viewpoint: SavedViewpoint = {
       id: uniqueId(),
@@ -4168,8 +4169,12 @@ class ViewerApp {
         const active = entry.id === this.selectedViewpointId ? 'active' : '';
         const escapedId = escapeHtml(entry.id);
         const escapedName = escapeHtml(entry.name);
+        const thumbnail = entry.snapshot
+          ? `<img class="viewpoint-thumb" src="${escapeHtml(entry.snapshot)}" alt="" loading="lazy" />`
+          : '';
         return `
           <div class="viewpoint-item ${active}" data-viewpoint-id="${escapedId}">
+            ${thumbnail}
             <div><strong>${escapedName}</strong></div>
             <div>${new Date(entry.createdAt).toLocaleString()}</div>
           </div>
@@ -4428,9 +4433,40 @@ class ViewerApp {
       .join('');
   }
 
+  /**
+   * F2: the WebGL drawing buffer is not preserved, so toDataURL() on a stale
+   * canvas yields a blank transparent PNG. Rendering immediately before the
+   * read guarantees a fresh frame (PostproductionRenderer.update() runs the
+   * composer when postproduction is enabled).
+   */
+  private captureCanvas(type = 'image/png', quality?: number): string | null {
+    const renderer = this.world?.renderer;
+    if (!renderer) return null;
+    renderer.update();
+    return renderer.three.domElement.toDataURL(type, quality);
+  }
+
+  /** Downscaled JPEG thumbnail of the current view (≤320px, F2). */
+  private captureViewpointThumbnail(): string | undefined {
+    const renderer = this.world?.renderer;
+    if (!renderer) return undefined;
+    renderer.update();
+    const source = renderer.three.domElement;
+    const largest = Math.max(source.width, source.height);
+    if (largest === 0) return undefined;
+    const scale = Math.min(1, VIEWPOINT_THUMBNAIL_MAX_DIM / largest);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(source.width * scale));
+    canvas.height = Math.max(1, Math.round(source.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return undefined;
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', VIEWPOINT_THUMBNAIL_JPEG_QUALITY);
+  }
+
   private exportScreenshot(): void {
-    if (!this.world?.renderer) return;
-    const dataUrl = this.world.renderer.three.domElement.toDataURL('image/png');
+    const dataUrl = this.captureCanvas('image/png');
+    if (!dataUrl) return;
     fetch(dataUrl)
       .then((response) => response.blob())
       .then((blob) => {
@@ -4513,6 +4549,16 @@ class ViewerApp {
       comments: issue.comments.map((comment) => ({ ...comment })),
     }));
 
+    // F2 size guard: only downscaled thumbnails are persisted — any snapshot
+    // above the cap (e.g. a full-res capture from an imported legacy state)
+    // is dropped from the localStorage payload.
+    const viewpoints = this.viewpoints.map((viewpoint) => ({
+      ...viewpoint,
+      snapshot: viewpoint.snapshot && viewpoint.snapshot.length <= MAX_PERSISTED_SNAPSHOT_CHARS
+        ? viewpoint.snapshot
+        : undefined,
+    }));
+
     return {
       version: 1,
       selectionMode: this.selectionMode,
@@ -4523,17 +4569,27 @@ class ViewerApp {
       gridVisible: this.gridVisible,
       backgroundColor: this.backgroundColor,
       theme: this.themeMode,
-      viewpoints: this.viewpoints,
+      viewpoints,
       issues,
     };
   }
 
   private persistLocalState(): void {
+    const payload = this.getPersistedState();
     try {
-      const payload = this.getPersistedState();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    } catch (error) {
-      this.setStatus(`Unable to persist local state: ${serializeError(error)}`);
+    } catch {
+      // Quota exceeded — retry once without snapshots (F2 size guard).
+      try {
+        const stripped = {
+          ...payload,
+          viewpoints: payload.viewpoints.map((viewpoint) => ({ ...viewpoint, snapshot: undefined })),
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(stripped));
+        this.setStatus('Local state saved without thumbnails (storage quota)');
+      } catch (retryError) {
+        this.setStatus(`Unable to persist local state: ${serializeError(retryError)}`);
+      }
     }
   }
 

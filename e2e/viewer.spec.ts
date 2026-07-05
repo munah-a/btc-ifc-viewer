@@ -629,6 +629,47 @@ test.describe('viewpoints, issues & state persistence', () => {
     await page.fill('#viewpointName', 'QA View');
     await page.click('#btnSaveViewpoint');
     await waitForStatus(page, 'Saved viewpoint: QA View', 30_000);
+
+    // AUDIT F2 regression: the snapshot must be a real (non-blank) capture —
+    // decode it and assert pixel variance; size/mime prove the ≤320px JPEG
+    // thumbnail contract. A blank transparent capture decodes to zero spread.
+    const snapshotInfo = await page.evaluate(async () => {
+      const viewpoint = (window as any).__viewer.viewpoints[0];
+      if (!viewpoint?.snapshot) return null;
+      const image = new Image();
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = reject;
+        image.src = viewpoint.snapshot;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d');
+      if (!context) return null;
+      context.drawImage(image, 0, 0);
+      const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+      let min = 255;
+      let max = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const luminance = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        if (luminance < min) min = luminance;
+        if (luminance > max) max = luminance;
+      }
+      return {
+        mime: viewpoint.snapshot.slice(5, viewpoint.snapshot.indexOf(';')),
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        spread: max - min,
+      };
+    });
+    expect(snapshotInfo).not.toBeNull();
+    expect(snapshotInfo?.mime).toBe('image/jpeg');
+    expect(Math.max(snapshotInfo?.width ?? 0, snapshotInfo?.height ?? 0)).toBeLessThanOrEqual(320);
+    expect(snapshotInfo?.spread ?? 0).toBeGreaterThan(25);
+    // Thumbnail is rendered in the viewpoint list.
+    await expect(page.locator('.viewpoint-thumb').first()).toBeVisible();
+
     await page.locator('[data-viewpoint-id]').first().click();
     await page.click('#btnApplySelectedViewpoint');
     await waitForStatus(page, 'Applied viewpoint: QA View', 30_000);
