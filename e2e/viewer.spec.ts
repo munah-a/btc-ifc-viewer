@@ -338,11 +338,9 @@ test.describe('selection & search', () => {
     await expect(page.locator('#btnSelectSingle')).toHaveClass(/active/);
   });
 
-  // AUDIT F1: search crashes on any hit — fragments v3.3 getItemsData returns
-  // {value,type} ItemAttribute objects and searchElements feeds them raw into
-  // escapeHtml, which throws, so .result-item never renders. Fix is W1.1 —
-  // un-fixme this test there.
-  test.fixme('search finds elements and selects from results', async ({ appPage: page }) => {
+  // AUDIT F1 regression: search used to crash on any hit (raw ItemAttribute
+  // objects fed into escapeHtml) — fixed in W1.1 by unwrapping to primitives.
+  test('search finds elements and selects from results', async ({ appPage: page }) => {
     const modelContext = await getModelContext(page);
     await page.fill('#searchInput', modelContext.searchTerm.split(':')[0].trim());
     await page.click('#btnSearch');

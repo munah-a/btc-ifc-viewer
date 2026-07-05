@@ -2694,10 +2694,12 @@ class ViewerApp {
 
       for (let i = 0; i < trimmed.length; i += 1) {
         const localId = trimmed[i];
-        const data = itemsData[i] as Record<string, unknown>;
-        const name = (data?.Name as string | undefined) || `Element ${localId}`;
-        const type = (data?.ObjectType as string | undefined) || (data?.PredefinedType as string | undefined) || 'Item';
-        const globalId = (data?.GlobalId as string | undefined) || '-';
+        const data = (itemsData[i] || {}) as Record<string, unknown>;
+        // F1: fragments v3.3 returns {value,type} ItemAttribute objects —
+        // unwrap to primitives before they reach escapeHtml/rendering.
+        const name = this.readPrimitiveValue(data.Name) || `Element ${localId}`;
+        const type = this.readPrimitiveValue(data.ObjectType) || this.readPrimitiveValue(data.PredefinedType) || 'Item';
+        const globalId = this.readPrimitiveValue(data.GlobalId) || '-';
         results.push({ modelId, localId, name, type, globalId });
       }
     }
