@@ -2851,7 +2851,7 @@ class ViewerApp {
       }
 
       const elapsed = ((performance.now() - start) / 1000).toFixed(1);
-      if (requestId !== this.loadRequestId) return false;
+      if (requestId !== this.loadRequestId) return { success: true };
 
       this.dom.perfInfo.textContent = `Loaded in ${elapsed}s | ${(file.size / 1024 / 1024).toFixed(1)}MB`;
       this.dom.loadingProgress.style.width = '100%';
