@@ -1744,9 +1744,11 @@ kbd {
 
 /* ═══ Toast Notifications ═══ */
 
+/* U11: anchored bottom-right (above the status bar) so toasts never overlap
+   the view cube in the viewport's top-right corner. */
 #toast-container {
   position: fixed;
-  top: 72px;
+  bottom: 40px;
   right: 16px;
   z-index: 10000;
   display: flex;

@@ -107,7 +107,9 @@
           <div class="menu-sep"></div>
           <button data-menu-action="btnIsolate">Isolate Selection</button>
           <button data-menu-action="btnHide">Hide Selection</button>
-          <button data-menu-action="btnShow">Show All</button>
+          <!-- F7: this action shows the current selection (it errors without
+               one) — labeled accordingly; "Reset Visibility" shows all. -->
+          <button data-menu-action="btnShow">Show Selection</button>
           <button data-menu-action="btnResetVisibility">Reset Visibility</button>
         </div>
       </div>
@@ -521,7 +523,10 @@
       <span id="selectionCount" class="status-pill">0 selected</span>
       <span id="elementCount" class="status-pill">0 elements</span>
       <span id="visibleCount" class="status-pill">0 visible</span>
-      <span id="perfInfo" class="status-item status-right"></span>
+      <!-- A15: load metrics get their own slot so the FPS monitor no longer
+           overwrites them within a second of a load finishing. -->
+      <span id="loadInfo" class="status-item status-right"></span>
+      <span id="perfInfo" class="status-item"></span>
     </div>
   </div>
 

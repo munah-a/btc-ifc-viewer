@@ -278,6 +278,10 @@ test.describe('shell & boot', () => {
 
     await expect(page.locator('#elementCount')).not.toHaveText(/0 elements/);
     await expect(page.locator('#visibleCount')).not.toHaveText(/0 visible/);
+    // AUDIT A15: load metrics live in their own status slot and coexist with
+    // the FPS monitor instead of being overwritten within a second.
+    await expect(page.locator('#loadInfo')).toHaveText(/Loaded in .+s \| .+MB/);
+    await expect(page.locator('#perfInfo')).toHaveText(/\d+ FPS/);
 
     const screenshotDownload = page.waitForEvent('download');
     await page.click('#btnExportScreenshot');
@@ -346,6 +350,44 @@ test.describe('selection & search', () => {
     await expect(page.locator('.result-item').first()).toBeVisible();
     await page.locator('.result-item').first().click();
     await expect(page.locator('#selectionCount')).toHaveText(/1 selected/);
+  });
+
+  // AUDIT F11: a disjoint class∩level filter combination used to silently
+  // hide the entire model — it must warn and leave visibility untouched.
+  test('disjoint class and level filters warn instead of hiding everything', async ({ appPage: page }) => {
+    const disjoint = await page.evaluate(() => {
+      const viewer = (window as any).__viewer;
+      const firstEntry = Array.from(viewer.modelIndices.values())[0] as any;
+      if (!firstEntry) return null;
+      for (const [className, classIds] of firstEntry.classes.entries()) {
+        for (const [levelName, levelIds] of firstEntry.levels.entries()) {
+          let overlaps = false;
+          for (const id of classIds) {
+            if (levelIds.has(id)) {
+              overlaps = true;
+              break;
+            }
+          }
+          if (!overlaps) return { className, levelName };
+        }
+      }
+      return null;
+    });
+    // Hard expectation (gate forbids skipped tests): the structural fixture
+    // has storey-specific classes, so a disjoint pair must exist.
+    expect(disjoint).not.toBeNull();
+    if (!disjoint) return;
+
+    const visibleBefore = await page.locator('#visibleCount').textContent();
+    await page.check(`input[data-filter-type="class"][value="${disjoint.className}"]`);
+    await page.check(`input[data-filter-type="level"][value="${disjoint.levelName}"]`);
+    await page.click('#btnApplyFilters');
+    await expect(page.locator('.toast-warning')).toBeVisible();
+    await waitForStatus(page, 'Selected filters have no elements in common');
+    await expect(page.locator('#visibleCount')).toHaveText(visibleBefore || '');
+
+    await page.click('#btnClearFilters');
+    await waitForStatus(page, 'Filters reset');
   });
 });
 
@@ -633,6 +675,39 @@ test.describe('federation & load lifecycle', () => {
     const elementsWithTwo = await page.locator('#elementCount').textContent();
     expect(elementsWithTwo).not.toBe(elementsBefore);
 
+    // AUDIT F9: issues capture the full multi-model selection (not just the
+    // first model's elements) while both models are loaded.
+    await page.evaluate(() => {
+      const viewer = (window as any).__viewer;
+      for (const key of Object.keys(viewer.selectedItems)) delete viewer.selectedItems[key];
+      for (const [modelId, index] of viewer.modelIndices.entries()) {
+        const firstId = Array.from(index.allIds)[0];
+        if (typeof firstId === 'number') viewer.selectedItems[modelId] = new Set([firstId]);
+      }
+    });
+    await page.click('.tab-btn[data-tab="issues"]');
+    await page.fill('#issueTitle', 'Multi-model issue');
+    await page.click('#btnCreateIssue');
+    await waitForStatus(page, 'Issue created');
+    const captured = await page.evaluate(() => {
+      const issue = (window as any).__viewer.issues[0];
+      return {
+        models: Object.keys(issue.elementsByModel ?? {}).length,
+        legacyModelId: typeof issue.modelId === 'string',
+      };
+    });
+    expect(captured.models).toBe(2);
+    expect(captured.legacyModelId).toBe(true);
+    await page.locator('[data-issue-id]').first().click();
+    await page.click('#btnDeleteIssue');
+    await page.click('.confirm-btn-confirm');
+    await page.waitForFunction(
+      () => !(document.querySelector('#issuesList')?.textContent || '').includes('Multi-model issue'),
+      undefined,
+      { timeout: 20_000 },
+    );
+    await page.click('.tab-btn[data-tab="models"]');
+
     // F6: unload the second model via the federation panel action.
     await page.locator('[data-model-action="unload"]').nth(1).click();
     await page.click('.confirm-btn-confirm');
@@ -663,6 +738,14 @@ test.describe('error surfacing (U4)', () => {
     await page.setInputFiles('#importStateInput', badStatePath);
     await expect(page.locator('.toast-error')).toBeVisible();
     await waitForStatus(page, 'Import failed');
+    // AUDIT U11: toasts anchor bottom-right, clear of the view cube (top-right).
+    const toastBox = await page.locator('.toast-error').boundingBox();
+    const viewportSize = page.viewportSize();
+    expect(toastBox).not.toBeNull();
+    expect(viewportSize).not.toBeNull();
+    if (toastBox && viewportSize) {
+      expect(toastBox.y).toBeGreaterThan(viewportSize.height / 2);
+    }
     // Toasts auto-dismiss — wait so later assertions see a clean slate.
     await page.waitForSelector('.toast-error', { state: 'detached', timeout: 10_000 });
 

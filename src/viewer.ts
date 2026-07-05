@@ -4,6 +4,7 @@ import * as OBCF from '@thatopen/components-front';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { SpatialTreeItem } from '@thatopen/fragments';
 
+import { isModelNotFoundError, serializeError } from './core/errors';
 import { escapeHtml, filterListMarkup, spatialTreeMarkup } from './core/markup';
 import { ModelRegistry } from './core/model-registry';
 import {
@@ -264,11 +265,6 @@ const intersectMaps = (a: OBC.ModelIdMap, b: OBC.ModelIdMap): OBC.ModelIdMap => 
   return result;
 };
 
-const serializeError = (error: unknown): string => {
-  if (error instanceof Error) return error.message;
-  return String(error);
-};
-
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 const uniqueId = (): string => {
@@ -330,6 +326,7 @@ class ViewerApp {
     selectionCount: required<HTMLSpanElement>('selectionCount'),
     elementCount: required<HTMLSpanElement>('elementCount'),
     visibleCount: required<HTMLSpanElement>('visibleCount'),
+    loadInfo: required<HTMLSpanElement>('loadInfo'),
     perfInfo: required<HTMLSpanElement>('perfInfo'),
     btnModeOrbit: required<HTMLButtonElement>('btnModeOrbit'),
     btnModePlan: required<HTMLButtonElement>('btnModePlan'),
@@ -2333,8 +2330,10 @@ class ViewerApp {
 
   private handleAsyncError(context: string, error: unknown): void {
     const message = serializeError(error);
-    const normalized = message.toLowerCase();
-    if (normalized.includes('model not found')) {
+    if (isModelNotFoundError(error)) {
+      // A9: benign engine race (operation vs model unload) — self-heals by
+      // pruning the selection; logged for observability, not surfaced.
+      console.debug(`Suppressed model-not-found race during "${context}":`, error);
       this.pruneSelectedItems();
       if (context !== 'Camera update') {
         this.setStatus('Model synchronization updated. Please reselect element if needed.');
@@ -2626,8 +2625,16 @@ class ViewerApp {
     else effectiveMap = levelMap;
     effectiveMap = this.getValidModelIdMap(effectiveMap);
 
+    // F11: a disjoint class∩level combination used to silently hide the
+    // entire model — warn and keep the current visibility instead.
+    if (isMapEmpty(effectiveMap)) {
+      this.showToast('No elements match the selected class and level filters — nothing was hidden', 'warning');
+      this.setStatus('Selected filters have no elements in common');
+      return;
+    }
+
     await this.hider.set(false);
-    if (!isMapEmpty(effectiveMap)) await this.hider.set(true, effectiveMap);
+    await this.hider.set(true, effectiveMap);
     await this.updateVisibilityCount();
     this.setStatus('Filters applied');
   }
@@ -2853,7 +2860,8 @@ class ViewerApp {
       const elapsed = ((performance.now() - start) / 1000).toFixed(1);
       if (requestId !== this.loadRequestId) return { success: true };
 
-      this.dom.perfInfo.textContent = `Loaded in ${elapsed}s | ${(file.size / 1024 / 1024).toFixed(1)}MB`;
+      // A15: dedicated slot — the FPS monitor owns perfInfo.
+      this.dom.loadInfo.textContent = `Loaded in ${elapsed}s | ${(file.size / 1024 / 1024).toFixed(1)}MB`;
       this.dom.loadingProgress.style.width = '100%';
       this.setStatus('Model loaded successfully');
 
@@ -3127,15 +3135,13 @@ class ViewerApp {
     this.setMeasureMode('none');
   }
 
-  private addSectionPlane(normal: THREE.Vector3): void {
-    const bbox = this.getModelBoundingBox();
-    if (!bbox || bbox.isEmpty()) {
-      this.setStatus('No model to section');
-      return;
-    }
-    const center = bbox.getCenter(new THREE.Vector3());
+  /**
+   * F10: the single clip-plane creation path — every caller (section buttons
+   * AND viewpoint restore) gets the gizmo visibility fix.
+   */
+  private createClipPlane(normal: THREE.Vector3, point: THREE.Vector3): void {
     this.clipper.enabled = true;
-    const planeId = this.clipper.createFromNormalAndCoplanarPoint(this.world, normal, center);
+    const planeId = this.clipper.createFromNormalAndCoplanarPoint(this.world, normal, point);
     // Exempt the gizmo from clipping and depth-test so the arrow is always visible
     // (renders on top of model geometry and not clipped by section planes)
     const plane = this.clipper.list.get(planeId);
@@ -3155,6 +3161,16 @@ class ViewerApp {
         child.renderOrder = 999;
       });
     }
+  }
+
+  private addSectionPlane(normal: THREE.Vector3): void {
+    const bbox = this.getModelBoundingBox();
+    if (!bbox || bbox.isEmpty()) {
+      this.setStatus('No model to section');
+      return;
+    }
+    const center = bbox.getCenter(new THREE.Vector3());
+    this.createClipPlane(normal, center);
     this.setStatus('Section plane added');
   }
 
@@ -4110,14 +4126,15 @@ class ViewerApp {
     );
 
     this.clearSections(false);
-    this.clipper.enabled = viewpoint.clippingPlanes.length > 0;
+    // F10: restore clipping through the shared creation path so the plane
+    // gizmos stay visible exactly like the section buttons' planes.
     for (const plane of viewpoint.clippingPlanes) {
-      this.clipper.createFromNormalAndCoplanarPoint(
-        this.world,
+      this.createClipPlane(
         new THREE.Vector3(plane.normal.x, plane.normal.y, plane.normal.z),
         new THREE.Vector3(plane.origin.x, plane.origin.y, plane.origin.z),
       );
     }
+    this.clipper.enabled = viewpoint.clippingPlanes.length > 0;
 
     await this.hider.set(true);
     const hiddenMap = this.getValidModelIdMap(toSetMap(viewpoint.hiddenItems));
@@ -4206,6 +4223,13 @@ class ViewerApp {
     const point = this.pendingIssuePoint ?? this.lastHitPoint;
     const issuePoint = point ? { x: point.x, y: point.y, z: point.z } : null;
 
+    // F9: capture the whole multi-model selection; modelId/localIds keep the
+    // first model for backwards compatibility with older exports.
+    const elementsByModel: Record<string, number[]> = {};
+    for (const [modelId, ids] of Object.entries(this.selectedItems)) {
+      if (ids.size > 0) elementsByModel[modelId] = [...ids];
+    }
+
     const issue: IssueRecord = {
       id: uniqueId(),
       title,
@@ -4217,6 +4241,7 @@ class ViewerApp {
       updatedAt: new Date().toISOString(),
       modelId: firstSelection?.modelId ?? null,
       localIds: firstSelection ? [...this.selectedItems[firstSelection.modelId]] : [],
+      elementsByModel: Object.keys(elementsByModel).length > 0 ? elementsByModel : undefined,
       point: issuePoint,
       comments: [],
     };
@@ -4240,6 +4265,19 @@ class ViewerApp {
     this.setStatus('Issue created');
   }
 
+  /**
+   * F9: a pin is only resolvable while at least one referenced model is
+   * loaded (or, for point-only pins, while any model gives it context) —
+   * orphan pins floating in an empty viewer are hidden, not deleted.
+   */
+  private isIssueMarkerResolvable(issue: IssueRecord): boolean {
+    const referenced = issue.elementsByModel
+      ? Object.keys(issue.elementsByModel)
+      : (issue.modelId ? [issue.modelId] : []);
+    if (referenced.length > 0) return referenced.some((modelId) => this.federatedModels.has(modelId));
+    return this.federatedModels.size > 0;
+  }
+
   private createIssueMarker(issue: IssueRecord): void {
     if (!issue.point) return;
 
@@ -4247,6 +4285,8 @@ class ViewerApp {
       this.markerManager.delete(issue.markerId);
       issue.markerId = undefined;
     }
+
+    if (!this.isIssueMarkerResolvable(issue)) return;
 
     const markerElement = document.createElement('button');
     markerElement.type = 'button';
@@ -4330,10 +4370,16 @@ class ViewerApp {
     this.dom.issueStatus.value = issue.status;
     this.dom.issueAssignee.value = issue.assignee;
 
-    if (issue.modelId && issue.localIds.length > 0 && this.isLoadedModelId(issue.modelId)) {
-      const selection: OBC.ModelIdMap = { [issue.modelId]: new Set(issue.localIds) };
+    // F9: re-select the issue's elements across every loaded model.
+    const elements = issue.elementsByModel
+      ?? (issue.modelId && issue.localIds.length > 0 ? { [issue.modelId]: issue.localIds } : {});
+    const loadedSelection: OBC.ModelIdMap = {};
+    for (const [modelId, ids] of Object.entries(elements)) {
+      if (ids.length > 0 && this.isLoadedModelId(modelId)) loadedSelection[modelId] = new Set(ids);
+    }
+    if (Object.keys(loadedSelection).length > 0) {
       clearMap(this.selectedItems);
-      Object.assign(this.selectedItems, selection);
+      Object.assign(this.selectedItems, loadedSelection);
       this.fireAndForget(this.refreshSelectionVisuals(), 'Issue selection');
     }
 
@@ -4511,6 +4557,9 @@ class ViewerApp {
       updatedAt: issue.updatedAt,
       modelId: issue.modelId,
       localIds: [...issue.localIds],
+      elementsByModel: issue.elementsByModel
+        ? Object.fromEntries(Object.entries(issue.elementsByModel).map(([modelId, ids]) => [modelId, [...ids]]))
+        : undefined,
       point: issue.point ? { ...issue.point } : null,
       comments: issue.comments.map((comment) => ({ ...comment })),
     }));
