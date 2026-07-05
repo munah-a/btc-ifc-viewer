@@ -27,6 +27,9 @@ jobs:
 
       - run: npm ci
       - run: npm run build
+        env:
+          # GitHub Pages mirror serves under the repo subpath (AUDIT P8).
+          VITE_BASE: /btc-ifc-viewer/
 
       - uses: actions/upload-pages-artifact@v3
         with:

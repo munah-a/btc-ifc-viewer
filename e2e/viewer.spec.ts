@@ -19,7 +19,7 @@ type ModelContext = {
   firstItemId: number;
 };
 
-const ifcPath = path.join(process.cwd(), 'public', 'school_str.ifc');
+const ifcPath = path.join(process.cwd(), 'e2e', 'fixtures', 'school_str.ifc');
 const viewerUrl = 'http://127.0.0.1:4173/btc-ifc-viewer/';
 
 const waitForAppReady = async (page: Page): Promise<void> => {
