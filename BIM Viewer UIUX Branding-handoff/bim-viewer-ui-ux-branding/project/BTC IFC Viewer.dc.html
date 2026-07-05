@@ -1,0 +1,1122 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="_ds/bim-tech-consulting-design-system-9849dc0f-d9fb-4851-b501-c9956fab591d/colors_and_type.css">
+  <script src="_ds/bim-tech-consulting-design-system-9849dc0f-d9fb-4851-b501-c9956fab591d/_ds_bundle.js"></script>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,0">
+  <style>
+    .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20; user-select: none; }
+    /* Complete self-contained theme token sets — immune to ancestor theme attributes */
+    #btc-viewer-root[data-theme="dark"] {
+      --surface: #14151b;
+      --surface-container-lowest: #0b0c11;
+      --surface-container-low: #20222c;
+      --surface-container: #272935;
+      --surface-container-high: #313340;
+      --surface-container-highest: #3c3e4c;
+      --surface-dim: #121318;
+      --fg1: #f6f5fc;
+      --fg2: #dfe0ea;
+      --on-surface: #f6f5fc;
+      --on-surface-variant: #dfe0ea;
+      --outline: #a9abb6;
+      --outline-variant: #3a3c48;
+      --inverse-surface: #e4e2ea;
+      --inverse-on-surface: #1f2029;
+      --primary: #b3c5ff;
+      --primary-container: #8fa9f5;
+      --primary-fixed: #2d4577;
+      --on-primary: #001849;
+      --glass-bg: rgba(24, 26, 34, 0.85);
+      --error: #ffb4ab;
+      --error-container: #93000a;
+      --success: #7dda7b;
+      --success-container: #0f4d1f;
+      --warning: #f5c44c;
+      --warning-container: #5a4100;
+      --shadow-ambient: 0 8px 32px rgba(0, 0, 0, 0.35);
+      --shadow-float: 0 16px 48px rgba(0, 0, 0, 0.5);
+    }
+    #btc-viewer-root[data-theme="light"] {
+      --surface: #ffffff;
+      --surface-container-lowest: #ffffff;
+      --surface-container-low: #f1f0f8;
+      --surface-container: #e9e8f1;
+      --surface-container-high: #dfdee9;
+      --surface-container-highest: #d5d4e0;
+      --surface-dim: #ecebf3;
+      --fg1: #14151b;
+      --fg2: #3c3e49;
+      --on-surface: #14151b;
+      --on-surface-variant: #3c3e49;
+      --outline: #5f6170;
+      --outline-variant: #c5c7d7;
+      --inverse-surface: #2f3036;
+      --inverse-on-surface: #f1f0f8;
+      --primary: #002d7b;
+      --primary-container: #214597;
+      --primary-fixed: #dbe1ff;
+      --on-primary: #ffffff;
+      --glass-bg: rgba(255, 255, 255, 0.88);
+      --error: #ba1a1a;
+      --error-container: #ffdad6;
+      --success: #1b6e2d;
+      --success-container: #c9f2c4;
+      --warning: #7c5800;
+      --warning-container: #ffdea6;
+      --shadow-ambient: 0 8px 32px rgba(0, 45, 123, 0.08);
+      --shadow-float: 0 16px 48px rgba(0, 45, 123, 0.14);
+    }
+    html, body { overflow: hidden; }
+    input[type="range"] { accent-color: var(--primary); }
+    * { scrollbar-width: thin; scrollbar-color: var(--outline) transparent; }
+    ::-webkit-scrollbar { width: 6px; height: 0px; }
+    ::-webkit-scrollbar-thumb { background: var(--outline); border-radius: 3px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    [data-scrollhide] { scrollbar-width: none; }
+    [data-scrollhide]::-webkit-scrollbar { display: none; }
+  </style>
+</helmet>
+
+<div id="btc-viewer-root" data-theme="{{ theme }}" style="width:100vw; height:100vh; display:flex; flex-direction:column; overflow:hidden; background:var(--surface); color:var(--on-surface); font-family:var(--font-body); font-size:14px;">
+
+  <!-- ══════════════ DESKTOP ══════════════ -->
+  <sc-if value="{{ isDesktop }}" hint-placeholder-val="{{ true }}">
+
+    <!-- Top bar -->
+    <div style="height:52px; flex:0 0 52px; display:flex; align-items:center; gap:16px; padding:0 16px; background:var(--surface-container-low); border-bottom:1px solid var(--outline-variant); z-index:20;">
+      <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+        <sc-if value="{{ isDark }}" hint-placeholder-val="{{ true }}">
+          <img src="assets/logo-white.svg" alt="BIM Tech Consulting" style="height:26px; display:block;">
+        </sc-if>
+        <sc-if value="{{ isLight }}" hint-placeholder-val="{{ false }}">
+          <img src="assets/logo-primary.svg" alt="BIM Tech Consulting" style="height:26px; display:block;">
+        </sc-if>
+        <span class="eyebrow" style="color:var(--on-surface-variant); white-space:nowrap;">IFC Viewer</span>
+      </div>
+
+      <div style="width:1px; height:24px; background:var(--outline-variant);"></div>
+
+      <!-- Model chips -->
+      <sc-if value="{{ loaded }}" hint-placeholder-val="{{ false }}">
+        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+          <span style="font-family:var(--font-display); font-weight:600; font-size:14px; white-space:nowrap;">BTC-Office-Zürich</span>
+          <sc-for list="{{ modelChips }}" as="mc" hint-placeholder-count="2">
+            <span style="display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:9999px; background:var(--primary-fixed); color:{{ chipTextColor }}; font-size:11px; font-weight:600; letter-spacing:0.02em; white-space:nowrap;">{{ mc.tag }}</span>
+          </sc-for>
+        </div>
+      </sc-if>
+      <sc-if value="{{ notLoaded }}" hint-placeholder-val="{{ true }}">
+        <span style="color:var(--on-surface-variant); font-size:13px;">No model loaded</span>
+      </sc-if>
+
+      <div style="flex:1;"></div>
+
+      <!-- File actions -->
+      <div style="display:flex; align-items:center; gap:4px;">
+        <button onClick="{{ onLoadDemo }}" title="Load IFC files" style="display:flex; align-items:center; gap:6px; height:34px; padding:0 14px; border:none; border-radius:9999px; background:var(--primary); color:var(--on-primary); font-family:var(--font-body); font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:var(--primary-container);">
+          <span class="material-symbols-outlined" style="font-size:18px;">upload_file</span>
+          Load IFC
+        </button>
+        <sc-for list="{{ fileBtns }}" as="fb" hint-placeholder-count="3">
+          <button onClick="{{ fb.onClick }}" title="{{ fb.label }}" style="display:flex; align-items:center; justify-content:center; width:34px; height:34px; border:none; border-radius:9999px; background:transparent; color:var(--on-surface-variant); cursor:pointer;" style-hover="background:var(--surface-container-high); color:var(--on-surface);">
+            <span class="material-symbols-outlined" style="font-size:19px;">{{ fb.icon }}</span>
+          </button>
+        </sc-for>
+      </div>
+
+      <div style="width:1px; height:24px; background:var(--outline-variant);"></div>
+
+      <button onClick="{{ onThemeToggle }}" title="Toggle light / dark theme" style="display:flex; align-items:center; justify-content:center; width:34px; height:34px; border:none; border-radius:9999px; background:transparent; color:var(--on-surface-variant); cursor:pointer;" style-hover="background:var(--surface-container-high); color:var(--on-surface);">
+        <span class="material-symbols-outlined" style="font-size:19px;">{{ themeIcon }}</span>
+      </button>
+    </div>
+
+    <!-- Middle: rail + viewport + panel + tabstrip -->
+    <div style="flex:1; display:flex; min-height:0;">
+
+      <!-- Left tool rail -->
+      <div data-scrollhide="true" style="width:52px; flex:0 0 52px; display:flex; flex-direction:column; align-items:center; gap:2px; padding:8px 0; background:var(--surface-container-low); border-right:1px solid var(--outline-variant); overflow-y:auto; z-index:10;">
+        <sc-for list="{{ toolItems }}" as="t" hint-placeholder-count="12">
+          <sc-if value="{{ t.divider }}" hint-placeholder-val="{{ false }}">
+            <div style="width:24px; height:1px; background:var(--outline-variant); margin:5px 0; flex:0 0 auto;"></div>
+          </sc-if>
+          <sc-if value="{{ t.isBtn }}" hint-placeholder-val="{{ true }}">
+            <button onClick="{{ t.onClick }}" title="{{ t.label }}" style="display:flex; align-items:center; justify-content:center; width:38px; height:38px; flex:0 0 38px; border:none; border-radius:12px; background:{{ t.bg }}; color:{{ t.fg }}; cursor:pointer;" style-hover="background:var(--surface-container-high);">
+              <span class="material-symbols-outlined" style="font-size:20px;">{{ t.icon }}</span>
+            </button>
+          </sc-if>
+        </sc-for>
+      </div>
+
+      <!-- Viewport -->
+      <div style="flex:1; position:relative; min-width:0; background:var(--surface-container-lowest); overflow:hidden;">
+        <canvas ref="{{ canvasRef }}" width="1400" height="900" onClick="{{ onCanvasClick }}" onDoubleClick="{{ onCanvasDbl }}" style="position:absolute; inset:0; width:100%; height:100%; cursor:{{ canvasCursor }};"></canvas>
+
+        <!-- Empty state -->
+        <sc-if value="{{ showEmpty }}" hint-placeholder-val="{{ true }}">
+          <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:none;">
+            <div style="pointer-events:auto; display:flex; flex-direction:column; align-items:center; gap:16px; padding:48px 56px; border-radius:24px; background:var(--surface-container-low); box-shadow:var(--shadow-float); border:1px dashed var(--outline-variant); text-align:center; max-width:420px;">
+              <span class="material-symbols-outlined" style="font-size:52px; color:var(--primary);">view_in_ar</span>
+              <div style="font-family:var(--font-display); font-size:22px; font-weight:600;">Load IFC models</div>
+              <div style="font-size:13px; color:var(--on-surface-variant); line-height:1.6;">Drop one or more IFC files in the viewport, or load them from disk. Federated models stay aligned.</div>
+              <div style="display:flex; gap:8px;">
+                <button onClick="{{ onLoadDemo }}" style="display:flex; align-items:center; gap:8px; height:40px; padding:0 20px; border:none; border-radius:9999px; background:var(--primary); color:var(--on-primary); font-family:var(--font-body); font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:var(--primary-container);">
+                  <span class="material-symbols-outlined" style="font-size:18px;">upload_file</span>
+                  Load IFC files
+                </button>
+                <button onClick="{{ onLoadDemo }}" style="height:40px; padding:0 20px; border:1px solid var(--outline-variant); border-radius:9999px; background:transparent; color:var(--on-surface); font-family:var(--font-body); font-size:13px; font-weight:600; cursor:pointer;" style-hover="background:var(--surface-container);">Try demo model</button>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- Loading -->
+        <sc-if value="{{ loading }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center;">
+            <div style="display:flex; flex-direction:column; gap:14px; padding:28px 36px; border-radius:16px; background:var(--surface-container-low); box-shadow:var(--shadow-float); width:340px;">
+              <div style="display:flex; justify-content:space-between; align-items:baseline;">
+                <span style="font-family:var(--font-display); font-weight:600; font-size:15px;">Parsing IFC…</span>
+                <span class="numeric" style="font-size:14px; color:var(--primary);">{{ progressLabel }}</span>
+              </div>
+              <div style="height:6px; border-radius:9999px; background:var(--surface-container-high); overflow:hidden;">
+                <div style="height:100%; width:{{ progressPct }}; background:var(--primary); border-radius:9999px; transition:width 150ms cubic-bezier(0.4,0,0.2,1);"></div>
+              </div>
+              <span style="font-size:12px; color:var(--on-surface-variant);">{{ loadingStep }}</span>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- View controls (top-right) -->
+        <div style="position:absolute; top:12px; right:12px; display:flex; flex-direction:column; gap:4px; padding:6px; border-radius:16px; background:var(--glass-bg); backdrop-filter:var(--glass-blur); box-shadow:var(--shadow-ambient);">
+          <sc-for list="{{ viewBtns }}" as="v" hint-placeholder-count="4">
+            <button onClick="{{ v.onClick }}" title="{{ v.label }}" style="display:flex; align-items:center; justify-content:center; width:36px; height:36px; border:none; border-radius:12px; background:{{ v.bg }}; color:{{ v.fg }}; cursor:pointer;" style-hover="background:var(--surface-container-high);">
+              <span class="material-symbols-outlined" style="font-size:19px;">{{ v.icon }}</span>
+            </button>
+          </sc-for>
+        </div>
+
+        <!-- Nav mode pill (bottom center) -->
+        <sc-if value="{{ loaded }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute; bottom:14px; left:50%; transform:translateX(-50%); display:flex; gap:2px; padding:4px; border-radius:9999px; background:var(--glass-bg); backdrop-filter:var(--glass-blur); box-shadow:var(--shadow-ambient);">
+            <sc-for list="{{ navModes }}" as="nm" hint-placeholder-count="3">
+              <button onClick="{{ nm.onClick }}" style="display:flex; align-items:center; gap:6px; height:32px; padding:0 14px; border:none; border-radius:9999px; background:{{ nm.bg }}; color:{{ nm.fg }}; font-family:var(--font-body); font-size:12px; font-weight:600; cursor:pointer;">
+                <span class="material-symbols-outlined" style="font-size:16px;">{{ nm.icon }}</span>
+                {{ nm.label }}
+              </button>
+            </sc-for>
+          </div>
+        </sc-if>
+
+        <!-- Measure hint -->
+        <sc-if value="{{ measureActive }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute; top:12px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:10px; padding:8px 16px; border-radius:9999px; background:var(--inverse-surface); color:var(--inverse-on-surface); font-size:12px; box-shadow:var(--shadow-float);">
+            <span class="material-symbols-outlined" style="font-size:16px;">straighten</span>
+            {{ measureHint }}
+            <button onClick="{{ onCancelTool }}" style="border:none; background:transparent; color:var(--inverse-on-surface); font-size:12px; font-weight:700; cursor:pointer; text-decoration:underline; font-family:var(--font-body);">Esc</button>
+          </div>
+        </sc-if>
+
+        <!-- Section overlay -->
+        <sc-if value="{{ sectionActive }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute; bottom:64px; left:50%; transform:translateX(-50%); display:flex; align-items:center; gap:14px; padding:10px 18px; border-radius:16px; background:var(--glass-bg); backdrop-filter:var(--glass-blur); box-shadow:var(--shadow-float);">
+            <span class="eyebrow">{{ sectionLabel }}</span>
+            <input type="range" min="2" max="98" value="{{ sectionPos }}" onChange="{{ onSectionPos }}" style="width:200px;">
+            <span class="numeric" style="font-size:13px; min-width:38px; color:var(--primary);">{{ sectionPosLabel }}</span>
+            <button onClick="{{ onClearSection }}" title="Clear section" style="display:flex; align-items:center; justify-content:center; width:28px; height:28px; border:none; border-radius:9999px; background:var(--surface-container-high); color:var(--on-surface-variant); cursor:pointer;">
+              <span class="material-symbols-outlined" style="font-size:16px;">close</span>
+            </button>
+          </div>
+        </sc-if>
+
+        <!-- Selection chip -->
+        <sc-if value="{{ hasSel }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute; top:12px; left:12px; display:flex; align-items:center; gap:10px; padding:8px 8px 8px 14px; border-radius:16px; background:var(--glass-bg); backdrop-filter:var(--glass-blur); box-shadow:var(--shadow-ambient); max-width:340px;">
+            <span class="material-symbols-outlined" style="font-size:18px; color:var(--primary);">deployed_code</span>
+            <div style="min-width:0;">
+              <div style="font-size:12px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{{ selName }}</div>
+              <div style="font-size:11px; color:var(--on-surface-variant); white-space:nowrap;">{{ selMeta }}</div>
+            </div>
+            <button onClick="{{ onClearSel }}" style="display:flex; align-items:center; justify-content:center; width:26px; height:26px; border:none; border-radius:9999px; background:var(--surface-container-high); color:var(--on-surface-variant); cursor:pointer; flex:0 0 26px;">
+              <span class="material-symbols-outlined" style="font-size:15px;">close</span>
+            </button>
+          </div>
+        </sc-if>
+      </div>
+
+      <!-- Right panel -->
+      <sc-if value="{{ panelOpen }}" hint-placeholder-val="{{ true }}">
+        <div style="width:{{ panelW }}px; flex:0 0 {{ panelW }}px; display:flex; flex-direction:column; background:var(--surface-container-low); border-left:1px solid var(--outline-variant); min-height:0;">
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 16px 10px;">
+            <span style="font-family:var(--font-display); font-weight:600; font-size:15px;">{{ panelTitle }}</span>
+            <button onClick="{{ onTogglePanel }}" title="Collapse panel" style="display:flex; align-items:center; justify-content:center; width:28px; height:28px; border:none; border-radius:9999px; background:transparent; color:var(--on-surface-variant); cursor:pointer;" style-hover="background:var(--surface-container-high);">
+              <span class="material-symbols-outlined" style="font-size:17px;">right_panel_close</span>
+            </button>
+          </div>
+
+          <div style="flex:1; overflow-y:auto; overflow-x:hidden; padding:0 12px 16px; display:flex; flex-direction:column; gap:12px;">
+
+            <!-- EXPLORER -->
+            <sc-if value="{{ isExplorer }}" hint-placeholder-val="{{ true }}">
+              <div style="display:flex; align-items:center; gap:8px; height:40px; padding:0 12px; border-radius:12px; background:var(--surface-container); flex:0 0 40px;">
+                <span class="material-symbols-outlined" style="font-size:18px; color:var(--on-surface-variant);">search</span>
+                <input value="{{ search }}" onChange="{{ onSearch }}" placeholder="Search elements, GlobalId…" style="flex:1; border:none; background:transparent; color:var(--on-surface); font-family:var(--font-body); font-size:13px; outline:none;">
+              </div>
+              <div>
+                <div class="eyebrow" style="margin-bottom:8px;">Class filters</div>
+                <div style="display:flex; flex-wrap:wrap; gap:6px;">
+                  <sc-for list="{{ filterChips }}" as="fc" hint-placeholder-count="5">
+                    <button onClick="{{ fc.onClick }}" style="height:26px; padding:0 12px; border:1px solid {{ fc.border }}; border-radius:9999px; background:{{ fc.bg }}; color:{{ fc.fg }}; font-family:var(--font-body); font-size:11px; font-weight:600; cursor:pointer;">{{ fc.label }}</button>
+                  </sc-for>
+                </div>
+              </div>
+              <div>
+                <div class="eyebrow" style="margin-bottom:8px;">Spatial tree</div>
+                <div style="display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:12px; background:var(--surface-container);">
+                  <span class="material-symbols-outlined" style="font-size:17px; color:var(--primary);">account_tree</span>
+                  <span style="font-size:12px; font-weight:600;">BTC-Office-Zürich</span>
+                  <span style="font-size:11px; color:var(--on-surface-variant); margin-left:auto;">{{ totalLabel }}</span>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:2px; margin-top:6px;">
+                  <sc-for list="{{ storeyRows }}" as="s" hint-placeholder-count="4">
+                    <div>
+                      <div onClick="{{ s.onToggle }}" style="display:flex; align-items:center; gap:6px; padding:7px 8px; border-radius:10px; cursor:pointer; opacity:{{ s.opacity }};" style-hover="background:var(--surface-container);">
+                        <span class="material-symbols-outlined" style="font-size:17px; color:var(--on-surface-variant); transform:{{ s.chev }}; transition:transform 150ms cubic-bezier(0.4,0,0.2,1);">chevron_right</span>
+                        <span style="font-size:13px; font-weight:600;">{{ s.name }}</span>
+                        <span class="numeric" style="font-size:11px; color:var(--on-surface-variant);">{{ s.elev }}</span>
+                        <button onClick="{{ s.onEye }}" title="Toggle visibility" style="margin-left:auto; display:flex; align-items:center; justify-content:center; width:24px; height:24px; border:none; border-radius:9999px; background:transparent; color:var(--on-surface-variant); cursor:pointer;" style-hover="background:var(--surface-container-high);">
+                          <span class="material-symbols-outlined" style="font-size:16px;">{{ s.eyeIcon }}</span>
+                        </button>
+                      </div>
+                      <sc-if value="{{ s.open }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex; flex-direction:column; gap:1px; padding-left:26px;">
+                          <sc-for list="{{ s.classes }}" as="c" hint-placeholder-count="5">
+                            <div onClick="{{ c.onClick }}" style="display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:10px; cursor:pointer; background:{{ c.bg }};" style-hover="background:var(--surface-container);">
+                              <span style="width:8px; height:8px; border-radius:2px; background:{{ c.dot }}; flex:0 0 8px;"></span>
+                              <span style="font-size:12.5px; color:{{ c.fg }};">{{ c.label }}</span>
+                              <span class="numeric" style="margin-left:auto; font-size:11px; color:var(--on-surface-variant);">{{ c.n }}</span>
+                            </div>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+
+            <!-- MODELS -->
+            <sc-if value="{{ isModels }}" hint-placeholder-val="{{ false }}">
+              <div class="eyebrow">Federated models</div>
+              <sc-for list="{{ modelRows }}" as="m" hint-placeholder-count="2">
+                <div style="display:flex; flex-direction:column; gap:10px; padding:14px; border-radius:16px; background:var(--surface-container);">
+                  <div style="display:flex; align-items:center; gap:10px;">
+                    <span class="material-symbols-outlined" style="font-size:20px; color:var(--primary);">deployed_code</span>
+                    <div style="min-width:0;">
+                      <div style="font-size:13px; font-weight:600;">{{ m.name }}</div>
+                      <div style="font-size:11px; color:var(--on-surface-variant);">{{ m.meta }}</div>
+                    </div>
+                    <button onClick="{{ m.onEye }}" title="Toggle visibility" style="margin-left:auto; display:flex; align-items:center; justify-content:center; width:30px; height:30px; border:none; border-radius:9999px; background:transparent; color:var(--on-surface-variant); cursor:pointer;" style-hover="background:var(--surface-container-high);">
+                      <span class="material-symbols-outlined" style="font-size:18px;">{{ m.eyeIcon }}</span>
+                    </button>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:10px;">
+                    <span style="font-size:11px; color:var(--on-surface-variant); width:48px;">Opacity</span>
+                    <input type="range" min="10" max="100" value="{{ m.opacity }}" onChange="{{ m.onOpacity }}" style="flex:1;">
+                    <span class="numeric" style="font-size:11px; width:34px; text-align:right;">{{ m.opacityLabel }}</span>
+                  </div>
+                  <button style="height:32px; border:1px solid var(--outline-variant); border-radius:9999px; background:transparent; color:var(--on-surface); font-family:var(--font-body); font-size:12px; font-weight:600; cursor:pointer;" style-hover="background:var(--surface-container-high);">XYZ / RXYZ alignment…</button>
+                </div>
+              </sc-for>
+            </sc-if>
+
+            <!-- PROPERTIES -->
+            <sc-if value="{{ isProps }}" hint-placeholder-val="{{ false }}">
+              <sc-if value="{{ hasSel }}" hint-placeholder-val="{{ false }}">
+                <div class="eyebrow">Attributes</div>
+                <div style="display:flex; flex-direction:column; border-radius:16px; background:var(--surface-container); overflow:hidden;">
+                  <sc-for list="{{ propRows }}" as="p" hint-placeholder-count="5">
+                    <div style="display:flex; gap:12px; padding:10px 14px; border-bottom:1px solid var(--outline-variant); align-items:baseline;">
+                      <span style="font-size:11px; color:var(--on-surface-variant); width:82px; flex:0 0 82px;">{{ p.k }}</span>
+                      <span style="font-size:12.5px; font-family:{{ p.font }}; word-break:break-all;">{{ p.v }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <div class="eyebrow">Pset_WallCommon</div>
+                <div style="display:flex; flex-direction:column; border-radius:16px; background:var(--surface-container); overflow:hidden;">
+                  <sc-for list="{{ psetRows }}" as="p" hint-placeholder-count="3">
+                    <div style="display:flex; gap:12px; padding:10px 14px; border-bottom:1px solid var(--outline-variant); align-items:baseline;">
+                      <span style="font-size:11px; color:var(--on-surface-variant); width:82px; flex:0 0 82px;">{{ p.k }}</span>
+                      <span style="font-size:12.5px;">{{ p.v }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="display:flex; gap:8px;">
+                  <button onClick="{{ onIsolate }}" style="flex:1; height:36px; border:none; border-radius:9999px; background:var(--primary); color:var(--on-primary); font-family:var(--font-body); font-size:12px; font-weight:600; cursor:pointer;" style-hover="background:var(--primary-container);">Isolate</button>
+                  <button onClick="{{ onHideSel }}" style="flex:1; height:36px; border:1px solid var(--outline-variant); border-radius:9999px; background:transparent; color:var(--on-surface); font-family:var(--font-body); font-size:12px; font-weight:600; cursor:pointer;" style-hover="background:var(--surface-container-high);">Hide</button>
+                </div>
+              </sc-if>
+              <sc-if value="{{ noSel }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex; flex-direction:column; align-items:center; gap:10px; padding:40px 20px; text-align:center; color:var(--on-surface-variant);">
+                  <span class="material-symbols-outlined" style="font-size:36px;">touch_app</span>
+                  <span style="font-size:13px;">Select an element in the viewport or the spatial tree to inspect its properties.</span>
+                </div>
+              </sc-if>
+            </sc-if>
+
+            <!-- VIEWPOINTS -->
+            <sc-if value="{{ isViewpoints }}" hint-placeholder-val="{{ false }}">
+              <button onClick="{{ onSaveViewpoint }}" style="display:flex; align-items:center; justify-content:center; gap:8px; height:38px; border:none; border-radius:9999px; background:var(--primary); color:var(--on-primary); font-family:var(--font-body); font-size:13px; font-weight:600; cursor:pointer; flex:0 0 38px;" style-hover="background:var(--primary-container);">
+                <span class="material-symbols-outlined" style="font-size:18px;">photo_camera</span>
+                Save current viewpoint
+              </button>
+              <sc-if value="{{ noViewpoints }}" hint-placeholder-val="{{ true }}">
+                <div style="padding:28px 20px; text-align:center; color:var(--on-surface-variant); font-size:13px;">No viewpoints yet. Save one before creating issues for better traceability.</div>
+              </sc-if>
+              <sc-for list="{{ viewpointRows }}" as="vp" hint-placeholder-count="0">
+                <div style="display:flex; align-items:center; gap:10px; padding:12px 14px; border-radius:16px; background:var(--surface-container);">
+                  <span class="material-symbols-outlined" style="font-size:19px; color:var(--primary);">photo_camera</span>
+                  <div style="min-width:0; flex:1;">
+                    <div style="font-size:13px; font-weight:600;">{{ vp.name }}</div>
+                    <div style="font-size:11px; color:var(--on-surface-variant);">{{ vp.meta }}</div>
+                  </div>
+                  <button onClick="{{ vp.onApply }}" style="height:28px; padding:0 12px; border:1px solid var(--outline-variant); border-radius:9999px; background:transparent; color:var(--on-surface); font-family:var(--font-body); font-size:11px; font-weight:600; cursor:pointer;" style-hover="background:var(--surface-container-high);">Apply</button>
+                  <button onClick="{{ vp.onDelete }}" title="Delete" style="display:flex; align-items:center; justify-content:center; width:28px; height:28px; border:none; border-radius:9999px; background:transparent; color:var(--on-surface-variant); cursor:pointer;" style-hover="background:var(--error-container); color:var(--error);">
+                    <span class="material-symbols-outlined" style="font-size:16px;">delete</span>
+                  </button>
+                </div>
+              </sc-for>
+            </sc-if>
+
+            <!-- ISSUES -->
+            <sc-if value="{{ isIssues }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex; flex-direction:column; gap:10px; padding:14px; border-radius:16px; background:var(--surface-container);">
+                <div class="eyebrow">New issue</div>
+                <input value="{{ issueTitle }}" onChange="{{ onIssueTitle }}" placeholder="Issue title…" style="height:38px; padding:0 12px; border:1px solid var(--outline-variant); border-radius:12px; background:var(--surface-container-lowest); color:var(--on-surface); font-family:var(--font-body); font-size:13px; outline:none;">
+                <div style="display:flex; gap:5px; flex-wrap:wrap;">
+                  <sc-for list="{{ prioChips }}" as="pc" hint-placeholder-count="4">
+                    <button onClick="{{ pc.onClick }}" style="height:26px; padding:0 11px; border:1px solid {{ pc.border }}; border-radius:9999px; background:{{ pc.bg }}; color:{{ pc.fg }}; font-family:var(--font-body); font-size:11px; font-weight:600; cursor:pointer;">{{ pc.label }}</button>
+                  </sc-for>
+                </div>
+                <button onClick="{{ onCreateIssue }}" style="height:36px; border:none; border-radius:9999px; background:var(--primary); color:var(--on-primary); font-family:var(--font-body); font-size:12px; font-weight:600; cursor:pointer; opacity:{{ createIssueOpacity }};" style-hover="background:var(--primary-container);">{{ createIssueLabel }}</button>
+              </div>
+              <sc-if value="{{ noIssues }}" hint-placeholder-val="{{ true }}">
+                <div style="padding:20px; text-align:center; color:var(--on-surface-variant); font-size:13px;">No issues yet.</div>
+              </sc-if>
+              <sc-for list="{{ issueRows }}" as="iss" hint-placeholder-count="0">
+                <div style="display:flex; flex-direction:column; gap:8px; padding:12px 14px; border-radius:16px; background:var(--surface-container);">
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="width:8px; height:8px; border-radius:9999px; background:{{ iss.prioColor }}; flex:0 0 8px;"></span>
+                    <span style="font-size:13px; font-weight:600; flex:1;">{{ iss.title }}</span>
+                    <button onClick="{{ iss.onDelete }}" title="Delete issue" style="display:flex; align-items:center; justify-content:center; width:26px; height:26px; border:none; border-radius:9999px; background:transparent; color:var(--on-surface-variant); cursor:pointer;" style-hover="background:var(--error-container); color:var(--error);">
+                      <span class="material-symbols-outlined" style="font-size:15px;">delete</span>
+                    </button>
+                  </div>
+                  <div style="font-size:11px; color:var(--on-surface-variant);">{{ iss.meta }}</div>
+                  <div style="display:flex; gap:6px;">
+                    <span style="height:22px; display:inline-flex; align-items:center; padding:0 10px; border-radius:9999px; background:{{ iss.statusBg }}; color:{{ iss.statusFg }}; font-size:10.5px; font-weight:600; letter-spacing:0.03em;">{{ iss.status }}</span>
+                    <button onClick="{{ iss.onAdvance }}" style="height:22px; padding:0 10px; border:1px solid var(--outline-variant); border-radius:9999px; background:transparent; color:var(--on-surface-variant); font-family:var(--font-body); font-size:10.5px; font-weight:600; cursor:pointer;" style-hover="background:var(--surface-container-high);">{{ iss.nextLabel }}</button>
+                  </div>
+                </div>
+              </sc-for>
+            </sc-if>
+
+            <!-- HELP -->
+            <sc-if value="{{ isHelp }}" hint-placeholder-val="{{ false }}">
+              <div class="eyebrow">Keyboard shortcuts</div>
+              <div style="display:flex; flex-direction:column; border-radius:16px; background:var(--surface-container); overflow:hidden;">
+                <sc-for list="{{ shortcuts }}" as="sh" hint-placeholder-count="8">
+                  <div style="display:flex; align-items:center; gap:12px; padding:9px 14px; border-bottom:1px solid var(--outline-variant);">
+                    <span style="display:inline-flex; align-items:center; justify-content:center; min-width:26px; height:24px; padding:0 7px; border-radius:8px; background:var(--surface-container-lowest); border:1px solid var(--outline-variant); font-family:var(--font-mono); font-size:11px; font-weight:600;">{{ sh.key }}</span>
+                    <span style="font-size:12.5px; color:var(--on-surface-variant);">{{ sh.label }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div class="eyebrow" style="margin-top:4px;">Tips</div>
+              <div style="font-size:12.5px; color:var(--on-surface-variant); line-height:1.6; padding:0 2px;">Use class and level filters in the Explorer to isolate scope. Save viewpoints before creating issues for better traceability. Export state to persist a standalone session.</div>
+            </sc-if>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- Right tab strip -->
+      <div style="width:48px; flex:0 0 48px; display:flex; flex-direction:column; align-items:center; gap:4px; padding:10px 0; background:var(--surface-container-low); border-left:1px solid var(--outline-variant);">
+        <sc-for list="{{ tabs }}" as="tab" hint-placeholder-count="6">
+          <button onClick="{{ tab.onClick }}" title="{{ tab.label }}" style="display:flex; align-items:center; justify-content:center; width:38px; height:38px; border:none; border-radius:12px; background:{{ tab.bg }}; color:{{ tab.fg }}; cursor:pointer;" style-hover="background:var(--surface-container-high);">
+            <span class="material-symbols-outlined" style="font-size:20px;">{{ tab.icon }}</span>
+          </button>
+        </sc-for>
+      </div>
+    </div>
+
+    <!-- Status bar -->
+    <div style="height:30px; flex:0 0 30px; display:flex; align-items:center; gap:18px; padding:0 14px; background:var(--surface-container-low); border-top:1px solid var(--outline-variant); font-size:11.5px; color:var(--on-surface-variant);">
+      <span style="display:inline-flex; align-items:center; gap:6px;">
+        <span style="width:7px; height:7px; border-radius:9999px; background:var(--success);"></span>
+        {{ statusLabel }}
+      </span>
+      <span class="numeric" style="font-size:11.5px;">{{ selCountLabel }}</span>
+      <span class="numeric" style="font-size:11.5px;">{{ elementsLabel }}</span>
+      <span class="numeric" style="font-size:11.5px;">{{ visibleLabel }}</span>
+      <div style="flex:1;"></div>
+      <span>{{ viewLabel }}</span>
+      <span>EN · CH</span>
+    </div>
+  </sc-if>
+
+  <!-- ══════════════ MOBILE PREVIEW ══════════════ -->
+  <sc-if value="{{ isMobile }}" hint-placeholder-val="{{ false }}">
+    <div style="flex:1; display:flex; align-items:center; justify-content:center; background:var(--surface-dim); padding:24px;">
+      <div style="width:390px; height:780px; display:flex; flex-direction:column; border-radius:32px; overflow:hidden; background:var(--surface); box-shadow:var(--shadow-float); border:1px solid var(--outline-variant); position:relative;">
+        <!-- Mobile top bar -->
+        <div style="height:52px; flex:0 0 52px; display:flex; align-items:center; gap:10px; padding:0 14px; background:var(--surface-container-low); border-bottom:1px solid var(--outline-variant);">
+          <img src="assets/iconmark.svg" alt="BTC" style="height:24px; display:block;">
+          <div style="min-width:0;">
+            <div style="font-family:var(--font-display); font-weight:600; font-size:13px; line-height:1.2;">{{ mobileTitle }}</div>
+            <div style="font-size:10.5px; color:var(--on-surface-variant);">{{ mobileSubtitle }}</div>
+          </div>
+          <div style="flex:1;"></div>
+          <button onClick="{{ onThemeToggle }}" style="display:flex; align-items:center; justify-content:center; width:32px; height:32px; border:none; border-radius:9999px; background:transparent; color:var(--on-surface-variant); cursor:pointer;">
+            <span class="material-symbols-outlined" style="font-size:18px;">{{ themeIcon }}</span>
+          </button>
+        </div>
+        <!-- Mobile viewport -->
+        <div style="flex:1; position:relative; background:var(--surface-container-lowest); min-height:0;">
+          <canvas ref="{{ canvasRef2 }}" width="760" height="1200" onClick="{{ onCanvasClick }}" style="position:absolute; inset:0; width:100%; height:100%; cursor:{{ canvasCursor }};"></canvas>
+          <sc-if value="{{ showEmpty }}" hint-placeholder-val="{{ true }}">
+            <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:24px;">
+              <div style="display:flex; flex-direction:column; align-items:center; gap:12px; padding:28px 24px; border-radius:24px; background:var(--surface-container-low); border:1px dashed var(--outline-variant); text-align:center;">
+                <span class="material-symbols-outlined" style="font-size:40px; color:var(--primary);">view_in_ar</span>
+                <div style="font-family:var(--font-display); font-size:17px; font-weight:600;">Load IFC models</div>
+                <button onClick="{{ onLoadDemo }}" style="height:44px; padding:0 22px; border:none; border-radius:9999px; background:var(--primary); color:var(--on-primary); font-family:var(--font-body); font-size:13px; font-weight:600; cursor:pointer;">Try demo model</button>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ loading }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; padding:24px;">
+              <div style="width:100%; display:flex; flex-direction:column; gap:10px; padding:20px; border-radius:16px; background:var(--surface-container-low); box-shadow:var(--shadow-float);">
+                <span style="font-family:var(--font-display); font-weight:600; font-size:14px;">Parsing IFC… {{ progressLabel }}</span>
+                <div style="height:6px; border-radius:9999px; background:var(--surface-container-high); overflow:hidden;">
+                  <div style="height:100%; width:{{ progressPct }}; background:var(--primary); border-radius:9999px; transition:width 150ms cubic-bezier(0.4,0,0.2,1);"></div>
+                </div>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ loaded }}" hint-placeholder-val="{{ false }}">
+            <button onClick="{{ onFit }}" style="position:absolute; top:12px; right:12px; display:flex; align-items:center; justify-content:center; width:44px; height:44px; border:none; border-radius:9999px; background:var(--glass-bg); backdrop-filter:var(--glass-blur); color:var(--on-surface); cursor:pointer; box-shadow:var(--shadow-ambient);">
+              <span class="material-symbols-outlined" style="font-size:20px;">fit_screen</span>
+            </button>
+          </sc-if>
+          <sc-if value="{{ sectionActive }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute; bottom:12px; left:12px; right:12px; display:flex; align-items:center; gap:10px; padding:10px 14px; border-radius:16px; background:var(--glass-bg); backdrop-filter:var(--glass-blur); box-shadow:var(--shadow-float);">
+              <span class="eyebrow">{{ sectionLabel }}</span>
+              <input type="range" min="2" max="98" value="{{ sectionPos }}" onChange="{{ onSectionPos }}" style="flex:1;">
+              <button onClick="{{ onClearSection }}" style="display:flex; align-items:center; justify-content:center; width:28px; height:28px; border:none; border-radius:9999px; background:var(--surface-container-high); color:var(--on-surface-variant); cursor:pointer;">
+                <span class="material-symbols-outlined" style="font-size:15px;">close</span>
+              </button>
+            </div>
+          </sc-if>
+          <!-- Mobile sheet -->
+          <sc-if value="{{ sheetOpen }}" hint-placeholder-val="{{ false }}">
+            <div style="position:absolute; inset:0; background:rgba(0,0,0,0.3);" onClick="{{ onCloseSheet }}"></div>
+            <div style="position:absolute; left:0; right:0; bottom:0; max-height:62%; display:flex; flex-direction:column; border-radius:24px 24px 0 0; background:var(--surface-container-low); box-shadow:var(--shadow-float);">
+              <div style="display:flex; align-items:center; justify-content:center; padding:10px 0 4px;">
+                <div style="width:36px; height:4px; border-radius:9999px; background:var(--outline-variant);"></div>
+              </div>
+              <div style="display:flex; align-items:center; justify-content:space-between; padding:4px 18px 8px;">
+                <span style="font-family:var(--font-display); font-weight:600; font-size:15px;">{{ sheetTitle }}</span>
+                <button onClick="{{ onCloseSheet }}" style="display:flex; align-items:center; justify-content:center; width:30px; height:30px; border:none; border-radius:9999px; background:var(--surface-container-high); color:var(--on-surface-variant); cursor:pointer;">
+                  <span class="material-symbols-outlined" style="font-size:17px;">close</span>
+                </button>
+              </div>
+              <div style="flex:1; overflow-y:auto; padding:0 14px 20px; display:flex; flex-direction:column; gap:6px;">
+                <sc-if value="{{ sheetIsTree }}" hint-placeholder-val="{{ true }}">
+                  <sc-for list="{{ storeyRows }}" as="s" hint-placeholder-count="4">
+                    <div>
+                      <div onClick="{{ s.onToggle }}" style="display:flex; align-items:center; gap:8px; padding:11px 10px; border-radius:12px; cursor:pointer; background:var(--surface-container);">
+                        <span class="material-symbols-outlined" style="font-size:18px; color:var(--on-surface-variant); transform:{{ s.chev }};">chevron_right</span>
+                        <span style="font-size:14px; font-weight:600;">{{ s.name }}</span>
+                        <span class="numeric" style="margin-left:auto; font-size:12px; color:var(--on-surface-variant);">{{ s.elev }}</span>
+                      </div>
+                      <sc-if value="{{ s.open }}" hint-placeholder-val="{{ false }}">
+                        <div style="display:flex; flex-direction:column; gap:2px; padding:4px 0 4px 30px;">
+                          <sc-for list="{{ s.classes }}" as="c" hint-placeholder-count="5">
+                            <div onClick="{{ c.onClick }}" style="display:flex; align-items:center; gap:8px; padding:10px; border-radius:10px; background:{{ c.bg }}; cursor:pointer;">
+                              <span style="width:8px; height:8px; border-radius:2px; background:{{ c.dot }};"></span>
+                              <span style="font-size:13px; color:{{ c.fg }};">{{ c.label }}</span>
+                              <span class="numeric" style="margin-left:auto; font-size:12px; color:var(--on-surface-variant);">{{ c.n }}</span>
+                            </div>
+                          </sc-for>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </sc-if>
+                <sc-if value="{{ sheetIsMore }}" hint-placeholder-val="{{ false }}">
+                  <sc-for list="{{ mobileToggles }}" as="mt" hint-placeholder-count="4">
+                    <div onClick="{{ mt.onClick }}" style="display:flex; align-items:center; gap:12px; padding:13px 14px; border-radius:12px; background:var(--surface-container); cursor:pointer;">
+                      <span class="material-symbols-outlined" style="font-size:20px; color:{{ mt.fg }};">{{ mt.icon }}</span>
+                      <span style="font-size:14px; font-weight:500; flex:1;">{{ mt.label }}</span>
+                      <span style="width:40px; height:22px; border-radius:9999px; background:{{ mt.trackBg }}; position:relative; transition:background 150ms cubic-bezier(0.4,0,0.2,1);">
+                        <span style="position:absolute; top:3px; left:{{ mt.knobLeft }}; width:16px; height:16px; border-radius:9999px; background:var(--surface-container-lowest); box-shadow:var(--shadow-ambient); transition:left 150ms cubic-bezier(0.4,0,0.2,1);"></span>
+                      </span>
+                    </div>
+                  </sc-for>
+                </sc-if>
+              </div>
+            </div>
+          </sc-if>
+        </div>
+        <!-- Mobile bottom bar -->
+        <div style="height:64px; flex:0 0 64px; display:flex; align-items:stretch; background:var(--surface-container-low); border-top:1px solid var(--outline-variant);">
+          <sc-for list="{{ mobileTabs }}" as="mtab" hint-placeholder-count="5">
+            <button onClick="{{ mtab.onClick }}" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; border:none; background:transparent; color:{{ mtab.fg }}; cursor:pointer; font-family:var(--font-body);">
+              <span style="display:flex; align-items:center; justify-content:center; width:44px; height:26px; border-radius:9999px; background:{{ mtab.pillBg }};">
+                <span class="material-symbols-outlined" style="font-size:20px;">{{ mtab.icon }}</span>
+              </span>
+              <span style="font-size:10px; font-weight:600;">{{ mtab.label }}</span>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;mobilePreview&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: false, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Prototype&quot;}, &quot;startLoaded&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: false, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Prototype&quot;}, &quot;panelWidth&quot;: {&quot;editor&quot;: &quot;range&quot;, &quot;default&quot;: 320, &quot;min&quot;: 280, &quot;max&quot;: 400, &quot;step&quot;: 10, &quot;unit&quot;: &quot;px&quot;, &quot;tsType&quot;: &quot;number&quot;, &quot;section&quot;: &quot;Layout&quot;}}">
+const STOREYS = [
+  { id: 'og2', name: 'OG2 · Level 2', elev: '+6.80', lvl: 3, classes: [ ['IfcWall', 42], ['IfcSlab', 6], ['IfcColumn', 14], ['IfcDoor', 11], ['IfcWindow', 24] ] },
+  { id: 'og1', name: 'OG1 · Level 1', elev: '+3.40', lvl: 2, classes: [ ['IfcWall', 48], ['IfcSlab', 6], ['IfcColumn', 14], ['IfcDoor', 12], ['IfcWindow', 22] ] },
+  { id: 'eg',  name: 'EG · Ground floor', elev: '±0.00', lvl: 1, classes: [ ['IfcWall', 51], ['IfcSlab', 7], ['IfcColumn', 16], ['IfcDoor', 15], ['IfcWindow', 18] ] },
+  { id: 'ug',  name: 'UG · Basement', elev: '−3.20', lvl: 0, classes: [ ['IfcWall', 38], ['IfcSlab', 8], ['IfcColumn', 18], ['IfcDoor', 9], ['IfcWindow', 0] ] },
+];
+const CLS_LABEL = { IfcWall: 'Walls', IfcSlab: 'Slabs', IfcColumn: 'Columns', IfcDoor: 'Doors', IfcWindow: 'Windows' };
+const CLS_DOT = { IfcWall: '#535d7f', IfcSlab: '#747683', IfcColumn: '#214597', IfcDoor: '#7c5800', IfcWindow: '#1b6e2d' };
+const GID = { IfcWall: '2O2Fr$t4X7Zf8NOew3FLKr', IfcSlab: '1hOSvn6df7F8_7GcBWlRGQ', IfcColumn: '3cUkl32yn9qRSPvBJVyWw5', IfcDoor: '0jf0XDbuTDlv7c14gg0Rjh', IfcWindow: '2VkNX4kfj5IeMB1PN4cYyD' };
+const TYPENAME = { IfcWall: 'Basic Wall : STB 240', IfcSlab: 'Floor : STB 280 C30/37', IfcColumn: 'Column : RND 300 C50/60', IfcDoor: 'Door : T30 RS 1000×2100', IfcWindow: 'Window : Fixed 1200×1400' };
+const STATUS_FLOW = ['Open', 'In Progress', 'Resolved', 'Closed'];
+const PRIO_COLOR = { Critical: 'var(--error)', High: 'var(--warning)', Medium: 'var(--primary)', Low: 'var(--outline)' };
+const TOTAL = STOREYS.reduce((a, s) => a + s.classes.reduce((b, c) => b + c[1], 0), 0);
+
+class Component extends DCLogic {
+  state = {
+    theme: 'dark', loaded: false, loading: false, progress: 0,
+    panel: 'explorer', panelOpen: true,
+    tool: 'select', multi: false, navMode: 'orbit', view: 'orbit',
+    xray: false, edges: true, grid: true,
+    sectionAxis: null, sectionPos: 50,
+    sel: null, markerPt: null, hiddenS: {}, hiddenCls: {}, isolated: null,
+    expanded: { eg: true }, search: '', classFilter: {},
+    measures: [], measurePts: [],
+    viewpoints: [], issues: [], issueTitle: '', issuePrio: 'Medium',
+    modelVis: { arc: true, str: true }, modelOpacity: { arc: 100, str: 100 },
+    sheet: null,
+  };
+
+  constructor(props) {
+    super(props);
+    this.canvasRef = React.createRef();
+    this.canvasRef2 = React.createRef();
+    this.vpCount = 0; this.issCount = 0;
+  }
+
+  componentDidMount() {
+    if (this.props.startLoaded) this.setState({ loaded: true });
+    this.keyHandler = (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      const k = e.key.toLowerCase();
+      if (k === 'f') this.setState({ view: 'orbit' });
+      else if (k === 'x') this.setState(s => ({ xray: !s.xray }));
+      else if (k === 'e') this.setState(s => ({ edges: !s.edges }));
+      else if (k === 'g') this.setState(s => ({ grid: !s.grid }));
+      else if (k === 'l') this.setTool('length');
+      else if (k === 'a') this.setTool('area');
+      else if (k === 'm') this.setState(s => ({ multi: !s.multi }));
+      else if (k === 'escape') this.setState({ tool: 'select', measurePts: [] });
+    };
+    window.addEventListener('keydown', this.keyHandler);
+    this.draw();
+  }
+  componentWillUnmount() {
+    window.removeEventListener('keydown', this.keyHandler);
+    if (this.loadTimer) clearInterval(this.loadTimer);
+  }
+  componentDidUpdate() { this.draw(); }
+
+  setTool(t) { this.setState(s => ({ tool: s.tool === t ? 'select' : t, measurePts: [] })); }
+
+  loadDemo = () => {
+    if (this.state.loading || this.state.loaded) { this.setState({ loaded: true }); return; }
+    this.setState({ loading: true, progress: 0 });
+    this.loadTimer = setInterval(() => {
+      this.setState(s => {
+        const p = s.progress + 6 + Math.random() * 8;
+        if (p >= 100) { clearInterval(this.loadTimer); return { progress: 100, loading: false, loaded: true, panelOpen: true, panel: 'explorer' }; }
+        return { progress: p };
+      });
+    }, 120);
+  };
+
+  selectNode(st, cls) {
+    this.setState({
+      sel: { storey: st.name, sid: st.id, cls, name: TYPENAME[cls], gid: GID[cls] },
+      panel: this.state.panel === 'explorer' ? 'explorer' : 'properties', panelOpen: true,
+    });
+  }
+
+  onCanvasClick = (e) => {
+    if (!this.state.loaded) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const nx = (e.clientX - r.left) / r.width, ny = (e.clientY - r.top) / r.height;
+    const s = this.state;
+    if (s.tool === 'length') {
+      const pts = [...s.measurePts, { nx, ny }];
+      if (pts.length === 2) this.setState(st => ({ measures: [...st.measures, { type: 'length', pts }], measurePts: [] }));
+      else this.setState({ measurePts: pts });
+    } else if (s.tool === 'area') {
+      this.setState({ measurePts: [...s.measurePts, { nx, ny }] });
+    } else {
+      const st = STOREYS[Math.min(3, Math.floor((1 - ny) * 4))];
+      const cls = st.classes[Math.min(4, Math.floor(nx * 5))][0];
+      this.setState({ markerPt: { nx, ny } });
+      this.selectNode(st, cls);
+    }
+  };
+
+  onCanvasDbl = () => {
+    const s = this.state;
+    if (s.tool === 'area' && s.measurePts.length >= 3) {
+      this.setState({ measures: [...s.measures, { type: 'area', pts: s.measurePts }], measurePts: [] });
+    }
+  };
+
+  // ── Canvas rendering ──────────────────────────────────────
+  draw() {
+    this.drawScene(this.canvasRef.current);
+    this.drawScene(this.canvasRef2.current);
+  }
+
+  drawScene(cv) {
+    if (!cv) return;
+    const ctx = cv.getContext('2d');
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+    const s = this.state;
+    const dark = s.theme === 'dark';
+    const line = dark ? 'rgba(179,197,255,0.55)' : 'rgba(0,45,123,0.5)';
+    const faint = dark ? 'rgba(196,198,211,0.16)' : 'rgba(0,45,123,0.12)';
+    const accent = dark ? '#b3c5ff' : '#002d7b';
+    const fillFace = dark ? 'rgba(179,197,255,0.05)' : 'rgba(0,45,123,0.04)';
+
+    // dotted backdrop
+    ctx.fillStyle = faint;
+    for (let gx = 40; gx < W; gx += 56) for (let gy = 40; gy < H; gy += 56) ctx.fillRect(gx, gy, 1.5, 1.5);
+    if (!s.loaded) return;
+
+    const k = Math.min(W, H) / 560;
+    const cx = W / 2, cy = H / 2 + Math.min(W, H) * 0.17;
+    const P = (x, y, z) => ({ x: cx + (x - y) * 0.866 * k, y: cy + (x + y) * 0.42 * k - z * k * 1.05 });
+    const poly = (pts, stroke, fill, width, dash) => {
+      ctx.beginPath();
+      pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.closePath();
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = width || 1; ctx.setLineDash(dash || []); ctx.stroke(); ctx.setLineDash([]); }
+    };
+    const seg = (a, b, stroke, width, dash) => {
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+      ctx.strokeStyle = stroke; ctx.lineWidth = width || 1; ctx.setLineDash(dash || []); ctx.stroke(); ctx.setLineDash([]);
+    };
+    const BX = 130, BY = 90, FH = 52, TOPZ = FH * 4;
+    ctx.globalAlpha = s.xray ? 0.4 : 1;
+
+    if (s.view === 'top') {
+      const t = 1.7 * k;
+      const R = (x, y) => ({ x: cx + x * t, y: cy - Math.min(W, H) * 0.17 + y * t });
+      poly([R(-BX, -BY), R(BX, -BY), R(BX, BY), R(-BX, BY)], line, fillFace, 2);
+      for (let gx = -90; gx <= 90; gx += 60) for (let gy = -50; gy <= 50; gy += 50) { ctx.fillStyle = line; ctx.beginPath(); ctx.arc(R(gx, gy).x, R(gx, gy).y, 4, 0, 7); ctx.fill(); }
+      poly([R(40, -30), R(100, -30), R(100, 30), R(40, 30)], accent, null, 1.5);
+      ctx.font = `${Math.round(13 * k)}px Inter`; ctx.fillStyle = faint; ctx.fillText('PLAN · EG', R(-BX, -BY).x, R(-BX, -BY).y - 10);
+    } else if (s.view === 'front') {
+      const f = 1.55 * k;
+      const R = (x, z) => ({ x: cx + x * f, y: cy + BY * 0.42 * k - z * f });
+      poly([R(-BX, 0), R(BX, 0), R(BX, TOPZ), R(-BX, TOPZ)], line, fillFace, 2);
+      STOREYS.forEach(st => {
+        const z = st.lvl * FH;
+        seg(R(-BX, z), R(BX, z), line, 1);
+        ctx.font = `${Math.round(12 * k)}px Inter`; ctx.fillStyle = dark ? 'rgba(196,198,211,0.6)' : 'rgba(68,70,81,0.7)';
+        ctx.fillText(st.id.toUpperCase(), R(-BX, z).x - 34 * k, R(-BX, z).y - 4);
+        if (s.sel && s.sel.sid === st.id) poly([R(-BX, z), R(BX, z), R(BX, z + FH), R(-BX, z + FH)], accent, dark ? 'rgba(179,197,255,0.12)' : 'rgba(0,45,123,0.08)', 1.5);
+      });
+      if (s.edges) for (let gx = -90; gx <= 90; gx += 60) seg(R(gx, 0), R(gx, TOPZ), faint, 1);
+      seg(R(40, 0), R(40, TOPZ), accent, 1); seg(R(100, 0), R(100, TOPZ), accent, 1);
+    } else {
+      // isometric orbit
+      if (s.grid) {
+        for (let gx = -220; gx <= 220; gx += 44) seg(P(gx, -160, 0), P(gx, 160, 0), faint, 1);
+        for (let gy = -160; gy <= 160; gy += 44) seg(P(-220, gy, 0), P(220, gy, 0), faint, 1);
+      }
+      const corners = [[-BX, -BY], [BX, -BY], [BX, BY], [-BX, BY]];
+      // slabs bottom-up
+      for (let i = 0; i <= 4; i++) {
+        const z = i * FH;
+        const hidden = STOREYS.some(st => st.lvl === i && s.hiddenS[st.id]);
+        ctx.globalAlpha = (s.xray ? 0.4 : 1) * (hidden ? 0.15 : 1);
+        poly(corners.map(c => P(c[0], c[1], z)), line, i === 4 ? fillFace : null, i === 0 || i === 4 ? 2 : 1.2);
+      }
+      ctx.globalAlpha = s.xray ? 0.4 : 1;
+      corners.forEach(c => seg(P(c[0], c[1], 0), P(c[0], c[1], TOPZ), line, 1.6));
+      if (s.edges) for (let gx = -90; gx <= 90; gx += 60) for (let gy = -50; gy <= 50; gy += 50) seg(P(gx, gy, 0), P(gx, gy, TOPZ), faint, 1);
+      // core
+      const core = [[40, -30], [100, -30], [100, 30], [40, 30]];
+      poly(core.map(c => P(c[0], c[1], TOPZ)), accent, null, 1.2);
+      core.forEach(c => seg(P(c[0], c[1], 0), P(c[0], c[1], TOPZ), accent, 1));
+      // selected storey highlight
+      if (s.sel) {
+        const st = STOREYS.find(x => x.id === s.sel.sid);
+        if (st && !s.hiddenS[st.id]) {
+          const z = st.lvl * FH;
+          poly(corners.map(c => P(c[0], c[1], z)), accent, dark ? 'rgba(179,197,255,0.13)' : 'rgba(0,45,123,0.09)', 2);
+        }
+      }
+      // section plane
+      if (s.sectionAxis) {
+        const t = s.sectionPos / 100;
+        let quad;
+        if (s.sectionAxis === 'X') { const x = -BX + 2 * BX * t; quad = [P(x, -BY, 0), P(x, BY, 0), P(x, BY, TOPZ), P(x, -BY, TOPZ)]; }
+        else if (s.sectionAxis === 'Y') { const y = -BY + 2 * BY * t; quad = [P(-BX, y, 0), P(BX, y, 0), P(BX, y, TOPZ), P(-BX, y, TOPZ)]; }
+        else { const z = TOPZ * t; quad = [P(-BX, -BY, z), P(BX, -BY, z), P(BX, BY, z), P(-BX, BY, z)]; }
+        poly(quad, dark ? '#ff9ec4' : '#c70063', dark ? 'rgba(255,158,196,0.10)' : 'rgba(199,0,99,0.06)', 1.5, [6, 4]);
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    // selection marker
+    if (s.markerPt && s.tool === 'select') {
+      const p = { x: s.markerPt.nx * W, y: s.markerPt.ny * H };
+      ctx.strokeStyle = accent; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 9, 0, 7); ctx.stroke();
+      ctx.fillStyle = accent; ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, 7); ctx.fill();
+    }
+
+    // measurements
+    const scaleM = k * 22;
+    const drawLabel = (x, y, text) => {
+      ctx.font = `600 ${Math.round(13 * k)}px Outfit`;
+      const w = ctx.measureText(text).width + 18;
+      ctx.fillStyle = dark ? '#e4e2ea' : '#1a1b21';
+      ctx.beginPath(); ctx.roundRect(x - w / 2, y - 13 * k, w, 24 * k, 12 * k); ctx.fill();
+      ctx.fillStyle = dark ? '#2f3036' : '#f1f0f8';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(text, x, y - 1 * k); ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+    };
+    const mcol = dark ? '#f5c44c' : '#7c5800';
+    s.measures.forEach(m => {
+      const pts = m.pts.map(p => ({ x: p.nx * W, y: p.ny * H }));
+      ctx.strokeStyle = mcol; ctx.lineWidth = 1.6; ctx.setLineDash([7, 5]);
+      ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      if (m.type === 'area') ctx.closePath();
+      ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = mcol;
+      pts.forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, 7); ctx.fill(); });
+      if (m.type === 'length') {
+        const d = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y) / scaleM;
+        drawLabel((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2 - 16, d.toFixed(2) + ' m');
+      } else {
+        let a = 0;
+        for (let i = 0; i < pts.length; i++) { const j = (i + 1) % pts.length; a += pts[i].x * pts[j].y - pts[j].x * pts[i].y; }
+        a = Math.abs(a / 2) / (scaleM * scaleM);
+        const mx = pts.reduce((t, p) => t + p.x, 0) / pts.length, my = pts.reduce((t, p) => t + p.y, 0) / pts.length;
+        drawLabel(mx, my, a.toFixed(2) + ' m²');
+      }
+    });
+    if (s.measurePts.length) {
+      const pts = s.measurePts.map(p => ({ x: p.nx * W, y: p.ny * H }));
+      ctx.strokeStyle = mcol; ctx.lineWidth = 1.4; ctx.setLineDash([4, 4]);
+      ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = mcol; pts.forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, 7); ctx.fill(); });
+    }
+
+    // issue pins
+    s.issues.forEach(iss => {
+      if (!iss.pt) return;
+      const p = { x: iss.pt.nx * W, y: iss.pt.ny * H };
+      const col = iss.prio === 'Critical' ? '#ba1a1a' : iss.prio === 'High' ? '#7c5800' : accent;
+      ctx.strokeStyle = col; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(p.x, p.y - 22); ctx.stroke();
+      ctx.fillStyle = col; ctx.beginPath(); ctx.arc(p.x, p.y - 28, 7, 0, 7); ctx.fill();
+    });
+  }
+
+  // ── renderVals ────────────────────────────────────────────
+  renderVals() {
+    const s = this.state;
+    const dark = s.theme === 'dark';
+    const isMobile = this.props.mobilePreview ?? false;
+    const panelW = this.props.panelWidth ?? 320;
+    const set = (o) => () => this.setState(o);
+
+    const hiddenCount = STOREYS.filter(st => s.hiddenS[st.id]).reduce((a, st) => a + st.classes.reduce((b, c) => b + c[1], 0), 0);
+    const visible = s.isolated ? 12 : TOTAL - hiddenCount;
+
+    const activeBg = 'var(--primary-fixed)';
+    const activeFg = dark ? '#dbe1ff' : '#002d7b';
+
+    // tool rail
+    const tool = (icon, label, key, active, onClick) => ({ isBtn: true, divider: false, icon, label: label + (key ? ` (${key})` : ''), bg: active ? activeBg : 'transparent', fg: active ? activeFg : 'var(--on-surface-variant)', onClick });
+    const div = { divider: true, isBtn: false };
+    const toolItems = [
+      tool('near_me', 'Single select', null, s.tool === 'select' && !s.multi, set({ tool: 'select', multi: false, measurePts: [] })),
+      tool('select_all', 'Multi select', 'M', s.multi, () => this.setState(x => ({ multi: !x.multi, tool: 'select' }))),
+      tool('center_focus_strong', 'Isolate selection', null, !!s.isolated, () => this.setState(x => ({ isolated: x.sel ? x.sel.cls : null }))),
+      tool('visibility_off', 'Hide selection', null, false, () => s.sel && this.setState(x => ({ hiddenS: { ...x.hiddenS, [x.sel.sid]: true } }))),
+      tool('visibility', 'Show all / reset visibility', null, false, set({ hiddenS: {}, isolated: null })),
+      div,
+      tool('straighten', 'Measure length', 'L', s.tool === 'length', () => this.setTool('length')),
+      tool('square_foot', 'Measure area', 'A', s.tool === 'area', () => this.setTool('area')),
+      tool('delete_sweep', 'Clear measurements', null, false, set({ measures: [], measurePts: [] })),
+      div,
+      tool('vertical_split', 'Section X', null, s.sectionAxis === 'X', () => this.setState(x => ({ sectionAxis: x.sectionAxis === 'X' ? null : 'X' }))),
+      tool('horizontal_split', 'Section Y', null, s.sectionAxis === 'Y', () => this.setState(x => ({ sectionAxis: x.sectionAxis === 'Y' ? null : 'Y' }))),
+      tool('layers', 'Section Z', null, s.sectionAxis === 'Z', () => this.setState(x => ({ sectionAxis: x.sectionAxis === 'Z' ? null : 'Z' }))),
+      div,
+      tool('blur_on', 'X-Ray', 'X', s.xray, () => this.setState(x => ({ xray: !x.xray }))),
+      tool('border_style', 'Edges', 'E', s.edges, () => this.setState(x => ({ edges: !x.edges }))),
+      tool('grid_on', 'Grid', 'G', s.grid, () => this.setState(x => ({ grid: !x.grid }))),
+    ];
+
+    // view buttons
+    const viewBtns = [
+      { icon: 'fit_screen', label: 'Fit all (F)', bg: 'transparent', fg: 'var(--on-surface-variant)', onClick: set({ view: 'orbit' }) },
+      { icon: '3d_rotation', label: 'Orbit', bg: s.view === 'orbit' ? activeBg : 'transparent', fg: s.view === 'orbit' ? activeFg : 'var(--on-surface-variant)', onClick: set({ view: 'orbit' }) },
+      { icon: 'crop_portrait', label: 'Front view', bg: s.view === 'front' ? activeBg : 'transparent', fg: s.view === 'front' ? activeFg : 'var(--on-surface-variant)', onClick: set({ view: 'front' }) },
+      { icon: 'crop_landscape', label: 'Top view', bg: s.view === 'top' ? activeBg : 'transparent', fg: s.view === 'top' ? activeFg : 'var(--on-surface-variant)', onClick: set({ view: 'top' }) },
+    ];
+
+    const navModes = [['orbit', '3d_rotation', 'Orbit'], ['plan', 'map', 'Plan'], ['walk', 'directions_walk', 'Walk']].map(([id, icon, label]) => ({
+      icon, label, bg: s.navMode === id ? 'var(--primary)' : 'transparent',
+      fg: s.navMode === id ? 'var(--on-primary)' : 'var(--on-surface-variant)', onClick: set({ navMode: id }),
+    }));
+
+    // tabs
+    const tabDefs = [['explorer', 'account_tree', 'Explorer'], ['models', 'deployed_code', 'Models'], ['properties', 'info', 'Properties'], ['viewpoints', 'photo_camera', 'Viewpoints'], ['issues', 'flag', 'Issues'], ['help', 'help', 'Help']];
+    const tabs = tabDefs.map(([id, icon, label]) => ({
+      icon, label, bg: s.panel === id && s.panelOpen ? activeBg : 'transparent',
+      fg: s.panel === id && s.panelOpen ? activeFg : 'var(--on-surface-variant)',
+      onClick: () => this.setState(x => ({ panel: id, panelOpen: x.panel === id ? !x.panelOpen : true })),
+    }));
+
+    // tree
+    const q = s.search.trim().toLowerCase();
+    const anyFilter = Object.values(s.classFilter).some(Boolean);
+    const storeyRows = STOREYS.map(st => {
+      const open = !!s.expanded[st.id];
+      const hidden = !!s.hiddenS[st.id];
+      return {
+        name: st.name, elev: st.elev, open,
+        opacity: hidden ? 0.45 : 1,
+        chev: open ? 'rotate(90deg)' : 'rotate(0deg)',
+        eyeIcon: hidden ? 'visibility_off' : 'visibility',
+        onToggle: () => this.setState(x => ({ expanded: { ...x.expanded, [st.id]: !x.expanded[st.id] } })),
+        onEye: (e) => { e.stopPropagation(); this.setState(x => ({ hiddenS: { ...x.hiddenS, [st.id]: !x.hiddenS[st.id] } })); },
+        classes: st.classes
+          .filter(([cls]) => (!anyFilter || s.classFilter[cls]) && (!q || CLS_LABEL[cls].toLowerCase().includes(q) || cls.toLowerCase().includes(q)))
+          .map(([cls, n]) => {
+            const active = s.sel && s.sel.sid === st.id && s.sel.cls === cls;
+            return {
+              label: CLS_LABEL[cls], n, dot: CLS_DOT[cls],
+              bg: active ? activeBg : 'transparent', fg: active ? activeFg : 'var(--on-surface)',
+              onClick: () => this.selectNode(st, cls),
+            };
+          }),
+      };
+    });
+
+    const filterChips = Object.keys(CLS_LABEL).map(cls => {
+      const on = !!s.classFilter[cls];
+      return {
+        label: CLS_LABEL[cls],
+        bg: on ? activeBg : 'transparent', fg: on ? activeFg : 'var(--on-surface-variant)',
+        border: on ? 'transparent' : 'var(--outline-variant)',
+        onClick: () => this.setState(x => ({ classFilter: { ...x.classFilter, [cls]: !x.classFilter[cls] } })),
+      };
+    });
+
+    // models panel
+    const modelRows = [['arc', 'BTC-Office-ARC.ifc', 'Architecture · IFC4 · 48.2 MB'], ['str', 'BTC-Office-STR.ifc', 'Structure · IFC4 · 21.7 MB']].map(([id, name, meta]) => ({
+      name, meta,
+      eyeIcon: s.modelVis[id] ? 'visibility' : 'visibility_off',
+      opacity: s.modelOpacity[id], opacityLabel: s.modelOpacity[id] + '%',
+      onEye: () => this.setState(x => ({ modelVis: { ...x.modelVis, [id]: !x.modelVis[id] } })),
+      onOpacity: (e) => { const v = +e.target.value; this.setState(x => ({ modelOpacity: { ...x.modelOpacity, [id]: v } })); },
+    }));
+
+    // properties
+    const propRows = s.sel ? [
+      { k: 'Type', v: s.sel.cls, font: 'var(--font-body)' },
+      { k: 'Name', v: s.sel.name, font: 'var(--font-body)' },
+      { k: 'GlobalId', v: s.sel.gid, font: 'var(--font-mono)' },
+      { k: 'Storey', v: s.sel.storey, font: 'var(--font-body)' },
+      { k: 'Description', v: '—', font: 'var(--font-body)' },
+    ] : [];
+    const psetRows = [{ k: 'FireRating', v: 'F90' }, { k: 'IsExternal', v: 'False' }, { k: 'LoadBearing', v: 'True' }];
+
+    // viewpoints
+    const viewpointRows = s.viewpoints.map(vp => ({
+      name: vp.name, meta: vp.meta,
+      onApply: () => this.setState({ view: vp.view, theme: vp.theme }),
+      onDelete: () => this.setState(x => ({ viewpoints: x.viewpoints.filter(v => v !== vp) })),
+    }));
+
+    // issues
+    const prioChips = ['Critical', 'High', 'Medium', 'Low'].map(p => ({
+      label: p,
+      bg: s.issuePrio === p ? activeBg : 'transparent', fg: s.issuePrio === p ? activeFg : 'var(--on-surface-variant)',
+      border: s.issuePrio === p ? 'transparent' : 'var(--outline-variant)',
+      onClick: set({ issuePrio: p }),
+    }));
+    const issueRows = s.issues.map(iss => {
+      const next = STATUS_FLOW[Math.min(STATUS_FLOW.indexOf(iss.status) + 1, 3)];
+      const sb = { Open: ['var(--warning-container)', 'var(--warning)'], 'In Progress': ['var(--primary-fixed)', activeFg], Resolved: ['var(--success-container)', 'var(--success)'], Closed: ['var(--surface-container-high)', 'var(--on-surface-variant)'] }[iss.status];
+      return {
+        title: iss.title, meta: iss.meta, status: iss.status, prioColor: PRIO_COLOR[iss.prio],
+        statusBg: sb[0], statusFg: sb[1],
+        nextLabel: iss.status === 'Closed' ? 'Reopen' : '→ ' + next,
+        onAdvance: () => this.setState(x => ({ issues: x.issues.map(i => i === iss ? { ...i, status: i.status === 'Closed' ? 'Open' : next } : i) })),
+        onDelete: () => this.setState(x => ({ issues: x.issues.filter(i => i !== iss) })),
+      };
+    });
+
+    const shortcuts = [
+      { key: 'F', label: 'Fit model' }, { key: '1–3', label: 'Orbit / Plan / Walk mode' },
+      { key: 'M', label: 'Toggle multi-select' }, { key: 'L', label: 'Length measurement' },
+      { key: 'A', label: 'Area measurement' }, { key: 'G', label: 'Toggle grid' },
+      { key: 'X', label: 'Toggle X-ray' }, { key: 'E', label: 'Toggle edges' },
+      { key: 'Esc', label: 'Cancel active tool' },
+    ];
+
+    // mobile
+    const mobileTabDefs = [
+      ['tree', 'account_tree', 'Tree', () => this.setState({ sheet: 'tree' })],
+      ['orbit', '3d_rotation', 'Orbit', set({ navMode: 'orbit', view: 'orbit', sheet: null })],
+      ['section', 'content_cut', 'Section', () => this.setState(x => ({ sectionAxis: x.sectionAxis ? null : 'Z', sheet: null }))],
+      ['measure', 'straighten', 'Measure', () => { this.setTool('length'); this.setState({ sheet: null }); }],
+      ['more', 'more_horiz', 'More', () => this.setState({ sheet: 'more' })],
+    ];
+    const mActive = { tree: s.sheet === 'tree', orbit: s.navMode === 'orbit' && !s.sheet && !s.sectionAxis && s.tool === 'select', section: !!s.sectionAxis, measure: s.tool === 'length' || s.tool === 'area', more: s.sheet === 'more' };
+    const mobileTabs = mobileTabDefs.map(([id, icon, label, onClick]) => ({
+      icon, label, onClick,
+      fg: mActive[id] ? activeFg : 'var(--on-surface-variant)',
+      pillBg: mActive[id] ? activeBg : 'transparent',
+    }));
+    const mtgl = (icon, label, on, onClick) => ({ icon, label, onClick, fg: on ? activeFg : 'var(--on-surface-variant)', trackBg: on ? 'var(--primary)' : 'var(--surface-container-highest)', knobLeft: on ? '21px' : '3px' });
+    const mobileToggles = [
+      mtgl('blur_on', 'X-Ray', s.xray, () => this.setState(x => ({ xray: !x.xray }))),
+      mtgl('border_style', 'Edges', s.edges, () => this.setState(x => ({ edges: !x.edges }))),
+      mtgl('grid_on', 'Grid', s.grid, () => this.setState(x => ({ grid: !x.grid }))),
+      mtgl('dark_mode', 'Dark theme', dark, () => this.setState(x => ({ theme: x.theme === 'dark' ? 'light' : 'dark' }))),
+    ];
+
+    return {
+      theme: s.theme, isDark: dark, isLight: !dark,
+      isDesktop: !isMobile, isMobile,
+      themeIcon: dark ? 'light_mode' : 'dark_mode',
+      chipTextColor: activeFg,
+      onThemeToggle: () => this.setState(x => ({ theme: x.theme === 'dark' ? 'light' : 'dark' })),
+
+      loaded: s.loaded, notLoaded: !s.loaded, loading: s.loading,
+      showEmpty: !s.loaded && !s.loading,
+      progressPct: Math.round(s.progress) + '%', progressLabel: Math.round(s.progress) + '%',
+      loadingStep: s.progress < 40 ? 'Reading BTC-Office-ARC.ifc…' : s.progress < 75 ? 'Reading BTC-Office-STR.ifc…' : 'Building spatial index…',
+      onLoadDemo: this.loadDemo,
+      modelChips: [{ tag: 'ARC' }, { tag: 'STR' }],
+      fileBtns: [
+        { icon: 'photo_camera', label: 'Export screenshot', onClick: () => {} },
+        { icon: 'download', label: 'Export state', onClick: () => {} },
+        { icon: 'upload', label: 'Import state', onClick: () => {} },
+      ],
+
+      canvasRef: this.canvasRef, canvasRef2: this.canvasRef2,
+      onCanvasClick: this.onCanvasClick, onCanvasDbl: this.onCanvasDbl,
+      canvasCursor: s.tool === 'select' ? 'default' : 'crosshair',
+      onFit: set({ view: 'orbit' }),
+
+      toolItems, viewBtns, navModes, tabs,
+
+      measureActive: s.loaded && (s.tool === 'length' || s.tool === 'area'),
+      measureHint: s.tool === 'area' ? 'Area — click points, double-click to close' : 'Length — click two points',
+      onCancelTool: set({ tool: 'select', measurePts: [] }),
+
+      sectionActive: s.loaded && !!s.sectionAxis,
+      sectionLabel: 'Section ' + (s.sectionAxis || ''),
+      sectionPos: s.sectionPos, sectionPosLabel: s.sectionPos + '%',
+      onSectionPos: (e) => this.setState({ sectionPos: +e.target.value }),
+      onClearSection: set({ sectionAxis: null }),
+
+      hasSel: !!s.sel, noSel: !s.sel,
+      selName: s.sel ? s.sel.name : '', selMeta: s.sel ? `${s.sel.cls} · ${s.sel.storey}` : '',
+      onClearSel: set({ sel: null, markerPt: null }),
+      onIsolate: () => this.setState(x => ({ isolated: x.sel ? x.sel.cls : null })),
+      onHideSel: () => s.sel && this.setState(x => ({ hiddenS: { ...x.hiddenS, [x.sel.sid]: true } })),
+
+      panelOpen: s.panelOpen, panelW,
+      panelTitle: { explorer: 'Explorer', models: 'Federated models', properties: 'Properties', viewpoints: 'Viewpoints', issues: 'Issues', help: 'Help' }[s.panel],
+      onTogglePanel: () => this.setState(x => ({ panelOpen: !x.panelOpen })),
+      isExplorer: s.panel === 'explorer', isModels: s.panel === 'models', isProps: s.panel === 'properties',
+      isViewpoints: s.panel === 'viewpoints', isIssues: s.panel === 'issues', isHelp: s.panel === 'help',
+
+      search: s.search, onSearch: (e) => this.setState({ search: e.target.value }),
+      filterChips, storeyRows, totalLabel: TOTAL + ' elements',
+      modelRows, propRows, psetRows,
+
+      onSaveViewpoint: () => {
+        this.vpCount++;
+        const name = 'VP-' + String(this.vpCount).padStart(2, '0');
+        this.setState(x => ({ viewpoints: [...x.viewpoints, { name, meta: `${x.view} · ${x.theme} · ${x.sectionAxis ? 'section ' + x.sectionAxis : 'no section'}`, view: x.view, theme: x.theme }] }));
+      },
+      viewpointRows, noViewpoints: s.loaded ? s.viewpoints.length === 0 : true,
+
+      issueTitle: s.issueTitle, onIssueTitle: (e) => this.setState({ issueTitle: e.target.value }),
+      prioChips, issueRows, noIssues: s.issues.length === 0,
+      createIssueOpacity: (s.issueTitle.trim() || s.sel) ? 1 : 0.45,
+      createIssueLabel: s.sel ? 'Create from selection' : 'Create issue',
+      onCreateIssue: () => {
+        if (!s.issueTitle.trim() && !s.sel) return;
+        this.issCount++;
+        const title = s.issueTitle.trim() || (s.sel.name + ' — review');
+        this.setState(x => ({
+          issues: [{ title, prio: x.issuePrio, status: 'Open', meta: `#${String(this.issCount).padStart(3, '0')} · ${x.sel ? x.sel.storey : 'Model'} · today`, pt: x.markerPt }, ...x.issues],
+          issueTitle: '',
+        }));
+      },
+
+      shortcuts,
+
+      statusLabel: s.loading ? 'Parsing…' : 'Ready',
+      selCountLabel: (s.sel ? 1 : 0) + ' selected',
+      elementsLabel: TOTAL + ' elements',
+      visibleLabel: (s.loaded ? visible : 0) + ' visible',
+      viewLabel: s.view === 'orbit' ? 'Orbit · perspective' : s.view === 'front' ? 'Front · orthographic' : 'Top · orthographic',
+
+      // mobile
+      mobileTitle: s.loaded ? 'BTC-Office-Zürich' : 'IFC Viewer',
+      mobileSubtitle: s.loaded ? 'ARC + STR · ' + visible + ' visible' : 'No model loaded',
+      mobileTabs, mobileToggles,
+      sheetOpen: !!s.sheet, sheetIsTree: s.sheet === 'tree', sheetIsMore: s.sheet === 'more',
+      sheetTitle: s.sheet === 'tree' ? 'Spatial tree' : 'View settings',
+      onCloseSheet: set({ sheet: null }),
+    };
+  }
+}
+
+</script>
+</body>
+</html>

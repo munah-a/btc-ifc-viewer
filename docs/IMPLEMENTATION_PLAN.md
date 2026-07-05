@@ -1,0 +1,310 @@
+# BTC IFC Viewer — Program Implementation Plan
+
+> **For agentic workers:** This is the master plan, maintained by the Program Orchestrator. Wave
+> Orchestrators execute one wave each (see §Orchestration). Defect specs live in
+> [docs/AUDIT.md](AUDIT.md) — reference finding IDs (A1, F2, U1, P5, T4…), do not re-audit.
+> Steps use checkbox (`- [ ]`) syntax; **update your checkboxes and the Status Log as you finish work.**
+
+**Goal:** Turn the PoC into a zero-install, embeddable, field-ready browser IFC viewer with the new
+BTC brand design — client-side conversion (no server compute), cost-minimal time-limited embed
+hosting, and a clear runway to a paid tier.
+
+**Architecture:** Static Vite SPA stays the core. IFC→fragments conversion happens **in the uploader's
+browser**; the server side is limited to static storage + tiny metadata + scheduled cleanup (Vercel
+functions + Blob + KV + Cron). Modularized viewer-core is shared by the full app and a chromeless
+`/embed` entry. No microservices; no server-side model processing.
+
+**Tech stack:** Vite 5 (→ evaluate 8 in W0), TypeScript strict, @thatopen 3.3.x, three 0.175,
+web-ifc 0.0.74 (pinned exact), Playwright + Vitest, Vercel (functions/Blob/KV/Cron) as primary
+deploy, GitHub Pages retained as demo mirror until W4.
+
+---
+
+## 1. Product vision & constraints (bind every decision to these)
+
+| # | Constraint | Consequence |
+|---|-----------|-------------|
+| C1 | **Zero-install viewer** — for people who won't/can't install an IFC viewer | Browser conversion is a *feature*, not a flaw. Keep client-side web-ifc. First-load performance and no-CDN-dependence are product-critical. |
+| C2 | **Minimal server-side cost** | Never convert or render models server-side. Server stores/serves bytes only. Uploads are **pre-converted fragments** (5–10× smaller than IFC), size-capped, rate-limited. |
+| C3 | **Free embed hosting is time-limited** | Default TTL (e.g. 7 days, configurable), then auto-delete via cron. Anonymous, no accounts required. |
+| C4 | **Paid tier deferred but supported** | All hosting metadata carries `ownerId?`, `tier`, `expiresAt?`; quota/entitlement checks flow through ONE module (`api/_lib/entitlements.ts`) that today returns anon defaults. No auth provider chosen yet — do not build login. |
+| C5 | **Full rebrand from Claude Design** | New shell implemented from `BTC IFC Viewer.dc.html` (import currently **BLOCKED**, see §3). Old CSS is replaced, not patched — don't gold-plate current styles. |
+| C6 | **Field usage on tablets** | Responsive + touch + offline (PWA, W5) are core, not extras. |
+
+## 2. Target architecture
+
+```
+Repo (post-W2 layout)
+├─ src/
+│  ├─ main.ts                 # full-app entry (thin)
+│  ├─ embed.ts                # embed entry (thin)           [W4]
+│  ├─ core/                   # DOM-free; unit-tested
+│  │  ├─ viewer-core.ts       # engine bootstrap, world, render loop, on-demand mode
+│  │  ├─ model-registry.ts    # load-by-file / load-by-url, identity, metadata (kills A6/A10)
+│  │  ├─ model-id-map.ts      # set algebra (pure, moved from viewer.ts:259-303)
+│  │  ├─ property-engine/     # unwrap/flatten/classify (pure, from viewer.ts:3838-4404)
+│  │  ├─ persistence.ts       # versioned state schema, validate/apply (kills A7)
+│  │  ├─ fragments-model.ts   # FragmentsModelLike typed boundary (kills A8)
+│  │  └─ url-state.ts         # viewpoint/camera <-> URL hash codec        [W4]
+│  ├─ tools/                  # measure, section, xray, edges, viewcube — Tool interface
+│  ├─ ui/                     # panel controllers on delegation pattern; new design DOM [W3]
+│  ├─ index.html / embed.html
+│  └─ styles/                 # design tokens + components from .dc.html   [W3]
+├─ api/                       # Vercel functions                           [W4]
+│  ├─ uploads.ts              # POST: validate→Blob put→KV meta(TTL)→{embedUrl, deleteToken}
+│  ├─ e/[id].ts               # GET meta → {fragUrl: direct Blob-CDN URL, expiresAt}; DELETE (requires deleteToken)
+│  ├─ oembed.ts               # oEmbed JSON for paste-a-link boards
+│  ├─ cron-cleanup.ts         # daily: delete expired Blob objects + KV records
+│  └─ _lib/entitlements.ts    # tier→{maxSizeMB, ttlDays, maxActiveUploads}; anon defaults
+├─ e2e/  (split specs + fixtures/*.ifc — moved out of public/, P5)
+├─ public/  (web-ifc.wasm, worker.mjs — vendored, A2; manifest+sw in W5)
+└─ docs/   (this plan, AUDIT.md, design/, DECISIONS.md as needed)
+```
+
+**Embed hosting flow (C2/C3):** user clicks Share → browser converts IFC→fragments (already how the
+viewer works) → uploads `.frag` + meta JSON to `POST /api/uploads` → response `{embedUrl, deleteToken,
+expiresAt}` → share dialog offers iframe snippet / link / QR / PowerPoint instructions. Embeds call
+`GET /api/e/:id` for metadata only; the **browser fetches the `.frag` directly from the Blob CDN URL**
+(no per-view function egress). Cron deletes expired. Server compute ≈ zero.
+
+**PowerPoint strategy (from embed analysis):** (a) embed URL works in Miro/Notion/Confluence/Teams/
+SharePoint directly and in PowerPoint via Microsoft's Web Viewer add-in; (b) `frame-ancestors`
+allowlist set in vercel.json; (c) native-3D fallback: **Export GLB** button (three GLTFExporter) for
+Insert→3D Models — offline decks, no add-in; (d) custom Office content add-in deferred (backlog).
+
+## 3. Blockers
+
+| Blocker | Blocks | Unblock options (user action) |
+|---------|--------|-------------------------------|
+| ~~Claude Design project is auth-gated~~ **RESOLVED 2026-07-05** — user dropped the full handoff bundle at `BIM Viewer UIUX Branding-handoff/` (repo root; commit it with the repo) | ~~Wave 3~~ | Design source of truth: `BIM Viewer UIUX Branding-handoff/bim-viewer-ui-ux-branding/project/BTC IFC Viewer.dc.html` (1,122 lines — W3 implementers must read it IN FULL plus its imports, per the bundle README). Design-system tokens: `…/project/_ds/bim-tech-consulting-design-system-*/colors_and_type.css` + README ("Precision Architect"). Brand assets: `…/project/assets/` (logo-primary.svg, logo-white.svg, iconmark.svg). |
+| Vercel project link (done) needs prod domain decision | W4 headers/oEmbed URLs | Confirm the embed host domain (default: the Vercel project). |
+
+## 4. Wave overview
+
+Waves run **sequentially** (each builds on the last); tasks inside a wave parallelize where files are
+disjoint. W3 can start any time after W2 once the design blocker clears; W4a client work can overlap
+late W3.
+
+| Wave | Theme | Exit criteria (gate) | Status |
+|------|-------|----------------------|--------|
+| W0 | Pipeline & safety net | CI green & gating deploys; assets self-hosted; artifact ≤ ~7MB; `tsc`/lint/e2e all pass | ☐ not started |
+| W1 | Correctness — confirmed bugs | All F1–F11 + A1/A6/A7/A9/A10 + U4 fixed with regression tests; A15 & U11 partial (W1.8 slice — completed in W5.3/W3.4) | ☐ not started |
+| W2 | Modularization & unit tests | Layout of §2 (minus embed/api); viewer.ts < ~800-line orchestrator; Vitest suite; e2e still green | ☐ not started |
+| W3 | Rebrand & responsive/a11y | New design shipped; U1–U11 fixed; both themes pass contrast; e2e updated + tablet viewport test | ☐ ready (design handoff in repo) |
+| W4 | Embed & sharing platform | /embed live on Vercel with upload→TTL→cleanup loop; GLB export; oEmbed; frame-ancestors; costs within the W4.3 envelope | ☐ not started |
+| W5 | Performance & field readiness | Split chunks (initial JS ≤ ~350KB gzip shell); IndexedDB model cache; on-demand render; PWA offline shell | ☐ not started |
+| W6 | Deferred backlog | (not scheduled — see §7) | — |
+
+## 5. Wave task breakdowns
+
+### Wave 0 — Pipeline & safety net *(no behavior changes; everything later lands on this)*
+
+- [ ] **W0.1 Type-check works and runs.** Fix T2: add `"types": ["vite/client"]`, remove inert emit
+  options (A14), enable `noUnusedLocals`/`noUnusedParameters`. Add scripts:
+  `"typecheck": "tsc --noEmit"`. Add `tsconfig.node.json` covering `e2e/` + configs (T8).
+  Gate: `npm run typecheck` exits 0.
+- [ ] **W0.2 Lint/format + test harness.** ESLint (typescript-eslint recommended-type-checked) +
+  Prettier + scripts. Autofix; hand-fix the remainder. Add **Vitest** now (config + one smoke test +
+  `"test:unit"` script) so W1 can write unit tests. Gate: `npm run lint` and `npm run test:unit` exit 0.
+- [ ] **W0.3 Dependencies.** `npm audit fix` (clears critical fast-xml-parser chain, T3); pin
+  `web-ifc` exact `0.0.74`; add `.github/dependabot.yml`; record vite-8 major upgrade as W6 item.
+  Gate: `npm audit --omit=dev --audit-level=high` clean.
+- [ ] **W0.4 Delete dead code.** A3 (viewer.ts:2932-3296 + unused views + `listen()` decision per A5)
+  and U10 dead CSS blocks. Gate: build output shrinks; typecheck/lint clean.
+- [ ] **W0.5 Self-host runtime assets (A2/P2).** Copy `node_modules/web-ifc/web-ifc.wasm` and
+  `node_modules/@thatopen/fragments/dist/Worker/worker.mjs` into `public/` via a build script
+  (`scripts/vendor-assets.mjs`, run in `prebuild`/`predev`) so versions track package-lock. Point
+  `ifcLoader.setup` at `import.meta.env.BASE_URL`, fetch worker locally. Delete the dev-only wasm
+  MIME plugin if Vite serves it correctly now. Gate: app boots with network blocked to unpkg/github.io.
+- [ ] **W0.6 Deploy config (P8, P5).** Env-driven base (`base: process.env.VITE_BASE ?? '/'`; Pages
+  workflow sets `/btc-ifc-viewer/`); add `vercel.json` (build output, headers incl. long-cache for
+  hashed assets); move `public/*.ifc` → `e2e/fixtures/` (P5); real favicon; decide Vercel = primary,
+  Pages = mirror. Gate: both deploys serve working app.
+- [ ] **W0.7 E2E can test the real artifact (T4).** Replace `import.meta.env.DEV` gating of
+  `__viewer`/`__world` with explicit `VITE_E2E` define; `vite.e2e.config.ts` builds prod-mode with the
+  define; Playwright `webServer` = `build && preview`. Gate: suite passes against built output
+  (F1 will make search step fail — mark `test.fixme` referencing F1 until W1, keep rest green).
+- [ ] **W0.8 CI gate (T1).** New `.github/workflows/ci.yml` on `pull_request` + `push:main`:
+  typecheck → lint → test:unit → audit(high, prod) → build → `playwright install chromium --with-deps` → e2e.
+  `deploy.yml` gains `needs: ci` (or job-level gate). Pin actions to SHAs (T9). Gate: red CI blocks deploy.
+- [ ] **W0.9 Minimal e2e split (T5, partial).** Split the monolith into ~6 `describe` blocks sharing a
+  loaded-model fixture; replace the seven 750ms sleeps with state waits. Deep rework deferred to W2/W3.
+- [ ] **W0.10 Update this plan** (checkboxes, Status Log, measured artifact/bundle sizes).
+
+### Wave 1 — Correctness *(all specs in AUDIT.md; add a regression test per fix)*
+
+- [ ] W1.1 **F1** search crash — unwrap ItemAttribute; e2e un-fixme search.
+- [ ] W1.2 **F2** blank captures — render-before-capture; viewpoint thumbnails ≤320px JPEG, shown in
+  list, excluded from localStorage bulk (size-guard persistence).
+- [ ] W1.3 **A1** XSS — escape 4 paths + CSP meta tag; unit test with hostile storey name.
+- [ ] W1.4 **A6+A10+F6** load lifecycle — metadata keyed by `modelId` (name passed to load), kill FIFO
+  queue + alias layer; timeout attaches `.catch`, stale-id late arrivals disposed; add per-model
+  **unload/dispose** action in the federation panel (F6: free fragments/indices/selection state).
+  Unit-test registry incl. unload.
+- [ ] W1.5 **F3** xray/edges survive loads; **F8** per-theme background; **F4** delete grid hack.
+- [ ] W1.6 **A7** single `applyPersistedState` with validation (crash-free import of minimal JSON).
+- [ ] W1.7 **U4** error surfacing — every catch path → error toast; overlay error state + Retry.
+- [ ] W1.8 **A9** typed error predicate + debug logging; **F7** Show All label; **A15** status slots;
+  toast position (U11); **F9/F10/F11** small feature fixes.
+- [ ] W1.9 **F5** property units read from the model's IfcUnitAssignment (keyword inference demoted to
+  fallback); unit tests for both paths (fix in place — extraction to `core/` happens in W2).
+- [ ] W1.10 Update plan + Status Log.
+
+### Wave 2 — Modularization & unit tests *(behavior-preserving; e2e green throughout)*
+
+- [ ] W2.1 Extract **pure** modules first (Vitest harness exists since W0.2), tests written against
+  extracted code: `core/model-id-map.ts`, `core/property-engine/` (A4/T7 — highest-value tests:
+  unwrap, flatten caps, classification, unit resolution — port the W1.9 tests), `core/persistence.ts`.
+- [ ] W2.2 Extract `core/model-registry.ts` (already reshaped in W1.4) + `core/fragments-model.ts`
+  typed boundary (A8; isolate `_controls` access in one commented function).
+- [ ] W2.3 Extract `core/viewer-core.ts` (engine bootstrap/lifecycle; scoped warn-filter per A5;
+  destroy wired to HMR dispose) and `tools/*` (measure/section/xray/edges/viewcube; A12 dedup).
+- [ ] W2.4 `ui/` controllers: one per panel, delegation pattern everywhere (A11), expanded-state
+  preserved across re-renders. viewer.ts becomes an <~800-line composition root with guarded bootstrap.
+- [ ] W2.5 Frozen `window.__viewerTestApi` (T6) replacing raw `__viewer`; migrate e2e to it; add
+  canvas-click selection + keyboard-shortcut + 2-model federation tests.
+- [ ] W2.6 Update plan + Status Log; record final module map in §2 if it drifted.
+
+### Wave 3 — Rebrand, responsive & accessibility
+*(Design handoff at `BIM Viewer UIUX Branding-handoff/…/project/` — read `BTC IFC Viewer.dc.html`
+IN FULL + `colors_and_type.css` + design-system README before implementing. It is a prototype:
+match the visual output pixel-perfectly, don't copy its internal structure. Key facts scouted:
+two complete theme token sets live in the dc.html under `#btc-viewer-root[data-theme=dark|light]`
+(M3-style surface-container ramp, primary `#002d7b` light / `#b3c5ff` dark, glass-bg, blue-tinted
+shadows); desktop = 52px top bar + 52px left tool rail + viewport with glass overlays (view controls,
+nav pill, section slider, selection chip) + 320px right panel (Explorer/Models/Properties/Viewpoints/
+Issues/Help) + 48px right tab strip + 30px status bar; mobile = top bar + bottom sheet + 5-tab bottom
+bar (this IS the U1 fix); fonts Outfit+Inter and Material Symbols Outlined come from Google Fonts in
+the prototype — MUST be self-hosted/subset per C1/A2 offline rule; brand voice: sentence case, no
+Title Case buttons, `—` for empty values, tabular numerics.)*
+
+- [ ] W3.1 Ingest design: port the two `#btc-viewer-root[data-theme]` token sets +
+  `colors_and_type.css` into `src/styles/tokens.css`; self-host Outfit/Inter (subset woff2) and the
+  Material Symbols glyphs actually used (icon subset or inline SVG — also kills U5's ligature issue);
+  copy `assets/` logos into `src/assets/`; replace favicon with `iconmark.svg` derivative.
+- [ ] W3.2 Rebuild shell per design (top bar/tool rail/viewport overlays/right panel + tab strip/
+  status bar) on the W2 ui/ controllers. Replace styles.css wholesale; single mobile-first
+  stylesheet (U10).
+- [ ] W3.3 **U1** implement the design's mobile pattern: bottom sheet + 5-tab bottom bar + fit FAB,
+  drawer/backdrop for tablet, phone error toasts; **U2** settings reachable on tablet (design's
+  More sheet); **U9** pointer-event splitters (panel width is a design prop, 280–400px).
+- [ ] W3.4 Accessibility program: **U6** button rows + list semantics; **U7** real tabs/menus, drop
+  role=application; **U8** `<dialog>` confirm; contrast pass both themes (U3/U11).
+- [ ] W3.5 E2E: update selectors; add 768px viewport test (panels reachable); add axe-core smoke;
+  screenshot baselines 2 themes × 3 viewports.
+- [ ] W3.6 Update plan + Status Log.
+
+### Wave 4 — Embed & sharing platform
+
+- [ ] W4.1 Vite MPA: `embed.html` + `src/embed.ts` on viewer-core — chromeless (canvas, orbit,
+  fullscreen, fit, BTC badge, "Open in Viewer" link), `ui=min` param set, on-demand render default
+  (P6 subset), poster + click-to-activate (WebGL context budget on boards).
+- [ ] W4.2 `core/url-state.ts`: `?m=<model-url>&vp=<hash>` codec (camera/projection/clip/hidden
+  summary); load-by-URL in model-registry with CORS fetch + progress; also powers deep links in the
+  full app ("Copy link to view").
+- [ ] W4.3 Hosting API (C2/C3/C4): `api/uploads.ts` (size cap from entitlements, rate limit,
+  Blob put, KV meta with TTL, returns embedUrl+deleteToken), `api/e/[id].ts` (GET meta with direct
+  Blob-CDN fragUrl; **DELETE with valid deleteToken** removes blob+meta), `api/cron-cleanup.ts`
+  (daily), `api/_lib/entitlements.ts` (anon defaults: **50 MB/upload, 7-day TTL, 3 active uploads
+  per anon key**; anon key = salted hash of IP stored as surrogate `ownerId`, so real accounts later
+  just replace the key — no schema rework), `api/oembed.ts` + OG tags on embed.html. Provision Vercel
+  Blob + KV. `.frag` blobs get long-lived immutable cache-control at **Blob put-time**
+  (`cacheControlMaxAge` — vercel.json headers don't apply to the Blob CDN host). **Cost envelope
+  (PO defaults, user-adjustable): target ≤ $20/mo storage+egress; R2 migration trigger = Blob
+  egress > $10/mo for 2 consecutive months** (R2 egress is $0).
+- [ ] W4.4 Share dialog in app: convert→upload→link/iframe snippet/QR; expiry shown; delete-my-upload
+  with token; PowerPoint how-to (Web Viewer add-in steps + GLB alternative).
+- [ ] W4.5 **GLB export** button via three `GLTFExporter` (current visibility/isolation state;
+  section-capped geometry excluded) — native PowerPoint Insert→3D path.
+- [ ] W4.6 `vercel.json` headers: `frame-ancestors` allowlist on `/embed*` — `*.officeapps.live.com`,
+  `teams.microsoft.com`, `*.cloud.microsoft`, `*.sharepoint.com`, `miro.com`, `*.notion.so`,
+  `*.atlassian.net` (CSP host sources match exactly unless wildcarded; config-driven list, easy to
+  extend). App-served routes only — `.frag` caching lives in W4.3 at Blob put-time.
+- [ ] W4.7 E2E: embed loads fixture by URL; expired id shows friendly state; oEmbed contract test.
+  API unit tests for entitlements/TTL. Update plan + Status Log.
+
+### Wave 5 — Performance & field readiness
+
+- [ ] W5.1 **P1** code split: `manualChunks` (three/thatopen/web-ifc) + dynamic-import IFC-load path;
+  measure & record initial-shell gzip in Status Log.
+- [ ] W5.2 IndexedDB fragments cache keyed by file hash (instant re-open; C1); localStorage →
+  IndexedDB migration for viewpoints/issues (quota headroom for F2 thumbnails).
+- [ ] W5.3 **P6** on-demand rendering in full app (render-on-interaction/change, FPS meter per A15
+  reads real frames); **P3** edge-geometry cache + debounced slider; **P7** parallel indexing,
+  single render; **P9** batched hotspot transforms.
+- [ ] W5.4 **P4** move web-ifc conversion into a dedicated worker (uploader path & drag-drop) —
+  keeps UI live during big conversions; progress events already exist.
+- [ ] W5.5 PWA: manifest + service worker (precache shell incl. wasm/worker; runtime cache for
+  cached models); offline = open previously cached models (C6). Verify with Playwright offline mode.
+- [ ] W5.6 Update plan + Status Log; re-run bundle/perf measurements table.
+
+## 6. Orchestration model
+
+**Roles**
+
+1. **Program Orchestrator (PO)** — the main Claude Code session. Owns this document, sequences waves,
+   spawns one Wave Orchestrator per wave, reviews wave exit gates, merges/PRs, updates §Status Log.
+2. **Wave Orchestrator (WO)** — one `Agent` per wave, `subagent_type: general-purpose`, **model:
+   highest available (inherit session model — currently Fable 5); do not downgrade WOs**. Receives
+   ONLY: **the full `docs/IMPLEMENTATION_PLAN.md`** (it is short; wave tasks reference §1 constraints,
+   §2 architecture and §3 blockers) + `docs/AUDIT.md` + its wave assignment. Never receives chat
+   history. Decomposes tasks,
+   executes/delegates, runs gates, updates checkboxes + Status Log, returns a structured summary
+   (done/blocked/deviations/measurements) — not prose transcripts.
+3. **Task agents / Workflows** — WOs use direct edits for cohesive single-file work and the
+   `Workflow` tool for genuine fan-out (e.g. W1's independent bug fixes across disjoint files,
+   W3 panel-by-panel port, verification sweeps). Fan-out agents default to session model; use
+   `effort: 'low'` or a smaller model ONLY for mechanical chores (file moves, renames, config copies).
+
+**Token-efficiency rules (binding)**
+
+- **Docs are the interface.** WOs and task agents get file paths + finding IDs, never chat history.
+  All context an agent needs must be in this plan, AUDIT.md, or the code itself.
+- **No re-discovery.** AUDIT.md file:line specs are trusted; agents open cited locations directly
+  (Read with offset/limit), never whole-file scans of viewer.ts for a known finding.
+- **Single-writer-per-file.** Until W2 lands, viewer.ts edits are serialized within a wave (one agent
+  owns it per task batch); parallelize only disjoint files. Worktree isolation only when two writers
+  genuinely must touch the same area.
+- **Verification is scoped.** Verify the diff (targeted tests + `git diff` review), not the world.
+  Full e2e runs at task-batch boundaries and wave gates, not per micro-edit.
+- **Structured outputs** for every fan-out agent (schema), so WOs synthesize without re-reading work.
+- **Batch related edits** into one agent (all four A1 escape sites = one agent, not four).
+- **One review pass per wave**: code-review workflow (find→adversarially verify) on the wave branch
+  diff before PR; fix-forward; no repeated full reviews.
+
+**Git/CI protocol** — branch `wave/N-<slug>` per wave; conventional commits per task
+(`fix: F1 unwrap ItemAttribute in search (docs/AUDIT.md#F1)`); PR to `main` per wave with the wave's
+checkbox list in the body; CI (W0.8) must be green; **user merges** (deploy fires on main). PO never
+force-pushes or merges without explicit approval.
+
+## 7. Deferred backlog (W6 — designed-for, not scheduled)
+
+- **Paid tier**: auth (provider TBD — evaluate when scheduled; entitlements module is the only seam),
+  storage quotas/durations per plan, Stripe billing, upload management dashboard.
+- **BCF 3.0 export/import** for issues+viewpoints (interop with Solibri/Navisworks/Revizto) —
+  schema alignment prepared by keeping viewpoint fields BCF-shaped when touched in W1/W4.
+- **Office content add-in** ("BTC Viewer for PowerPoint"): manifest + picker UI; after W4 proves embed.
+- **Plan/sheet mode** (per-storey ortho + clip) building on ModelIndex.levels.
+- **Revision compare** (A/B visual diff) on federation machinery.
+- **Vite 8 major upgrade** (clears remaining dev-time highs, T3).
+- Multi-browser e2e (firefox/webkit happy path); turntable video/GIF export (Google Slides fallback);
+  URL-shareable viewpoints upgrades; analytics (privacy-respecting).
+
+## 8. Plan maintenance protocol (ALWAYS keep this current)
+
+1. Whoever completes work ticks checkboxes **in the same session** and appends one Status Log line.
+2. Deviations from a task spec: note under the task as `> Deviation:` with reason — don't silently drift.
+3. New findings discovered mid-wave: add to AUDIT.md with a new ID (next number in section), reference
+   from the task that will fix it; never fix unlogged.
+4. Measurements (bundle size, artifact size, e2e time) get re-recorded at every wave gate in the
+   Status Log — trends matter.
+5. PO reviews checkbox state vs git diff at each wave gate before PR.
+
+## 9. Status Log
+
+| Date | Who | Update |
+|------|-----|--------|
+| 2026-07-05 | PO (Claude) | Repo cloned & linked to Vercel (`munahahmed-9653s-projects/btc-ifc-viewer-2`). Full 55-agent audit completed → docs/AUDIT.md. Plan v1 written. Baselines: bundle 5,725.61 kB (999.32 kB gzip, 1 chunk); dist 28.20 MB; `tsc --noEmit` FAILING (T2); e2e not in CI (T1); 7 npm vulns (T3). Design import BLOCKED (403 — needs /design-login, "Send to Claude Code", or file drop at docs/design/BTC-IFC-Viewer.dc.html). Waves W0–W5 defined; W0 ready to start. |
+| 2026-07-05 | PO (Claude) | Plan v2 after independent review (verdict: ISSUES_FOUND, 5 major/5 minor, all resolved): F6 assigned to W1.4; F5 moved W2→new W1.9 (W2 stays behavior-preserving); Vitest moved to W0.2; W1/W4 gates restated to exact IDs/envelope; WO input rule = full plan doc; `.frag` served direct from Blob CDN (no function egress); DELETE endpoint + anon quota key (salted-IP surrogate ownerId) specified; cost envelope ≤$20/mo, R2 trigger >$10/mo egress ×2 months; frame-ancestors domains named; P8 cited in W0.6. Re-review: pending. |
+| 2026-07-05 | PO (Claude) | Re-review verdict: **APPROVED**, zero orphaned finding IDs. 4 minor touch-ups applied → plan v3 (final): test:unit added to W0.8 CI sequence; W1 gate marks A15/U11 as partial; `.frag` cache-control moved to Blob put-time in W4.3; frame-ancestors list corrected (`*.notion.so`, added `*.cloud.microsoft`). **Plan is execution-ready. Next: user merges/commits docs, unblocks design import (for W3), and green-lights W0.** |
+| 2026-07-05 | PO (Claude) | **Design blocker RESOLVED**: user dropped the Claude Design handoff bundle at `BIM Viewer UIUX Branding-handoff/` (284 KB — commit with repo). Scouted: `BTC IFC Viewer.dc.html` (1,122 lines, desktop + mobile variants, two full theme token sets), "Precision Architect" design system (`colors_and_type.css`, README), brand assets (logo-primary/logo-white/iconmark SVGs). W3 re-specced against real files and marked ready. Noted: prototype pulls Outfit/Inter + Material Symbols from Google Fonts — W3.1 self-hosts/subsets them per C1/A2. All waves now unblocked. |
