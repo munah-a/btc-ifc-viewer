@@ -309,9 +309,15 @@
 
         <div id="loadingOverlay" class="loading-overlay" hidden>
           <div class="loading-spinner"></div>
+          <span class="material-icons-round loading-error-icon" aria-hidden="true">error_outline</span>
           <div id="loadingText" class="loading-text">Loading model...</div>
           <div class="loading-bar">
             <div id="loadingProgress" class="loading-fill"></div>
+          </div>
+          <!-- U4: overlay error state with Retry -->
+          <div id="loadingErrorActions" class="loading-error-actions" hidden>
+            <button id="btnRetryLoad" class="btn btn-primary btn-compact" type="button">Retry</button>
+            <button id="btnDismissLoadError" class="btn btn-secondary btn-compact" type="button">Dismiss</button>
           </div>
         </div>
 

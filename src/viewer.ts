@@ -321,6 +321,9 @@ class ViewerApp {
     loadingOverlay: required<HTMLDivElement>('loadingOverlay'),
     loadingText: required<HTMLDivElement>('loadingText'),
     loadingProgress: required<HTMLDivElement>('loadingProgress'),
+    loadingErrorActions: required<HTMLDivElement>('loadingErrorActions'),
+    btnRetryLoad: required<HTMLButtonElement>('btnRetryLoad'),
+    btnDismissLoadError: required<HTMLButtonElement>('btnDismissLoadError'),
     emptyState: required<HTMLDivElement>('emptyState'),
     viewerHint: required<HTMLDivElement>('viewerHint'),
     statusText: required<HTMLSpanElement>('statusText'),
@@ -457,6 +460,8 @@ class ViewerApp {
   private readonly modelRegistrations = new Map<string, Promise<void>>();
   private lastHitPoint: THREE.Vector3 | null = null;
   private pendingIssuePoint: THREE.Vector3 | null = null;
+  // U4: failed loads are kept so the overlay's Retry can replay them.
+  private lastFailedLoadFiles: File[] = [];
   private viewpoints: SavedViewpoint[] = [];
   private selectedViewpointId: string | null = null;
   private issues: IssueRecord[] = [];
@@ -591,6 +596,7 @@ class ViewerApp {
       this.setStatus('Ready - load IFC model(s)');
       this.startFpsMonitor();
     } catch (error) {
+      this.showToast(`Initialization failed: ${serializeError(error)}`, 'error', 8000);
       this.setStatus(`Initialization failed: ${serializeError(error)}`);
       console.error(error);
     }
@@ -636,6 +642,17 @@ class ViewerApp {
       if (files.length === 0) return;
       this.fireAndForget(this.loadIfcFiles(files), 'Load IFC files');
       this.dom.fileInput.value = '';
+    });
+
+    this.dom.btnRetryLoad.addEventListener('click', () => {
+      const files = this.lastFailedLoadFiles;
+      this.lastFailedLoadFiles = [];
+      this.hideLoadError();
+      if (files.length > 0) this.fireAndForget(this.loadIfcFiles(files), 'Load IFC files');
+    });
+    this.dom.btnDismissLoadError.addEventListener('click', () => {
+      this.lastFailedLoadFiles = [];
+      this.hideLoadError();
     });
 
     this.dom.btnExportScreenshot.addEventListener('click', () => this.exportScreenshot());
@@ -912,6 +929,7 @@ class ViewerApp {
       if (files.length === 0) return;
       const ifcFiles = files.filter((file) => file.name.toLowerCase().endsWith('.ifc'));
       if (ifcFiles.length === 0) {
+        this.showToast('Only IFC files are supported', 'warning');
         this.setStatus('Only IFC files are supported');
         return;
       }
@@ -2322,9 +2340,11 @@ class ViewerApp {
         this.setStatus('Model synchronization updated. Please reselect element if needed.');
       }
       return;
-    } else {
-      this.setStatus(`${context} failed: ${message}`);
     }
+    // U4: every unexpected async failure surfaces as an error toast, not just
+    // 11px status text (which is hidden on phones).
+    this.showToast(`${context} failed: ${message}`, 'error');
+    this.setStatus(`${context} failed: ${message}`);
     console.error(error);
   }
 
@@ -2677,22 +2697,28 @@ class ViewerApp {
   private async loadIfcFiles(files: File[]): Promise<void> {
     const ifcFiles = files.filter((file) => file.name.toLowerCase().endsWith('.ifc'));
     if (ifcFiles.length === 0) {
+      this.showToast('Only IFC files are supported', 'warning');
       this.setStatus('Only IFC files are supported');
       return;
     }
     if (this.isModelLoading) {
+      this.showToast('A model is already loading. Please wait...', 'warning');
       this.setStatus('A model is already loading. Please wait...');
       return;
     }
 
-    const failedFiles: string[] = [];
+    const failedFiles: File[] = [];
+    let lastError = '';
     const batchTotal = ifcFiles.length;
     if (batchTotal > 1) this.suppressAutoFit = true;
 
     for (let i = 0; i < ifcFiles.length; i += 1) {
       const file = ifcFiles[i];
-      const success = await this.loadIfcFile(file, i + 1, batchTotal);
-      if (!success) failedFiles.push(file.name);
+      const result = await this.loadIfcFile(file, i + 1, batchTotal);
+      if (!result.success) {
+        failedFiles.push(file);
+        lastError = result.error ?? lastError;
+      }
     }
 
     this.suppressAutoFit = false;
@@ -2704,17 +2730,41 @@ class ViewerApp {
       return;
     }
 
-    if (failedFiles.length === batchTotal) {
-      this.setStatus('Failed to load selected IFC files');
-      return;
-    }
-    this.setStatus(`Loaded ${batchTotal - failedFiles.length}/${batchTotal} IFC files`);
+    // U4: failures surface as a toast + overlay error state with Retry.
+    this.lastFailedLoadFiles = failedFiles;
+    const failedNames = failedFiles.map((file) => file.name).join(', ');
+    const summary = failedFiles.length === batchTotal
+      ? `Failed to load ${failedNames}`
+      : `Loaded ${batchTotal - failedFiles.length}/${batchTotal} IFC files — failed: ${failedNames}`;
+    this.showToast(summary, 'error', 6000);
+    this.showLoadError(lastError ? `${summary} (${lastError})` : summary);
+    this.setStatus(summary);
   }
 
-  private async loadIfcFile(file: File, batchIndex = 1, batchTotal = 1): Promise<boolean> {
+  /** U4: switches the loading overlay into its error state (Retry/Dismiss). */
+  private showLoadError(message: string): void {
+    this.dom.loadingOverlay.hidden = false;
+    this.dom.loadingOverlay.classList.add('is-error');
+    this.dom.loadingText.textContent = message;
+    this.dom.loadingProgress.style.width = '0%';
+    this.dom.loadingErrorActions.hidden = false;
+  }
+
+  private hideLoadError(): void {
+    this.dom.loadingOverlay.classList.remove('is-error');
+    this.dom.loadingErrorActions.hidden = true;
+    this.dom.loadingOverlay.hidden = true;
+    this.dom.emptyState.hidden = this.modelObjects.length > 0;
+  }
+
+  private async loadIfcFile(
+    file: File,
+    batchIndex = 1,
+    batchTotal = 1,
+  ): Promise<{ success: boolean; error?: string }> {
     if (this.isModelLoading) {
       this.setStatus('A model is already loading. Please wait...');
-      return false;
+      return { success: false, error: 'A model is already loading' };
     }
 
     this.isModelLoading = true;
@@ -2725,6 +2775,8 @@ class ViewerApp {
 
     this.dom.emptyState.hidden = true;
     this.dom.loadingOverlay.hidden = false;
+    this.dom.loadingOverlay.classList.remove('is-error');
+    this.dom.loadingErrorActions.hidden = true;
     this.dom.loadingText.textContent = batchTotal > 1
       ? `Reading IFC file ${batchIndex}/${batchTotal}...`
       : 'Reading IFC file...';
@@ -2810,7 +2862,7 @@ class ViewerApp {
           this.dom.loadingOverlay.hidden = true;
         }
       }, 220);
-      return true;
+      return { success: true };
     } catch (error) {
       // No-op when the id was already marked stale (timeout path).
       this.modelRegistry.failLoad(modelId);
@@ -2818,13 +2870,14 @@ class ViewerApp {
       if (timeoutHandle !== undefined) {
         window.clearTimeout(timeoutHandle);
       }
-      if (requestId !== this.loadRequestId) return false;
+      const message = serializeError(error);
+      console.error(error);
+      if (requestId !== this.loadRequestId) return { success: false, error: message };
 
       this.dom.loadingOverlay.hidden = true;
       this.dom.emptyState.hidden = this.modelObjects.length > 0;
-      this.setStatus(`Failed to load IFC: ${serializeError(error)}`);
-      console.error(error);
-      return false;
+      this.setStatus(`Failed to load IFC: ${message}`);
+      return { success: false, error: message };
     } finally {
       if (requestId === this.loadRequestId) {
         this.isModelLoading = false;
@@ -2833,7 +2886,7 @@ class ViewerApp {
         this.dom.fileInput.disabled = false;
       }
     }
-    return false;
+    return { success: false };
   }
 
   private getModelBoundingBox(): THREE.Box3 | null {
@@ -4416,7 +4469,8 @@ class ViewerApp {
         downloadBlob(name, blob);
         this.setStatus('Screenshot exported');
       })
-      .catch((error) => {
+      .catch((error: unknown) => {
+        this.showToast(`Screenshot export failed: ${serializeError(error)}`, 'error');
         this.setStatus(`Screenshot export failed: ${serializeError(error)}`);
       });
   }
@@ -4440,6 +4494,7 @@ class ViewerApp {
       this.persistLocalState();
       this.setStatus('Viewer data imported');
     } catch (error) {
+      this.showToast(`Import failed: ${serializeError(error)}`, 'error');
       this.setStatus(`Import failed: ${serializeError(error)}`);
     }
   }
@@ -4500,6 +4555,7 @@ class ViewerApp {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(stripped));
         this.setStatus('Local state saved without thumbnails (storage quota)');
       } catch (retryError) {
+        this.showToast(`Unable to persist local state: ${serializeError(retryError)}`, 'error');
         this.setStatus(`Unable to persist local state: ${serializeError(retryError)}`);
       }
     }
@@ -4513,6 +4569,7 @@ class ViewerApp {
       if (!state) return;
       await this.applyPersistedState(state);
     } catch (error) {
+      this.showToast(`Failed to restore local state: ${serializeError(error)}`, 'error');
       this.setStatus(`Failed to restore local state: ${serializeError(error)}`);
     }
   }

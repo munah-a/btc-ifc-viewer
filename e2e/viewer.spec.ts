@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { expect, test as base, type Page } from '@playwright/test';
@@ -651,6 +652,36 @@ test.describe('federation & load lifecycle', () => {
     expect(engineState).toEqual({ fragmentsCount: 1, federatedCount: 1, indexCount: 1, objectCount: 1 });
 
     await page.click('.tab-btn[data-tab="explorer"]');
+  });
+});
+
+test.describe('error surfacing (U4)', () => {
+  test('failed imports and loads surface as toasts and overlay error state', async ({ appPage: page }, testInfo) => {
+    // Invalid state import → error toast (catch paths must not stay silent).
+    const badStatePath = testInfo.outputPath('bad-state.json');
+    fs.writeFileSync(badStatePath, 'this is not json');
+    await page.setInputFiles('#importStateInput', badStatePath);
+    await expect(page.locator('.toast-error')).toBeVisible();
+    await waitForStatus(page, 'Import failed');
+    // Toasts auto-dismiss — wait so later assertions see a clean slate.
+    await page.waitForSelector('.toast-error', { state: 'detached', timeout: 10_000 });
+
+    // Corrupt IFC → overlay error state with Retry/Dismiss (U4).
+    const badIfcPath = testInfo.outputPath('corrupt.ifc');
+    fs.writeFileSync(badIfcPath, 'NOT-AN-IFC-FILE');
+    await page.setInputFiles('#fileInput', badIfcPath);
+    await expect(page.locator('#loadingOverlay')).toHaveClass(/is-error/, { timeout: 60_000 });
+    await expect(page.locator('#loadingErrorActions')).toBeVisible();
+    await expect(page.locator('.toast-error')).toBeVisible();
+
+    // Retry replays the failed file and fails into the same error state.
+    await page.click('#btnRetryLoad');
+    await expect(page.locator('#loadingOverlay')).toHaveClass(/is-error/, { timeout: 60_000 });
+
+    // Dismiss returns to the normal (model still loaded) viewer.
+    await page.click('#btnDismissLoadError');
+    await expect(page.locator('#loadingOverlay')).toBeHidden();
+    await expect(page.locator('#emptyState')).toBeHidden();
   });
 });
 

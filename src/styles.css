@@ -1333,6 +1333,32 @@ kbd {
   transition: width 180ms ease;
 }
 
+/* U4: overlay error state — spinner/progress swap for an icon + Retry */
+.loading-error-icon {
+  display: none;
+  font-size: 46px;
+  color: var(--danger);
+}
+
+.loading-overlay.is-error .loading-spinner,
+.loading-overlay.is-error .loading-bar {
+  display: none;
+}
+
+.loading-overlay.is-error .loading-error-icon {
+  display: block;
+}
+
+.loading-overlay.is-error .loading-text {
+  max-width: 420px;
+  text-align: center;
+}
+
+.loading-error-actions {
+  display: flex;
+  gap: 10px;
+}
+
 .empty-state {
   pointer-events: none;
   z-index: 10;
