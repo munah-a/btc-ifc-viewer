@@ -1,0 +1,7 @@
+dist/
+node_modules/
+BIM Viewer UIUX Branding-handoff/
+test-results/
+playwright-report/
+public/
+package-lock.json

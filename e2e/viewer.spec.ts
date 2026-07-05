@@ -131,7 +131,7 @@ const getExpectedCubeDirection = async (
   }, vector);
 
   if (!expected) throw new Error('Expected cube direction unavailable');
-  return expected as CameraPosition;
+  return expected;
 };
 
 const getModelContext = async (page: Page): Promise<ModelContext> => {
@@ -332,8 +332,8 @@ test('viewer smoke regression', async ({ browser, page }, testInfo) => {
     { timeout: 20_000 },
   );
   const propertiesScrollState = await page.evaluate(() => {
-    const sections = document.querySelector('#propSections') as HTMLElement | null;
-    const panel = document.querySelector('#panel-properties') as HTMLElement | null;
+    const sections = document.querySelector('#propSections');
+    const panel = document.querySelector('#panel-properties');
     if (!sections) return null;
     return {
       panelOverflowY: panel ? getComputedStyle(panel).overflowY : null,

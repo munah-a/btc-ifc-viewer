@@ -895,12 +895,16 @@ class ViewerApp {
     this.dom.btnApplySelectedViewpoint.addEventListener('click', () => {
       this.fireAndForget(this.applySelectedViewpoint(), 'Apply viewpoint');
     });
-    this.dom.btnDeleteSelectedViewpoint.addEventListener('click', () => this.deleteSelectedViewpoint());
+    this.dom.btnDeleteSelectedViewpoint.addEventListener('click', () => {
+      this.fireAndForget(this.deleteSelectedViewpoint(), 'Delete viewpoint');
+    });
 
     this.dom.btnCreateIssue.addEventListener('click', () => {
-      this.fireAndForget(this.createIssueFromCurrentContext(), 'Create issue');
+      this.createIssueFromCurrentContext();
     });
-    this.dom.btnDeleteIssue.addEventListener('click', () => this.deleteSelectedIssue());
+    this.dom.btnDeleteIssue.addEventListener('click', () => {
+      this.fireAndForget(this.deleteSelectedIssue(), 'Delete issue');
+    });
     this.dom.btnAddIssueComment.addEventListener('click', () => this.addCommentToActiveIssue());
 
     window.addEventListener('resize', () => {
@@ -2301,7 +2305,7 @@ class ViewerApp {
     return null;
   }
 
-  private getFragmentsModel(modelIdOrAlias: string): any | null {
+  private getFragmentsModel(modelIdOrAlias: string): any {
     if (!this.fragments?.list) return null;
     const resolvedModelId = this.resolveModelId(modelIdOrAlias);
     if (!resolvedModelId) return null;
@@ -3101,7 +3105,7 @@ class ViewerApp {
       const screenX = centerX + this.cubeProjectedPoint.x * perspectiveScale;
       const screenY = centerY - this.cubeProjectedPoint.y * perspectiveScale;
 
-      let visible = false;
+      let visible: boolean;
       if (target.kind === 'face') {
         this.cubeProjectedNormal.set(x, y, z).normalize().applyQuaternion(this.cubeDisplayQuaternion);
         visible = this.cubeProjectedNormal.z > 0.08;
@@ -3213,7 +3217,7 @@ class ViewerApp {
     // (renders on top of model geometry and not clipped by section planes)
     const plane = this.clipper.list.get(planeId);
     if (plane) {
-      const renderer = this.world.renderer!.three as THREE.WebGLRenderer;
+      const renderer = this.world.renderer!.three;
       renderer.localClippingEnabled = true;
       const gizmoHelper = (plane as any)._controls.getHelper();
       gizmoHelper.traverse((child: THREE.Object3D) => {
@@ -3504,7 +3508,10 @@ class ViewerApp {
     if (typeof normalized === 'object') {
       return this.summarizeObject(normalized as Record<string, unknown>);
     }
-    return String(normalized);
+    // `unknown` cannot be subtract-narrowed: every object/array/date shape has
+    // already returned above, so only stringifiable primitives remain here.
+    const primitive = normalized as string | number | boolean | bigint | symbol;
+    return String(primitive);
   }
 
   private flattenPropertyEntries(
@@ -3635,7 +3642,10 @@ class ViewerApp {
       return;
     }
 
-    output.push([prefix, String(normalized)]);
+    // `unknown` cannot be subtract-narrowed: every object/array/date shape has
+    // already returned above, so only stringifiable primitives remain here.
+    const primitive = normalized as string | number | boolean | bigint | symbol;
+    output.push([prefix, String(primitive)]);
   }
 
   private prettifyPropertyLabel(label: string): string {
@@ -4259,7 +4269,7 @@ class ViewerApp {
     });
   }
 
-  private async createIssueFromCurrentContext(): Promise<void> {
+  private createIssueFromCurrentContext(): void {
     const title = this.dom.issueTitle.value.trim();
     if (!title) {
       this.setStatus('Issue title is required');
@@ -4745,7 +4755,7 @@ class ViewerApp {
         this.dom.btnIssuePinMode.click();
         break;
       case 'delete':
-        this.deleteSelectedIssue();
+        this.fireAndForget(this.deleteSelectedIssue(), 'Delete issue');
         break;
       case 'enter':
         if (this.measureMode === 'area') this.areaMeasurement.endCreation();
