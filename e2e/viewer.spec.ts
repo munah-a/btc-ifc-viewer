@@ -20,6 +20,7 @@ type ModelContext = {
 };
 
 const ifcPath = path.join(process.cwd(), 'e2e', 'fixtures', 'school_str.ifc');
+const secondIfcPath = path.join(process.cwd(), 'e2e', 'fixtures', 'Ifc4_Revit_ARC.ifc');
 // Resolved against playwright.config.ts baseURL (production preview at '/').
 const viewerUrl = '/';
 
@@ -36,19 +37,25 @@ const waitForAppReady = async (page: Page): Promise<void> => {
   );
 };
 
-const waitForModelReady = async (page: Page): Promise<void> => {
+// A model is fully registered when its index exists (W1.4: indexing is the
+// last await inside registration; the old registeringModelIds set is gone).
+const waitForModelCount = async (page: Page, count: number): Promise<void> => {
   await page.waitForFunction(
-    () => {
+    (expected) => {
       const viewer = (window as any).__viewer;
       const elementText = document.querySelector('#elementCount')?.textContent || '';
       return !!viewer
-        && viewer.federatedModels?.size > 0
-        && viewer.registeringModelIds?.size === 0
+        && viewer.federatedModels?.size === expected
+        && viewer.modelIndices?.size === expected
         && elementText !== '0 elements';
     },
-    undefined,
+    count,
     { timeout: 180_000 },
   );
+};
+
+const waitForModelReady = async (page: Page): Promise<void> => {
+  await waitForModelCount(page, 1);
 };
 
 const waitForStatus = async (page: Page, text: string, timeout = 20_000): Promise<void> => {
@@ -573,6 +580,46 @@ test.describe('models panel', () => {
     const beforeBrowserFit = await getCameraPosition(page);
     await page.locator('[data-browser-action="fit-model"]').first().click();
     await waitForCameraMove(page, beforeBrowserFit);
+  });
+});
+
+test.describe('federation & load lifecycle', () => {
+  // AUDIT A6 (metadata keyed by model id, no FIFO mis-attribution) and
+  // F6 (per-model unload frees engine + viewer state).
+  test('second model federates with correct metadata and unloads cleanly', async ({ appPage: page }) => {
+    const elementsBefore = await page.locator('#elementCount').textContent();
+
+    await page.setInputFiles('#fileInput', secondIfcPath);
+    await waitForModelCount(page, 2);
+
+    await page.click('.tab-btn[data-tab="models"]');
+    await expect(page.locator('.federated-model')).toHaveCount(2);
+    // Metadata attribution (A6): each card carries its own file name.
+    await expect(page.locator('.federated-model-name-btn').nth(0)).toContainText('school_str.ifc');
+    await expect(page.locator('.federated-model-name-btn').nth(1)).toContainText('Ifc4_Revit_ARC.ifc');
+
+    const elementsWithTwo = await page.locator('#elementCount').textContent();
+    expect(elementsWithTwo).not.toBe(elementsBefore);
+
+    // F6: unload the second model via the federation panel action.
+    await page.locator('[data-model-action="unload"]').nth(1).click();
+    await page.click('.confirm-btn-confirm');
+    await waitForStatus(page, 'Model unloaded: Ifc4_Revit_ARC.ifc', 30_000);
+
+    await expect(page.locator('.federated-model')).toHaveCount(1);
+    await expect(page.locator('#elementCount')).toHaveText(elementsBefore || '');
+    const engineState = await page.evaluate(() => {
+      const viewer = (window as any).__viewer;
+      return {
+        fragmentsCount: viewer.fragments.list.size,
+        federatedCount: viewer.federatedModels.size,
+        indexCount: viewer.modelIndices.size,
+        objectCount: viewer.modelObjects.length,
+      };
+    });
+    expect(engineState).toEqual({ fragmentsCount: 1, federatedCount: 1, indexCount: 1, objectCount: 1 });
+
+    await page.click('.tab-btn[data-tab="explorer"]');
   });
 });
 

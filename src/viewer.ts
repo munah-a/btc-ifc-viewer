@@ -4,6 +4,8 @@ import * as OBCF from '@thatopen/components-front';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { SpatialTreeItem } from '@thatopen/fragments';
 
+import { ModelRegistry } from './core/model-registry';
+
 type SelectionMode = 'single' | 'multi';
 type MeasureMode = 'none' | 'length' | 'area';
 type NavigationMode = 'Orbit' | 'Plan' | 'FirstPerson';
@@ -483,10 +485,13 @@ class ViewerApp {
   private readonly edgeMaterial = new THREE.LineBasicMaterial({ color: 0xc8145c, transparent: true, opacity: 0.65 });
   private modelObjects: THREE.Object3D[] = [];
   private readonly federatedModels = new Map<string, FederatedModelRecord>();
-  private readonly modelIdAliases = new Map<string, string>();
-  private readonly registeringModelIds = new Set<string>();
   private modelIndices = new Map<string, ModelIndex>();
-  private readonly pendingModelMetaQueue: Array<{ fileName: string; sizeBytes: number }> = [];
+  // Load-lifecycle bookkeeping (A6/A10): metadata keyed by the model id passed
+  // to ifcLoader.load; stale ids track timed-out loads for late disposal.
+  private readonly modelRegistry = new ModelRegistry();
+  // One registration promise per model id — dedupes the onModelLoaded event
+  // and the awaited load path without polling.
+  private readonly modelRegistrations = new Map<string, Promise<void>>();
   private lastHitPoint: THREE.Vector3 | null = null;
   private pendingIssuePoint: THREE.Vector3 | null = null;
   private viewpoints: SavedViewpoint[] = [];
@@ -589,16 +594,15 @@ class ViewerApp {
 
     // 4. Clear data structures
     this.federatedModels.clear();
-    this.modelIdAliases.clear();
     this.modelIndices.clear();
-    this.registeringModelIds.clear();
+    this.modelRegistry.clear();
+    this.modelRegistrations.clear();
     this.appliedModelOpacity.clear();
     this.cubeHotspots.clear();
     clearMap(this.selectedItems);
     this.viewpoints = [];
     this.issues = [];
     this.modelObjects = [];
-    this.pendingModelMetaQueue.length = 0;
 
     // 5. Dispose components
     if (this.components) {
@@ -1053,6 +1057,20 @@ class ViewerApp {
           this.toggleModelGizmo(modelId);
           return;
         }
+        if (action === 'unload') {
+          this.fireAndForget((async () => {
+            const record = this.federatedModels.get(modelId);
+            if (!record) return;
+            const confirmed = await this.confirm(
+              `Unload ${record.fileName}? Saved issues and viewpoints stay, but its elements leave the viewer.`,
+              'Unload',
+              'Cancel',
+            );
+            if (!confirmed) return;
+            await this.unloadModel(modelId);
+          })(), 'Unload model');
+          return;
+        }
       }
 
       const levelButton = target.closest<HTMLButtonElement>('[data-model-id][data-level]');
@@ -1173,8 +1191,9 @@ class ViewerApp {
     });
 
     this.fragments.core.onModelLoaded.add((model) => {
-      const modelId = this.getModelInternalId(model, '');
-      this.fireAndForget(this.onModelAdded(modelId || String(model?.modelId ?? ''), model), 'Register model');
+      const modelId = String(model?.modelId ?? '');
+      if (!modelId) return;
+      this.fireAndForget(this.registerModel(modelId, model), 'Register model');
     });
 
     this.fragments.core.models.materials.list.onItemSet.add(({ value: material }) => {
@@ -1242,87 +1261,138 @@ class ViewerApp {
     await this.updateVisibilityCount();
   }
 
-  private async onModelAdded(modelId: string, model: any): Promise<void> {
-    const resolvedModelId = this.getModelInternalId(model, String(modelId || ''));
-    if (!resolvedModelId) return;
-    if (this.federatedModels.has(resolvedModelId) || this.registeringModelIds.has(resolvedModelId)) return;
-
-    this.registeringModelIds.add(resolvedModelId);
-    try {
-      await this.waitForModelReady(model);
-      model.useCamera(this.world.camera.three);
-      if (typeof model?.graphicsQuality === 'number') model.graphicsQuality = 1;
-      this.world.scene.three.add(model.object);
-
-      const modelObject = model.object as THREE.Object3D;
-      if (!this.modelObjects.includes(modelObject)) this.modelObjects.push(modelObject);
-
-      const ids = await model.getItemsIdsWithGeometry();
-      this.dom.emptyState.hidden = true;
-
-      const meta = this.pendingModelMetaQueue.shift();
-      const fileName = meta?.fileName || String(model?.modelId ?? resolvedModelId);
-      this.registerModelAlias(resolvedModelId, resolvedModelId);
-      this.registerModelAlias(String(modelId || ''), resolvedModelId);
-      this.registerModelAlias(fileName, resolvedModelId);
-      this.registerModelAlias(String(model?.modelId ?? ''), resolvedModelId);
-      const modelRecord: FederatedModelRecord = {
-        modelId: resolvedModelId,
-        fileName,
-        sizeBytes: meta?.sizeBytes ?? 0,
-        elementCount: ids.length,
-        visible: true,
-        opacity: 1,
-        object: modelObject,
-        basePosition: {
-          x: modelObject.position.x,
-          y: modelObject.position.y,
-          z: modelObject.position.z,
-        },
-        baseRotation: {
-          x: modelObject.rotation.x,
-          y: modelObject.rotation.y,
-          z: modelObject.rotation.z,
-        },
-        offsetPosition: { x: 0, y: 0, z: 0 },
-        offsetRotation: { x: 0, y: 0, z: 0 },
-      };
-      this.federatedModels.set(resolvedModelId, modelRecord);
-      this.updateElementCounter();
-      this.renderModelBrowser();
-      this.renderFederatedTree();
-
-      await this.indexModel(resolvedModelId, model);
-      this.renderSpatialTree();
-      this.renderModelBrowser();
-      this.renderFederatedTree();
-
-      await this.setVisualStyle(this.visualStyle, false, false);
-
-      if (!this.suppressAutoFit) this.fitToModel();
-      await this.updateVisibilityCount();
-
-      this.renderClassFilters();
-      this.renderLevelFilters();
-
-      this.refreshIssueMarkers();
-      this.setStatus(`Model loaded: ${fileName}`);
-    } finally {
-      this.registeringModelIds.delete(resolvedModelId);
+  /**
+   * Single registration path for loaded models (A6/A10): dedupes the
+   * onModelLoaded event and the awaited load path via one promise per model
+   * id, and diverts late arrivals of timed-out loads to disposal.
+   */
+  private registerModel(modelId: string, model: any): Promise<void> {
+    if (this.modelRegistry.isStale(modelId)) {
+      return this.disposeStaleModel(modelId);
     }
+    let registration = this.modelRegistrations.get(modelId);
+    if (!registration) {
+      registration = this.onModelAdded(modelId, model).catch((error: unknown) => {
+        // Allow a retry after a failed registration.
+        this.modelRegistrations.delete(modelId);
+        throw error;
+      });
+      this.modelRegistrations.set(modelId, registration);
+    }
+    return registration;
   }
 
-  private async waitForModelReady(model: any, timeoutMs = 10000): Promise<void> {
-    const startedAt = performance.now();
-    while (performance.now() - startedAt < timeoutMs) {
-      if (!model?.isBusy) return;
-      await new Promise((resolve) => window.setTimeout(resolve, 40));
+  /** Disposes a model whose load timed out but completed later (A10). */
+  private async disposeStaleModel(modelId: string): Promise<void> {
+    if (!this.modelRegistry.consumeStale(modelId)) return;
+    if (this.federatedModels.has(modelId)) {
+      // The registration raced ahead of the timeout — run the full unload.
+      await this.unloadModel(modelId);
+      return;
     }
+    this.modelRegistrations.delete(modelId);
+    if (this.fragments?.list?.has(modelId)) {
+      await this.fragments.core.disposeModel(modelId);
+    }
+    console.debug(`Disposed late-arriving model after load timeout: ${modelId}`);
+  }
+
+  /**
+   * Per-model unload (F6): frees the engine-side fragments (worker memory,
+   * meshes, materials) and clears every piece of viewer state tied to the id.
+   */
+  private async unloadModel(modelId: string): Promise<void> {
+    const record = this.federatedModels.get(modelId);
+    if (!record) return;
+
+    if (this.activeGizmoModelId === modelId) this.detachModelGizmo();
+    this.federatedModels.delete(modelId);
+    this.modelIndices.delete(modelId);
+    this.modelRegistrations.delete(modelId);
+    this.appliedModelOpacity.delete(modelId);
+    delete this.selectedItems[modelId];
+    this.modelObjects = this.modelObjects.filter((object) => object !== record.object);
+
+    if (this.fragments?.list?.has(modelId)) {
+      await this.fragments.core.disposeModel(modelId);
+    }
+
+    // Pins referencing the unloaded model are hidden, not deleted (F9).
+    this.refreshIssueMarkers();
+    this.applyXRay();
+    this.applyEdges();
+    await this.refreshSelectionVisuals();
+    this.renderModelBrowser();
+    this.renderFederatedTree();
+    this.renderSpatialTree();
+    this.renderClassFilters();
+    this.renderLevelFilters();
+    this.updateElementCounter();
+    await this.updateVisibilityCount();
+    await this.fragments.core.update(true);
+    this.dom.emptyState.hidden = this.federatedModels.size > 0;
+    this.setStatus(`Model unloaded: ${record.fileName}`);
+  }
+
+  private async onModelAdded(modelId: string, model: any): Promise<void> {
+    if (!modelId || this.federatedModels.has(modelId)) return;
+
+    model.useCamera(this.world.camera.three);
+    if (typeof model?.graphicsQuality === 'number') model.graphicsQuality = 1;
+    this.world.scene.three.add(model.object);
+
+    const modelObject = model.object as THREE.Object3D;
+    if (!this.modelObjects.includes(modelObject)) this.modelObjects.push(modelObject);
+
+    const ids = await model.getItemsIdsWithGeometry();
+    this.dom.emptyState.hidden = true;
+
+    const meta = this.modelRegistry.completeLoad(modelId);
+    const fileName = meta?.fileName || modelId;
+    const modelRecord: FederatedModelRecord = {
+      modelId,
+      fileName,
+      sizeBytes: meta?.sizeBytes ?? 0,
+      elementCount: ids.length,
+      visible: true,
+      opacity: 1,
+      object: modelObject,
+      basePosition: {
+        x: modelObject.position.x,
+        y: modelObject.position.y,
+        z: modelObject.position.z,
+      },
+      baseRotation: {
+        x: modelObject.rotation.x,
+        y: modelObject.rotation.y,
+        z: modelObject.rotation.z,
+      },
+      offsetPosition: { x: 0, y: 0, z: 0 },
+      offsetRotation: { x: 0, y: 0, z: 0 },
+    };
+    this.federatedModels.set(modelId, modelRecord);
+    this.updateElementCounter();
+    this.renderModelBrowser();
+    this.renderFederatedTree();
+
+    await this.indexModel(modelId, model);
+    this.renderSpatialTree();
+    this.renderModelBrowser();
+    this.renderFederatedTree();
+
+    await this.setVisualStyle(this.visualStyle, false, false);
+
+    if (!this.suppressAutoFit) this.fitToModel();
+    await this.updateVisibilityCount();
+
+    this.renderClassFilters();
+    this.renderLevelFilters();
+
+    this.refreshIssueMarkers();
+    this.setStatus(`Model loaded: ${fileName}`);
   }
 
   private async indexModel(modelId: string, model: any): Promise<void> {
-    const resolvedModelId = this.getModelInternalId(model, String(modelId || ''));
-    if (!resolvedModelId) return;
     const itemIds = await model.getItemsIdsWithGeometry() as number[];
     const idsSet = new Set(itemIds);
 
@@ -1425,8 +1495,8 @@ class ViewerApp {
 
     const spatialRoot = this.buildSpatialBrowserTree(spatial, itemNames, idsSet);
 
-    this.modelIndices.set(resolvedModelId, {
-      modelId: resolvedModelId,
+    this.modelIndices.set(modelId, {
+      modelId: modelId,
       allIds: new Set(itemIds),
       classes,
       levels,
@@ -2065,6 +2135,7 @@ class ViewerApp {
               <button class="federated-model-btn ${gizmoStateClass}" type="button" data-model-id="${escapedModelId}" data-model-action="toggle-gizmo">Gizmo</button>
               <button class="federated-model-btn" type="button" data-model-id="${escapedModelId}" data-model-action="fit">Fit</button>
               <button class="federated-model-btn" type="button" data-model-id="${escapedModelId}" data-model-action="reset">Reset</button>
+              <button class="federated-model-btn federated-unload-btn" type="button" data-model-id="${escapedModelId}" data-model-action="unload" title="Unload model and free its memory">Unload</button>
             </div>
 
             <div class="federated-levels">
@@ -2285,94 +2356,10 @@ class ViewerApp {
     return Math.min(max, Math.max(min, value));
   }
 
-  private registerModelAlias(alias: string, modelId: string): void {
-    const normalizedAlias = alias.trim();
-    const normalizedModelId = modelId.trim();
-    if (!normalizedAlias || !normalizedModelId) return;
-    this.modelIdAliases.set(normalizedAlias, normalizedModelId);
-    this.modelIdAliases.set(normalizedAlias.toLowerCase(), normalizedModelId);
-  }
-
-  private getModelInternalId(model: any, fallback = ''): string {
-    const fromModel = String(model?.modelId ?? '').trim();
-    if (fromModel) return fromModel;
-    return fallback.trim();
-  }
-
-  private findFragmentsEntryByInternalId(modelId: string): [string, any] | null {
-    if (!this.fragments?.list) return null;
-    const normalizedId = modelId.trim();
-    if (!normalizedId) return null;
-    for (const [key, entry] of this.fragments.list.entries()) {
-      const internalId = this.getModelInternalId(entry, key);
-      if (internalId === normalizedId) return [String(key), entry];
-    }
-    return null;
-  }
-
-  private getFragmentsModel(modelIdOrAlias: string): any {
-    if (!this.fragments?.list) return null;
-    const resolvedModelId = this.resolveModelId(modelIdOrAlias);
-    if (!resolvedModelId) return null;
-
-    const direct = this.fragments.list.get(resolvedModelId);
-    if (direct) return direct;
-
-    const byInternal = this.findFragmentsEntryByInternalId(resolvedModelId);
-    if (byInternal) return byInternal[1];
-    return null;
-  }
-
-  private resolveModelId(candidate: string): string | null {
-    if (!this.fragments?.list) return null;
-    const value = candidate.trim();
-    if (!value) return null;
-
-    const directByKey = this.fragments?.list?.get(value);
-    if (directByKey) {
-      const internalId = this.getModelInternalId(directByKey, value);
-      this.registerModelAlias(value, internalId);
-      this.registerModelAlias(internalId, internalId);
-      return internalId;
-    }
-
-    const aliasResolved = this.modelIdAliases.get(value) ?? this.modelIdAliases.get(value.toLowerCase());
-    if (aliasResolved) {
-      const aliasByKey = this.fragments.list.get(aliasResolved);
-      if (aliasByKey) {
-        const internalId = this.getModelInternalId(aliasByKey, aliasResolved);
-        this.registerModelAlias(value, internalId);
-        this.registerModelAlias(aliasResolved, internalId);
-        return internalId;
-      }
-      const aliasByInternal = this.findFragmentsEntryByInternalId(aliasResolved);
-      if (aliasByInternal) {
-        const [entryKey, entry] = aliasByInternal;
-        const internalId = this.getModelInternalId(entry, entryKey);
-        this.registerModelAlias(value, internalId);
-        this.registerModelAlias(entryKey, internalId);
-        return internalId;
-      }
-    }
-
-    const lowerValue = value.toLowerCase();
-    for (const [entryKey, entry] of this.fragments.list.entries()) {
-      const internalId = this.getModelInternalId(entry, String(entryKey));
-      if (internalId.toLowerCase() === lowerValue || String(entryKey).toLowerCase() === lowerValue) {
-        this.registerModelAlias(value, internalId);
-        this.registerModelAlias(String(entryKey), internalId);
-        return internalId;
-      }
-    }
-
-    for (const [modelId, record] of this.federatedModels.entries()) {
-      if (record.fileName.toLowerCase() === lowerValue) {
-        this.registerModelAlias(value, modelId);
-        return modelId;
-      }
-    }
-
-    return null;
+  // The model id passed to ifcLoader.load IS the fragments.list key and the
+  // model.modelId (A6) — lookups are direct, no alias resolution needed.
+  private getFragmentsModel(modelId: string): any {
+    return this.fragments?.list?.get(modelId) ?? null;
   }
 
   private fireAndForget(task: Promise<unknown>, context: string): void {
@@ -2395,17 +2382,16 @@ class ViewerApp {
   }
 
   private isLoadedModelId(modelId: string): boolean {
-    return this.resolveModelId(modelId) !== null;
+    return Boolean(modelId && this.fragments?.list?.has(modelId));
   }
 
   private getValidModelIdMap(input: OBC.ModelIdMap): OBC.ModelIdMap {
     const valid: OBC.ModelIdMap = {};
     for (const [modelId, ids] of Object.entries(input)) {
       if (ids.size === 0) continue;
-      const resolvedModelId = this.resolveModelId(modelId);
-      if (!resolvedModelId) continue;
-      if (!valid[resolvedModelId]) valid[resolvedModelId] = new Set<number>();
-      for (const localId of ids) valid[resolvedModelId].add(localId);
+      if (!this.isLoadedModelId(modelId)) continue;
+      if (!valid[modelId]) valid[modelId] = new Set<number>();
+      for (const localId of ids) valid[modelId].add(localId);
     }
     return valid;
   }
@@ -2417,26 +2403,24 @@ class ViewerApp {
   }
 
   private async selectWholeModel(modelId: string): Promise<void> {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const index = this.modelIndices.get(resolvedModelId);
+    const index = this.modelIndices.get(modelId);
     if (!index || index.allIds.size === 0) {
       this.setStatus('Model index not ready yet');
       return;
     }
     clearMap(this.selectedItems);
-    this.selectedItems[resolvedModelId] = new Set(index.allIds);
+    this.selectedItems[modelId] = new Set(index.allIds);
     await this.refreshSelectionVisuals();
     await this.zoomToItems(this.selectedItems);
     this.setStatus(`Selected full model (${index.allIds.size} elements)`);
   }
 
   private toggleModelVisibility(modelId: string): void {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const model = this.federatedModels.get(resolvedModelId);
+    const model = this.federatedModels.get(modelId);
     if (!model) return;
     model.visible = !model.visible;
     model.object.visible = model.visible;
-    if (!model.visible && this.activeGizmoModelId === resolvedModelId) this.detachModelGizmo();
+    if (!model.visible && this.activeGizmoModelId === modelId) this.detachModelGizmo();
     this.applyXRay();
     if (this.edgesEnabled) this.applyEdges();
     this.fireAndForget(this.fragments.core.update(true), 'Toggle visibility');
@@ -2448,8 +2432,7 @@ class ViewerApp {
   }
 
   private applyModelOpacity(modelId: string, opacity: number): void {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const model = this.federatedModels.get(resolvedModelId);
+    const model = this.federatedModels.get(modelId);
     if (!model) return;
     model.opacity = this.clamp(opacity, 0, 1);
     this.applyXRay();
@@ -2458,21 +2441,20 @@ class ViewerApp {
   }
 
   private toggleModelGizmo(modelId: string): void {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const model = this.federatedModels.get(resolvedModelId);
+    const model = this.federatedModels.get(modelId);
     if (!model || !this.transformControls) return;
     if (!model.visible) {
       this.setStatus('Show the model before enabling gizmo');
       return;
     }
 
-    if (this.activeGizmoModelId === resolvedModelId && this.transformControlsHelper?.visible) {
+    if (this.activeGizmoModelId === modelId && this.transformControlsHelper?.visible) {
       this.detachModelGizmo();
       this.setStatus('Model gizmo detached');
       return;
     }
 
-    this.activeGizmoModelId = resolvedModelId;
+    this.activeGizmoModelId = modelId;
     this.transformControls.attach(model.object);
     this.transformControls.setMode('translate');
     this.transformControls.enabled = true;
@@ -2506,8 +2488,7 @@ class ViewerApp {
     const transform = input.dataset.transform;
     if (!modelId || !transform) return;
 
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const model = this.federatedModels.get(resolvedModelId);
+    const model = this.federatedModels.get(modelId);
     if (!model) return;
 
     const value = Number(input.value);
@@ -2567,8 +2548,7 @@ class ViewerApp {
   }
 
   private resetModelOffsets(modelId: string): void {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const model = this.federatedModels.get(resolvedModelId);
+    const model = this.federatedModels.get(modelId);
     if (!model) return;
     model.offsetPosition = { x: 0, y: 0, z: 0 };
     model.offsetRotation = { x: 0, y: 0, z: 0 };
@@ -2579,8 +2559,7 @@ class ViewerApp {
   }
 
   private fitToModelById(modelId: string): void {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const model = this.federatedModels.get(resolvedModelId);
+    const model = this.federatedModels.get(modelId);
     if (!model) return;
     const bbox = new THREE.Box3().setFromObject(model.object);
     if (bbox.isEmpty()) return;
@@ -2593,14 +2572,13 @@ class ViewerApp {
   }
 
   private async isolateLevelForModel(modelId: string, level: string): Promise<void> {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const index = this.modelIndices.get(resolvedModelId);
+    const index = this.modelIndices.get(modelId);
     const ids = index?.levels.get(level);
     if (!ids || ids.size === 0) {
       this.setStatus(`No elements found for level ${level}`);
       return;
     }
-    const map = this.getValidModelIdMap({ [resolvedModelId]: new Set(ids) });
+    const map = this.getValidModelIdMap({ [modelId]: new Set(ids) });
     if (isMapEmpty(map)) {
       this.setStatus(`Level ${level} is not available for current loaded model IDs`);
       return;
@@ -2611,14 +2589,13 @@ class ViewerApp {
   }
 
   private async isolateClassForModelLevel(modelId: string, level: string, className: string): Promise<void> {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const ids = this.getClassIdsForModelLevel(resolvedModelId, level, className);
+    const ids = this.getClassIdsForModelLevel(modelId, level, className);
     if (ids.size === 0) {
       this.setStatus(`No ${className} elements found in ${level}`);
       return;
     }
 
-    const map = this.getValidModelIdMap({ [resolvedModelId]: ids });
+    const map = this.getValidModelIdMap({ [modelId]: ids });
     if (isMapEmpty(map)) {
       this.setStatus(`${className} in ${level} is not available for current loaded model IDs`);
       return;
@@ -2700,9 +2677,7 @@ class ViewerApp {
     const results: SearchResult[] = [];
 
     for (const [modelKey, model] of this.fragments.list.entries()) {
-      const modelId = this.getModelInternalId(model, String(modelKey));
-      this.registerModelAlias(String(modelKey), modelId);
-      this.registerModelAlias(modelId, modelId);
+      const modelId = String(modelKey);
       const ids = await model.getItemsByQuery({
         attributes: {
           aggregation: 'inclusive',
@@ -2808,19 +2783,26 @@ class ViewerApp {
     this.setStatus('Loading model...');
 
     let timeoutHandle: number | undefined;
+    // Metadata is keyed by the id passed to ifcLoader.load — it becomes
+    // model.modelId and the fragments.list key (A6). Duplicate file names get
+    // a unique suffix so federated loads never collide.
+    const modelId = this.modelRegistry.allocateModelId(file.name, [
+      ...(this.fragments?.list?.keys() ?? []),
+      ...this.federatedModels.keys(),
+    ]);
 
     try {
       const start = performance.now();
       const buffer = await file.arrayBuffer();
       const data = new Uint8Array(buffer);
-      this.pendingModelMetaQueue.push({ fileName: file.name, sizeBytes: file.size });
+      this.modelRegistry.beginLoad(modelId, { fileName: file.name, sizeBytes: file.size });
 
       if (requestId === this.loadRequestId) {
         this.dom.loadingText.textContent = 'Converting IFC to fragments...';
         this.dom.loadingProgress.style.width = '25%';
       }
 
-      const loadPromise = this.ifcLoader.load(data, true, file.name, {
+      const loadPromise = this.ifcLoader.load(data, true, modelId, {
         instanceCallback: (importer: any) => {
           if (typeof importer?.addAllAttributes === 'function') importer.addAllAttributes();
           if (typeof importer?.addAllRelations === 'function') importer.addAllRelations();
@@ -2835,14 +2817,32 @@ class ViewerApp {
         },
       });
 
+      let timedOut = false;
       const timeoutPromise = new Promise<never>((_resolve, reject) => {
         timeoutHandle = window.setTimeout(() => {
+          timedOut = true;
           reject(new Error('Model loading timed out. Please try again with a smaller IFC or reload the page.'));
         }, 120000);
       });
 
-      const loadedModel = await Promise.race([loadPromise, timeoutPromise]) as any;
-      await this.ensureModelRegistered(loadedModel);
+      let loadedModel: any;
+      try {
+        loadedModel = await Promise.race([loadPromise, timeoutPromise]);
+      } catch (error) {
+        if (timedOut) {
+          // A10: the engine keeps converting after the race is lost — record
+          // the stale id and dispose the model if the abandoned load lands.
+          this.modelRegistry.markStale(modelId);
+          loadPromise
+            .then(() => this.disposeStaleModel(modelId))
+            .catch(() => {
+              // The abandoned load itself failed — nothing arrived to dispose.
+              this.modelRegistry.consumeStale(modelId);
+            });
+        }
+        throw error;
+      }
+      await this.registerModel(modelId, loadedModel);
 
       if (timeoutHandle !== undefined) {
         window.clearTimeout(timeoutHandle);
@@ -2863,10 +2863,8 @@ class ViewerApp {
       }, 220);
       return true;
     } catch (error) {
-      const staleIndex = this.pendingModelMetaQueue.findIndex(
-        (entry) => entry.fileName === file.name && entry.sizeBytes === file.size,
-      );
-      if (staleIndex !== -1) this.pendingModelMetaQueue.splice(staleIndex, 1);
+      // No-op when the id was already marked stale (timeout path).
+      this.modelRegistry.failLoad(modelId);
 
       if (timeoutHandle !== undefined) {
         window.clearTimeout(timeoutHandle);
@@ -2887,88 +2885,6 @@ class ViewerApp {
       }
     }
     return false;
-  }
-
-  private async ensureModelRegistered(model: any): Promise<void> {
-    if (!model) return;
-    const modelId = this.getModelInternalId(model, '');
-    const modelObject = model.object as THREE.Object3D | undefined;
-    const isObjectRegistered = (): boolean => (
-      !!modelObject && [...this.federatedModels.values()].some((record) => record.object === modelObject)
-    );
-    const isFullyRegistered = (): boolean => {
-      if (modelId && this.federatedModels.has(modelId) && !this.registeringModelIds.has(modelId)) return true;
-      if (isObjectRegistered() && (!modelId || !this.registeringModelIds.has(modelId))) return true;
-      return false;
-    };
-    const waitForRegistration = async (timeoutMs = 30000): Promise<void> => {
-      const pollMs = 40;
-      const startedAt = performance.now();
-      while (performance.now() - startedAt < timeoutMs) {
-        if (isFullyRegistered()) return;
-        await new Promise((resolve) => window.setTimeout(resolve, pollMs));
-      }
-      throw new Error(`Model registration timed out: ${modelId || 'unknown model id'}`);
-    };
-
-    if (isFullyRegistered()) return;
-    if (modelId && this.registeringModelIds.has(modelId)) {
-      await waitForRegistration();
-      return;
-    }
-    if (isObjectRegistered()) return;
-
-    const existingEntry = [...this.fragments.list.entries()].find(([, entry]) => entry === model);
-    if (existingEntry) {
-      const [entryId, entryModel] = existingEntry;
-      await this.onModelAdded(String(entryId), entryModel);
-      await waitForRegistration();
-      return;
-    }
-
-    if (modelId) {
-      const directEntry = this.findFragmentsEntryByInternalId(modelId);
-      if (directEntry) {
-        const [entryId, entryModel] = directEntry;
-        await this.onModelAdded(entryId, entryModel);
-        await waitForRegistration();
-        return;
-      }
-    }
-
-    const timeoutMs = 8000;
-    const pollMs = 40;
-    const startedAt = performance.now();
-    while (performance.now() - startedAt < timeoutMs) {
-      await new Promise((resolve) => window.setTimeout(resolve, pollMs));
-
-      const match = [...this.fragments.list.entries()].find(([, entry]) => entry === model);
-      if (match) {
-        const [entryId, entryModel] = match;
-        await this.onModelAdded(String(entryId), entryModel);
-        await waitForRegistration();
-        return;
-      }
-
-      if (modelId) {
-        const byId = this.findFragmentsEntryByInternalId(modelId);
-        if (byId) {
-          const [entryId, entryModel] = byId;
-          await this.onModelAdded(entryId, entryModel);
-          await waitForRegistration();
-          return;
-        }
-        if (this.federatedModels.has(modelId)) {
-          await waitForRegistration();
-          return;
-        }
-      }
-      if (isObjectRegistered()) {
-        await waitForRegistration();
-        return;
-      }
-    }
-    await waitForRegistration();
   }
 
   private getModelBoundingBox(): THREE.Box3 | null {
@@ -3342,45 +3258,42 @@ class ViewerApp {
     }
 
     const modelId = String(result.fragments.modelId);
-    const resolvedModelId = this.resolveModelId(modelId);
-    if (!resolvedModelId) return;
+    if (!this.isLoadedModelId(modelId)) return;
     const localId = result.localId as number;
     if (result.point) this.lastHitPoint = result.point.clone();
 
     if (this.issuePinMode) {
       if (result.point) this.pendingIssuePoint = result.point.clone();
-      if (this.selectionMode === 'single') await this.selectSingleItem(resolvedModelId, localId, false);
+      if (this.selectionMode === 'single') await this.selectSingleItem(modelId, localId, false);
       this.activateTab('issues');
       this.setStatus('Issue point captured. Fill issue form and create issue');
       return;
     }
 
     if (this.selectionMode === 'single') {
-      await this.selectSingleItem(resolvedModelId, localId, false);
+      await this.selectSingleItem(modelId, localId, false);
       return;
     }
 
-    this.toggleSelectionItem(resolvedModelId, localId);
+    this.toggleSelectionItem(modelId, localId);
     await this.refreshSelectionVisuals();
   }
 
   private async selectSingleItem(modelId: string, localId: number, zoomToItem: boolean): Promise<void> {
-    const resolvedModelId = this.resolveModelId(modelId);
-    if (!resolvedModelId) return;
+    if (!this.isLoadedModelId(modelId)) return;
     clearMap(this.selectedItems);
-    this.selectedItems[resolvedModelId] = new Set([localId]);
+    this.selectedItems[modelId] = new Set([localId]);
     await this.refreshSelectionVisuals();
     if (zoomToItem) await this.zoomToItems(this.selectedItems);
   }
 
   private toggleSelectionItem(modelId: string, localId: number): void {
-    const resolvedModelId = this.resolveModelId(modelId);
-    if (!resolvedModelId) return;
-    if (!this.selectedItems[resolvedModelId]) this.selectedItems[resolvedModelId] = new Set<number>();
-    const set = this.selectedItems[resolvedModelId];
+    if (!this.isLoadedModelId(modelId)) return;
+    if (!this.selectedItems[modelId]) this.selectedItems[modelId] = new Set<number>();
+    const set = this.selectedItems[modelId];
     if (set.has(localId)) set.delete(localId);
     else set.add(localId);
-    if (set.size === 0) delete this.selectedItems[resolvedModelId];
+    if (set.size === 0) delete this.selectedItems[modelId];
   }
 
   private async clearSelection(): Promise<void> {
@@ -4676,8 +4589,7 @@ class ViewerApp {
     const visibleMap = await this.hider.getVisibilityMap(true);
     let visibleCount = 0;
     for (const [modelId, ids] of Object.entries(visibleMap)) {
-      const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-      const model = this.federatedModels.get(resolvedModelId);
+      const model = this.federatedModels.get(modelId);
       if (model && !model.visible) continue;
       visibleCount += ids.length;
     }
