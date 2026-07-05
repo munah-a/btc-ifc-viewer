@@ -5,13 +5,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <!-- CSP (AUDIT A1, defense-in-depth behind escapeHtml):
-       - wasm-unsafe-eval: web-ifc WebAssembly compilation
+       - unsafe-eval: REQUIRED by the IFC import path — the bundled importer's
+         embind glue generates invoker functions dynamically (verified via
+         securitypolicyviolation: blockedURI 'eval' fired from the app bundle
+         during ifcLoader.load). Inline-script injection stays blocked (no
+         'unsafe-inline' in script-src). Revisit at the W6 stack upgrade.
+       - wasm-unsafe-eval: web-ifc WebAssembly compilation (kept explicit so
+         'unsafe-eval' can be dropped alone if the eval dependency goes away)
        - worker-src/img-src/connect-src blob:/data:: fragments worker via
          object URL, viewpoint thumbnails, screenshot/state exports
        - Google Fonts hosts allowed until W3.1 self-hosts the subset
        - frame-ancestors cannot be set via <meta>; it lands in vercel.json
          headers with the W4.6 allowlist -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' data: blob:; worker-src 'self' blob:" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' data: blob:; worker-src 'self' blob:" />
   <title>BTC IFC Viewer</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
   <link rel="stylesheet" href="./styles.css" />
