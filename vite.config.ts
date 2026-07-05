@@ -1,9 +1,21 @@
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+
+// Dev-server-only CSP relax (A1): Vite's HMR runs over ws:// which CSP3
+// 'self' does not cover. The built artifact keeps the strict policy from
+// index.html — this transform never applies to `vite build`.
+const devCspRelax = (): Plugin => ({
+    name: 'dev-csp-relax',
+    apply: 'serve',
+    transformIndexHtml(html) {
+        return html.replace("connect-src 'self'", "connect-src 'self' ws: wss:");
+    },
+});
 
 // Base is env-driven (AUDIT P8): Vercel (primary) serves at '/', the GitHub
 // Pages mirror sets VITE_BASE=/btc-ifc-viewer/ in its workflow.
 export default defineConfig({
     base: process.env.VITE_BASE ?? '/',
+    plugins: [devCspRelax()],
     root: './src',
     publicDir: '../public',
     build: {

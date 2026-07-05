@@ -4,6 +4,7 @@ import * as OBCF from '@thatopen/components-front';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { SpatialTreeItem } from '@thatopen/fragments';
 
+import { escapeHtml, filterListMarkup, spatialTreeMarkup } from './core/markup';
 import { ModelRegistry } from './core/model-registry';
 
 type SelectionMode = 'single' | 'multi';
@@ -314,13 +315,6 @@ const serializeError = (error: unknown): string => {
 };
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const escapeHtml = (value: string): string => value
-  .replace(/&/g, '&amp;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;')
-  .replace(/'/g, '&#39;');
 
 const uniqueId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -1512,16 +1506,13 @@ class ViewerApp {
   }
 
   private renderSpatialTree(): void {
-    this.dom.spatialTree.innerHTML = '';
-    const rows: string[] = [];
-    for (const [modelId, index] of this.modelIndices.entries()) {
-      rows.push(`<div class="tree-item"><strong>${modelId}</strong></div>`);
-      for (const [level, ids] of index.levels.entries()) {
-        rows.push(`<div class="tree-item" data-model-id="${modelId}" data-level="${level}">Level: ${level} (${ids.size})</div>`);
-      }
-      if (index.levels.size === 0) rows.push('<div class="tree-item">No storeys detected</div>');
-    }
-    this.dom.spatialTree.innerHTML = rows.join('');
+    // A1: IFC-derived strings (model ids, storey names) are escaped by the
+    // pure markup builder before they reach innerHTML.
+    const entries = [...this.modelIndices.entries()].map(([modelId, index]) => ({
+      modelId,
+      levels: [...index.levels.entries()].map(([name, ids]) => ({ name, count: ids.size })),
+    }));
+    this.dom.spatialTree.innerHTML = spatialTreeMarkup(entries);
 
     this.dom.spatialTree.querySelectorAll<HTMLElement>('[data-model-id][data-level]').forEach((element) => {
       element.addEventListener('click', () => {
@@ -1548,18 +1539,8 @@ class ViewerApp {
       for (const className of index.classes.keys()) classes.add(className);
     }
     const sorted = [...classes].sort((a, b) => a.localeCompare(b));
-    if (sorted.length === 0) {
-      this.dom.classFilterList.innerHTML = '<div class="filter-item">No classes detected</div>';
-      return;
-    }
-    this.dom.classFilterList.innerHTML = sorted
-      .map((className) => `
-        <label class="filter-item">
-          <input type="checkbox" data-filter-type="class" value="${className}" />
-          <span>${className}</span>
-        </label>
-      `)
-      .join('');
+    // A1: escaped by the pure markup builder.
+    this.dom.classFilterList.innerHTML = filterListMarkup(sorted, 'class', 'No classes detected');
   }
 
   private renderLevelFilters(): void {
@@ -1568,18 +1549,8 @@ class ViewerApp {
       for (const levelName of index.levels.keys()) levels.add(levelName);
     }
     const sorted = [...levels].sort((a, b) => a.localeCompare(b));
-    if (sorted.length === 0) {
-      this.dom.levelFilterList.innerHTML = '<div class="filter-item">No levels detected</div>';
-      return;
-    }
-    this.dom.levelFilterList.innerHTML = sorted
-      .map((levelName) => `
-        <label class="filter-item">
-          <input type="checkbox" data-filter-type="level" value="${levelName}" />
-          <span>${levelName}</span>
-        </label>
-      `)
-      .join('');
+    // A1: escaped by the pure markup builder.
+    this.dom.levelFilterList.innerHTML = filterListMarkup(sorted, 'level', 'No levels detected');
   }
 
   private clearFilterChecks(): void {

@@ -4,6 +4,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- CSP (AUDIT A1, defense-in-depth behind escapeHtml):
+       - wasm-unsafe-eval: web-ifc WebAssembly compilation
+       - worker-src/img-src/connect-src blob:/data:: fragments worker via
+         object URL, viewpoint thumbnails, screenshot/state exports
+       - Google Fonts hosts allowed until W3.1 self-hosts the subset
+       - frame-ancestors cannot be set via <meta>; it lands in vercel.json
+         headers with the W4.6 allowlist -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' data: blob:; worker-src 'self' blob:" />
   <title>BTC IFC Viewer</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
   <link rel="stylesheet" href="./styles.css" />
@@ -540,113 +548,9 @@
   </nav>
 
   <script type="module" src="./viewer.ts"></script>
-
-  <!-- Splitter drag behavior -->
-  <script>
-    document.querySelectorAll('.panel-splitter').forEach(sp => {
-      let dragging = false, startX = 0, startW = 0;
-      const side = sp.dataset.splitter;
-      const prop = side === 'left' ? '--model-panel-w' : '--panel-w';
-      const min = side === 'left' ? 180 : 200;
-      const max = side === 'left' ? 400 : 420;
-
-      sp.addEventListener('mousedown', e => {
-        dragging = true;
-        startX = e.clientX;
-        startW = parseInt(getComputedStyle(document.documentElement).getPropertyValue(prop));
-        sp.classList.add('dragging');
-        document.body.style.cursor = 'col-resize';
-        document.body.style.userSelect = 'none';
-        e.preventDefault();
-      });
-
-      document.addEventListener('mousemove', e => {
-        if (!dragging) return;
-        const delta = side === 'left' ? e.clientX - startX : startX - e.clientX;
-        const w = Math.min(max, Math.max(min, startW + delta));
-        document.documentElement.style.setProperty(prop, w + 'px');
-      });
-
-      document.addEventListener('mouseup', () => {
-        if (!dragging) return;
-        dragging = false;
-        sp.classList.remove('dragging');
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-      });
-
-      let savedW = 0;
-      sp.addEventListener('dblclick', () => {
-        const cur = parseInt(getComputedStyle(document.documentElement).getPropertyValue(prop));
-        if (cur > 0) {
-          savedW = cur;
-          document.documentElement.style.setProperty(prop, '0px');
-        } else {
-          document.documentElement.style.setProperty(prop, (savedW || (side === 'left' ? 260 : 280)) + 'px');
-        }
-      });
-    });
-
-    // Mobile FAB triggers file upload
-    const fab = document.getElementById('mobileFab');
-    if (fab) fab.addEventListener('click', () => document.getElementById('btnUpload')?.click());
-
-    // Menu dropdown functionality
-    document.querySelectorAll('.menu-dropdown > .menu-item').forEach(btn => {
-      btn.addEventListener('click', e => {
-        const dd = btn.parentElement;
-        const wasOpen = dd.classList.contains('open');
-        document.querySelectorAll('.menu-dropdown.open').forEach(d => d.classList.remove('open'));
-        if (!wasOpen) dd.classList.add('open');
-        e.stopPropagation();
-      });
-    });
-
-    document.querySelectorAll('.menu-dropdown-content button[data-menu-action]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        const action = btn.dataset.menuAction;
-        if (action === 'tab-help') {
-          document.querySelector('[data-tab="help"]')?.click();
-        } else {
-          document.getElementById(action)?.click();
-        }
-        document.querySelectorAll('.menu-dropdown.open').forEach(d => d.classList.remove('open'));
-      });
-    });
-
-    // Prevent menu close when interacting with inline form controls
-    document.querySelectorAll('.menu-inline-control').forEach(ctrl => {
-      ctrl.addEventListener('click', e => e.stopPropagation());
-      ctrl.addEventListener('mousedown', e => e.stopPropagation());
-    });
-
-    document.addEventListener('click', () => {
-      document.querySelectorAll('.menu-dropdown.open').forEach(d => d.classList.remove('open'));
-    });
-
-    // Tab scroll buttons
-    const tabsWrap = document.querySelector('.panel-tabs-wrap');
-    const tabsContainer = document.querySelector('.panel-tabs');
-    if (tabsWrap && tabsContainer) {
-      const checkOverflow = () => {
-        tabsWrap.classList.toggle('can-scroll', tabsContainer.scrollWidth > tabsContainer.clientWidth);
-      };
-      checkOverflow();
-      new ResizeObserver(checkOverflow).observe(tabsContainer);
-      tabsWrap.querySelectorAll('.tab-scroll-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const dir = btn.dataset.scrollDir === 'left' ? -80 : 80;
-          tabsContainer.scrollBy({ left: dir, behavior: 'smooth' });
-        });
-      });
-    }
-
-    // Grid off by default — dispatch change after viewer init
-    setTimeout(() => {
-      const grid = document.getElementById('toggleGrid');
-      if (grid && grid.checked) { grid.checked = false; grid.dispatchEvent(new Event('change')); }
-    }, 500);
-  </script>
+  <!-- Shell behaviors (splitters, menus, tab scroll) — bundled module so the
+       CSP can enforce script-src 'self' without 'unsafe-inline' (A1). -->
+  <script type="module" src="./shell.ts"></script>
 </body>
 
 </html>
