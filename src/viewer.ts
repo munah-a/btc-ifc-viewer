@@ -6,11 +6,17 @@ import type { SpatialTreeItem } from '@thatopen/fragments';
 
 import { escapeHtml, filterListMarkup, spatialTreeMarkup } from './core/markup';
 import { ModelRegistry } from './core/model-registry';
+import {
+  normalizePersistedState,
+  type NavigationMode,
+  type PersistedIssue,
+  type PersistedViewerState,
+  type SavedViewpoint,
+  type SelectionMode,
+  type VisualStyle,
+} from './core/persistence';
 
-type SelectionMode = 'single' | 'multi';
 type MeasureMode = 'none' | 'length' | 'area';
-type NavigationMode = 'Orbit' | 'Plan' | 'FirstPerson';
-type VisualStyle = 'basic' | 'pen' | 'color-pen' | 'color-shadows' | 'color-pen-shadows';
 type CubeFaceKey = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom';
 type CubeEdgeKey =
   | 'top-front'
@@ -72,64 +78,10 @@ interface GeometryProbe {
   size: { x: number; y: number; z: number };
 }
 
-interface IssueCommentRecord {
-  id: string;
-  text: string;
-  author: string;
-  createdAt: string;
-}
-
-interface IssueRecord {
-  id: string;
-  title: string;
-  description: string;
-  priority: 'Critical' | 'High' | 'Medium' | 'Low';
-  status: 'Open' | 'In Progress' | 'Resolved' | 'Closed';
-  assignee: string;
-  createdAt: string;
-  updatedAt: string;
-  modelId: string | null;
-  localIds: number[];
-  point: { x: number; y: number; z: number } | null;
+// Persisted shapes (SavedViewpoint, PersistedIssue, PersistedViewerState) live
+// in core/persistence.ts (A7); the runtime issue record adds the marker handle.
+interface IssueRecord extends PersistedIssue {
   markerId?: string;
-  comments: IssueCommentRecord[];
-}
-
-interface SavedViewpoint {
-  id: string;
-  name: string;
-  createdAt: string;
-  camera: {
-    position: { x: number; y: number; z: number };
-    target: { x: number; y: number; z: number };
-    projection: OBC.CameraProjection;
-    mode: NavigationMode;
-  };
-  clippingPlanes: Array<{
-    normal: { x: number; y: number; z: number };
-    origin: { x: number; y: number; z: number };
-  }>;
-  hiddenItems: Record<string, number[]>;
-  visualStyle?: VisualStyle;
-  xray: boolean;
-  edges: boolean;
-  snapshot?: string;
-}
-
-interface PersistedViewerState {
-  version: 1;
-  selectionMode: SelectionMode;
-  navigationMode: NavigationMode;
-  visualStyle?: VisualStyle;
-  xray: boolean;
-  edges: boolean;
-  gridVisible?: boolean;
-  backgroundColor?: string;
-  /** F8: each theme remembers its own background. */
-  backgroundByTheme?: { dark: string; light: string };
-  theme?: 'dark' | 'light';
-  viewpoints: SavedViewpoint[];
-  issues: Omit<IssueRecord, 'markerId'>[];
 }
 
 interface SearchResult {
@@ -4480,46 +4432,11 @@ class ViewerApp {
   private async importViewerState(file: File): Promise<void> {
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text) as PersistedViewerState;
-      if (parsed.version !== 1) throw new Error('Unsupported viewer state version');
-
-      this.selectionMode = parsed.selectionMode;
-      this.navigationMode = parsed.navigationMode;
-      this.visualStyle = this.parseVisualStyle(parsed.visualStyle ?? (parsed.xray ? 'xray' : 'shaded'));
-      const restoredXray = parsed.xray;
-      const restoredEdges = parsed.edges;
-      this.gridVisible = parsed.gridVisible ?? this.gridVisible;
-      this.themeMode = parsed.theme ?? 'dark';
-      this.backgroundColor = this.normalizeHexColor(parsed.backgroundColor ?? this.backgroundColor);
-      if (parsed.backgroundByTheme) {
-        this.backgroundByTheme.dark = this.normalizeHexColor(parsed.backgroundByTheme.dark, DEFAULT_BACKGROUND_COLOR);
-        this.backgroundByTheme.light = this.normalizeHexColor(parsed.backgroundByTheme.light, DEFAULT_LIGHT_BACKGROUND_COLOR);
-      }
-      this.viewpoints = parsed.viewpoints;
-      this.issues = parsed.issues.map((issue) => ({ ...issue }));
-
-      document.documentElement.setAttribute('data-theme', this.themeMode);
-      this.dom.toggleTheme.checked = this.themeMode === 'light';
-
-      this.applySelectionMode(this.selectionMode);
-      this.applyNavigationMode(this.navigationMode);
-
-      await this.setVisualStyle(this.visualStyle, false, false);
-      this.xrayEnabled = restoredXray;
-      this.edgesEnabled = restoredEdges;
-      this.dom.btnTransparency.classList.toggle('active', this.xrayEnabled);
-      this.dom.btnWireframe.classList.toggle('active', this.edgesEnabled);
-      this.setGridVisible(this.gridVisible, false);
-      this.setBackgroundColor(this.backgroundColor, false);
-      this.syncVisualSettingsUi();
-      this.applyXRay();
-      this.applyEdges();
-
-      this.updateViewpointList();
-      this.updateIssuesList();
-      this.updateIssueComments();
-      this.refreshIssueMarkers();
-
+      // A7: one validated apply path shared with restoreLocalState — a
+      // minimal `{"version":1}` import is crash-free.
+      const state = normalizePersistedState(JSON.parse(text));
+      if (!state) throw new Error('Unsupported or invalid viewer state file');
+      await this.applyPersistedState(state);
       this.persistLocalState();
       this.setStatus('Viewer data imported');
     } catch (error) {
@@ -4592,44 +4509,59 @@ class ViewerApp {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as PersistedViewerState;
-      if (parsed.version !== 1) return;
-
-      this.selectionMode = parsed.selectionMode;
-      this.navigationMode = parsed.navigationMode;
-      this.visualStyle = this.parseVisualStyle(parsed.visualStyle ?? 'color-pen-shadows');
-      const restoredXray = parsed.xray;
-      const restoredEdges = parsed.edges;
-      this.gridVisible = parsed.gridVisible ?? this.gridVisible;
-      this.themeMode = parsed.theme ?? 'dark';
-      this.backgroundColor = this.normalizeHexColor(parsed.backgroundColor ?? this.backgroundColor);
-      if (parsed.backgroundByTheme) {
-        this.backgroundByTheme.dark = this.normalizeHexColor(parsed.backgroundByTheme.dark, DEFAULT_BACKGROUND_COLOR);
-        this.backgroundByTheme.light = this.normalizeHexColor(parsed.backgroundByTheme.light, DEFAULT_LIGHT_BACKGROUND_COLOR);
-      }
-      this.viewpoints = parsed.viewpoints ?? [];
-      this.issues = (parsed.issues ?? []).map((issue) => ({ ...issue }));
-
-      document.documentElement.setAttribute('data-theme', this.themeMode);
-      this.dom.toggleTheme.checked = this.themeMode === 'light';
-
-      await this.setVisualStyle(this.visualStyle, false, false);
-      this.xrayEnabled = restoredXray;
-      this.edgesEnabled = restoredEdges;
-      this.dom.btnTransparency.classList.toggle('active', this.xrayEnabled);
-      this.dom.btnWireframe.classList.toggle('active', this.edgesEnabled);
-      this.setGridVisible(this.gridVisible, false);
-      this.setBackgroundColor(this.backgroundColor, false);
-      this.syncVisualSettingsUi();
-      this.updateViewpointList();
-      this.updateIssuesList();
-      this.updateIssueComments();
-      this.applyXRay();
-      this.applyEdges();
-      this.refreshIssueMarkers();
+      const state = normalizePersistedState(JSON.parse(raw));
+      if (!state) return;
+      await this.applyPersistedState(state);
     } catch (error) {
       this.setStatus(`Failed to restore local state: ${serializeError(error)}`);
     }
+  }
+
+  /**
+   * A7: the single apply path for validated persisted state — used by both
+   * restoreLocalState (localStorage) and importViewerState (file import).
+   * Expects a state produced by normalizePersistedState.
+   */
+  private async applyPersistedState(state: PersistedViewerState): Promise<void> {
+    this.selectionMode = state.selectionMode;
+    this.navigationMode = state.navigationMode;
+    this.visualStyle = this.parseVisualStyle(state.visualStyle ?? 'color-pen-shadows');
+    const restoredXray = state.xray;
+    const restoredEdges = state.edges;
+    this.gridVisible = state.gridVisible ?? false;
+    this.themeMode = state.theme ?? 'dark';
+    if (state.backgroundByTheme) {
+      this.backgroundByTheme.dark = this.normalizeHexColor(state.backgroundByTheme.dark, DEFAULT_BACKGROUND_COLOR);
+      this.backgroundByTheme.light = this.normalizeHexColor(state.backgroundByTheme.light, DEFAULT_LIGHT_BACKGROUND_COLOR);
+    }
+    this.backgroundColor = this.normalizeHexColor(
+      state.backgroundColor ?? this.backgroundByTheme[this.themeMode],
+      this.backgroundByTheme[this.themeMode],
+    );
+    this.viewpoints = state.viewpoints;
+    this.issues = state.issues.map((issue) => ({ ...issue }));
+
+    document.documentElement.setAttribute('data-theme', this.themeMode);
+    this.dom.toggleTheme.checked = this.themeMode === 'light';
+
+    this.applySelectionMode(this.selectionMode);
+    this.applyNavigationMode(this.navigationMode);
+
+    await this.setVisualStyle(this.visualStyle, false, false);
+    this.xrayEnabled = restoredXray;
+    this.edgesEnabled = restoredEdges;
+    this.dom.btnTransparency.classList.toggle('active', this.xrayEnabled);
+    this.dom.btnWireframe.classList.toggle('active', this.edgesEnabled);
+    this.setGridVisible(this.gridVisible, false);
+    this.setBackgroundColor(this.backgroundColor, false);
+    this.syncVisualSettingsUi();
+    this.applyXRay();
+    this.applyEdges();
+
+    this.updateViewpointList();
+    this.updateIssuesList();
+    this.updateIssueComments();
+    this.refreshIssueMarkers();
   }
 
   private activateTab(tab: string): void {
