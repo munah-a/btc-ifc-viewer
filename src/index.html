@@ -28,7 +28,7 @@
 </head>
 
 <body>
-  <a href="#viewer-container" class="skip-nav">Skip to viewer</a>
+  <a href="#viewer-container" class="skip-nav" data-i18n="shell.skipNav">Skip to viewer</a>
 
   <div id="btc-viewer-root" class="app-shell">
 
@@ -37,13 +37,13 @@
       <div class="topbar-brand">
         <img class="brand-logo brand-logo-dark" src="./assets/logo-white.svg" alt="BIM Tech Consulting" />
         <img class="brand-logo brand-logo-light" src="./assets/logo-primary.svg" alt="BIM Tech Consulting" />
-        <span class="eyebrow topbar-eyebrow">IFC Viewer</span>
+        <span class="eyebrow topbar-eyebrow" data-i18n="shell.eyebrow">IFC viewer</span>
       </div>
 
       <div class="topbar-divider"></div>
 
       <div class="topbar-model" id="topbarModel">
-        <span class="topbar-model-empty">No model loaded</span>
+        <span class="topbar-model-empty" data-i18n="empty.noModelLoaded">No model loaded</span>
       </div>
 
       <div class="topbar-spacer"></div>
@@ -51,22 +51,26 @@
       <div class="topbar-actions">
         <button id="btnUpload" class="btn btn-primary" type="button">
           <span class="btn-icon" data-icon="upload_file"></span>
-          <span>Load IFC</span>
+          <span data-i18n="shell.loadIfc">Load IFC</span>
         </button>
         <button id="btnExportScreenshot" class="btn-icon-only" type="button" data-icon="photo_camera"
-          title="Export screenshot" aria-label="Export screenshot"></button>
-        <button id="btnExportState" class="btn-icon-only" type="button" data-icon="download" title="Export state"
-          aria-label="Export state"></button>
-        <button id="btnImportState" class="btn-icon-only" type="button" data-icon="upload" title="Import state"
-          aria-label="Import state"></button>
+          data-i18n-attr="title:shell.exportScreenshot,aria-label:shell.exportScreenshot"></button>
+        <button id="btnExportState" class="btn-icon-only" type="button" data-icon="download"
+          data-i18n-attr="title:shell.exportState,aria-label:shell.exportState"></button>
+        <button id="btnImportState" class="btn-icon-only" type="button" data-icon="upload"
+          data-i18n-attr="title:shell.importState,aria-label:shell.importState"></button>
       </div>
 
       <div class="topbar-divider"></div>
 
+      <button id="btnLangToggle" class="btn-icon-only topbar-lang-toggle" type="button"
+        data-i18n-attr="title:shell.toggleLanguage,aria-label:shell.toggleLanguage" aria-live="polite"><span
+          class="lang-code" id="langCode">EN</span></button>
       <button id="btnThemeToggle" class="btn-icon-only" type="button" data-icon="light_mode"
-        title="Toggle light / dark theme" aria-label="Toggle light / dark theme"></button>
+        data-i18n-attr="title:shell.toggleTheme,aria-label:shell.toggleTheme"></button>
       <button id="btnPanelToggle" class="btn-icon-only topbar-panel-toggle" type="button" data-icon="right_panel_close"
-        title="Collapse panel" aria-label="Collapse panel" aria-expanded="true" aria-controls="sidePanel"></button>
+        data-i18n-attr="title:shell.collapsePanel,aria-label:shell.collapsePanel" aria-expanded="true"
+        aria-controls="sidePanel"></button>
 
       <input type="file" id="fileInput" accept=".ifc" multiple hidden />
       <input type="file" id="importStateInput" accept="application/json" hidden />
@@ -78,51 +82,51 @@
       <!-- Left tool rail (52px) -->
       <div class="tool-rail" role="toolbar" aria-label="Viewer tools" aria-orientation="vertical" data-scrollhide>
         <button id="btnSelectSingle" class="rail-btn is-active" type="button" data-icon="near_me"
-          title="Single select" aria-label="Single select" aria-pressed="true"></button>
+          data-i18n-attr="title:shell.selectSingle,aria-label:shell.selectSingle" aria-pressed="true"></button>
         <button id="btnSelectMulti" class="rail-btn" type="button" data-icon="select_all"
-          title="Multi select (M)" aria-label="Multi select" aria-pressed="false"></button>
+          data-i18n-attr="title:shell.selectMulti,aria-label:shell.selectMulti" aria-pressed="false"></button>
         <button id="btnIsolate" class="rail-btn" type="button" data-icon="center_focus_strong"
-          title="Isolate selection" aria-label="Isolate selection"></button>
-        <button id="btnHide" class="rail-btn" type="button" data-icon="visibility_off" title="Hide selection"
-          aria-label="Hide selection"></button>
+          data-i18n-attr="title:shell.isolate,aria-label:shell.isolate"></button>
+        <button id="btnHide" class="rail-btn" type="button" data-icon="visibility_off"
+          data-i18n-attr="title:shell.hide,aria-label:shell.hide"></button>
         <button id="btnResetVisibility" class="rail-btn" type="button" data-icon="visibility"
-          title="Show all / reset visibility" aria-label="Show all / reset visibility"></button>
+          data-i18n-attr="title:shell.resetVisibility,aria-label:shell.resetVisibility"></button>
 
         <div class="rail-divider" role="none"></div>
 
         <button id="btnMeasureLength" class="rail-btn" type="button" data-icon="straighten"
-          title="Measure length (L)" aria-label="Measure length" aria-pressed="false"></button>
-        <button id="btnMeasureArea" class="rail-btn" type="button" data-icon="square_foot" title="Measure area (A)"
-          aria-label="Measure area" aria-pressed="false"></button>
+          data-i18n-attr="title:shell.measureLength,aria-label:shell.measureLength" aria-pressed="false"></button>
+        <button id="btnMeasureArea" class="rail-btn" type="button" data-icon="square_foot"
+          data-i18n-attr="title:shell.measureArea,aria-label:shell.measureArea" aria-pressed="false"></button>
         <button id="btnClearMeasurements" class="rail-btn" type="button" data-icon="delete_sweep"
-          title="Clear measurements" aria-label="Clear measurements"></button>
+          data-i18n-attr="title:shell.clearMeasurements,aria-label:shell.clearMeasurements"></button>
 
         <div class="rail-divider" role="none"></div>
 
-        <button id="btnSectionX" class="rail-btn" type="button" data-icon="vertical_split" title="Section X"
-          aria-label="Section X" aria-pressed="false"></button>
-        <button id="btnSectionY" class="rail-btn" type="button" data-icon="horizontal_split" title="Section Y"
-          aria-label="Section Y" aria-pressed="false"></button>
-        <button id="btnSectionZ" class="rail-btn" type="button" data-icon="layers" title="Section Z"
-          aria-label="Section Z" aria-pressed="false"></button>
-        <button id="btnSectionBox" class="rail-btn" type="button" data-icon="crop_free" title="Section box"
-          aria-label="Section box" aria-pressed="false"></button>
-        <button id="btnClearSections" class="rail-btn" type="button" data-icon="delete_sweep" title="Clear sections"
-          aria-label="Clear sections"></button>
+        <button id="btnSectionX" class="rail-btn" type="button" data-icon="vertical_split"
+          data-i18n-attr="title:shell.sectionX,aria-label:shell.sectionX" aria-pressed="false"></button>
+        <button id="btnSectionY" class="rail-btn" type="button" data-icon="horizontal_split"
+          data-i18n-attr="title:shell.sectionY,aria-label:shell.sectionY" aria-pressed="false"></button>
+        <button id="btnSectionZ" class="rail-btn" type="button" data-icon="layers"
+          data-i18n-attr="title:shell.sectionZ,aria-label:shell.sectionZ" aria-pressed="false"></button>
+        <button id="btnSectionBox" class="rail-btn" type="button" data-icon="crop_free"
+          data-i18n-attr="title:shell.sectionBox,aria-label:shell.sectionBox" aria-pressed="false"></button>
+        <button id="btnClearSections" class="rail-btn" type="button" data-icon="delete_sweep"
+          data-i18n-attr="title:shell.clearSections,aria-label:shell.clearSections"></button>
 
         <div class="rail-divider" role="none"></div>
 
-        <button id="btnTransparency" class="rail-btn" type="button" data-icon="blur_on" title="X-ray (X)"
-          aria-label="X-ray" aria-pressed="false"></button>
-        <button id="btnWireframe" class="rail-btn" type="button" data-icon="border_style" title="Edges (E)"
-          aria-label="Edges" aria-pressed="false"></button>
-        <button id="btnToggleGrid" class="rail-btn" type="button" data-icon="grid_on" title="Grid (G)"
-          aria-label="Grid" aria-pressed="false"></button>
+        <button id="btnTransparency" class="rail-btn" type="button" data-icon="blur_on"
+          data-i18n-attr="title:shell.xray,aria-label:shell.xray" aria-pressed="false"></button>
+        <button id="btnWireframe" class="rail-btn" type="button" data-icon="border_style"
+          data-i18n-attr="title:shell.edges,aria-label:shell.edges" aria-pressed="false"></button>
+        <button id="btnToggleGrid" class="rail-btn" type="button" data-icon="grid_on"
+          data-i18n-attr="title:shell.grid,aria-label:shell.grid" aria-pressed="false"></button>
 
         <div class="rail-divider" role="none"></div>
 
-        <button id="btnIssuePinMode" class="rail-btn" type="button" data-icon="place" title="Issue pin mode (I)"
-          aria-label="Issue pin mode" aria-pressed="false"></button>
+        <button id="btnIssuePinMode" class="rail-btn" type="button" data-icon="place"
+          data-i18n-attr="title:shell.issuePinMode,aria-label:shell.issuePinMode" aria-pressed="false"></button>
       </div>
 
       <!-- Viewport -->
@@ -133,13 +137,13 @@
         <div id="emptyState" class="empty-state">
           <div class="empty-card">
             <span class="empty-icon" data-icon="view_in_ar"></span>
-            <div class="empty-title">Load IFC models</div>
-            <p class="empty-body">Drop one or more IFC files in the viewport, or load them from disk. Federated models
-              stay aligned.</p>
+            <div class="empty-title" data-i18n="shell.emptyTitle">Load IFC models</div>
+            <p class="empty-body" data-i18n="shell.emptyBody">Drop one or more IFC files in the viewport, or load them
+              from disk. Federated models stay aligned.</p>
             <div class="empty-actions">
               <button id="btnUploadEmpty" class="btn btn-primary" type="button">
                 <span class="btn-icon" data-icon="upload_file"></span>
-                <span>Load IFC files</span>
+                <span data-i18n="shell.emptyAction">Load IFC files</span>
               </button>
             </div>
           </div>
@@ -149,7 +153,7 @@
         <div id="loadingOverlay" class="loading-overlay" hidden>
           <div class="loading-card">
             <div class="loading-head">
-              <span class="loading-title" id="loadingText">Parsing IFC…</span>
+              <span class="loading-title" id="loadingText" data-i18n="load.parsing">Parsing IFC…</span>
               <span class="numeric loading-pct" id="loadingPct"></span>
             </div>
             <div class="loading-bar">
@@ -157,51 +161,54 @@
             </div>
             <span class="loading-error-icon" data-icon="error_outline" aria-hidden="true"></span>
             <div id="loadingErrorActions" class="loading-error-actions" hidden>
-              <button id="btnRetryLoad" class="btn btn-primary btn-compact" type="button">Retry</button>
-              <button id="btnDismissLoadError" class="btn btn-ghost btn-compact" type="button">Dismiss</button>
+              <button id="btnRetryLoad" class="btn btn-primary btn-compact" type="button"
+                data-i18n="shell.retry">Retry</button>
+              <button id="btnDismissLoadError" class="btn btn-ghost btn-compact" type="button"
+                data-i18n="shell.dismiss">Dismiss</button>
             </div>
           </div>
         </div>
 
         <!-- View controls (top-right glass) -->
         <div class="glass view-controls" role="group" aria-label="View controls">
-          <button id="btnFitAll" class="glass-btn" type="button" data-icon="fit_screen" title="Fit all (F)"
-            aria-label="Fit all"></button>
-          <button id="cubeHome" class="glass-btn is-active" type="button" data-icon="3d_rotation" title="Orbit / home view"
-            aria-label="Orbit / home view"></button>
-          <button id="btnFront" class="glass-btn" type="button" data-icon="crop_portrait" title="Front view"
-            aria-label="Front view"></button>
-          <button id="btnTop" class="glass-btn" type="button" data-icon="crop_landscape" title="Top view"
-            aria-label="Top view"></button>
+          <button id="btnFitAll" class="glass-btn" type="button" data-icon="fit_screen"
+            data-i18n-attr="title:shell.fitAll,aria-label:shell.fitAll"></button>
+          <button id="cubeHome" class="glass-btn is-active" type="button" data-icon="3d_rotation"
+            data-i18n-attr="title:shell.orbitHome,aria-label:shell.orbitHome"></button>
+          <button id="btnFront" class="glass-btn" type="button" data-icon="crop_portrait"
+            data-i18n-attr="title:shell.frontView,aria-label:shell.frontView"></button>
+          <button id="btnTop" class="glass-btn" type="button" data-icon="crop_landscape"
+            data-i18n-attr="title:shell.topView,aria-label:shell.topView"></button>
         </div>
 
         <!-- Nav-mode pill (bottom center glass) -->
         <div class="glass nav-pill" id="navPill" role="group" aria-label="Navigation mode" hidden>
           <button id="btnModeOrbit" class="nav-mode-btn is-active" type="button" aria-pressed="true">
-            <span class="btn-icon" data-icon="3d_rotation"></span><span>Orbit</span>
+            <span class="btn-icon" data-icon="3d_rotation"></span><span data-i18n="shell.navOrbit">Orbit</span>
           </button>
           <button id="btnModePlan" class="nav-mode-btn" type="button" aria-pressed="false">
-            <span class="btn-icon" data-icon="map"></span><span>Plan</span>
+            <span class="btn-icon" data-icon="map"></span><span data-i18n="shell.navPlan">Plan</span>
           </button>
           <button id="btnModeFirstPerson" class="nav-mode-btn" type="button" aria-pressed="false">
-            <span class="btn-icon" data-icon="directions_walk"></span><span>Walk</span>
+            <span class="btn-icon" data-icon="directions_walk"></span><span data-i18n="shell.navWalk">Walk</span>
           </button>
         </div>
 
         <!-- Measure hint (top center) -->
         <div class="measure-hint" id="measureHint" hidden>
           <span class="btn-icon" data-icon="straighten"></span>
-          <span id="measureHintText">Length — click two points</span>
-          <button id="btnCancelMeasure" class="measure-hint-esc" type="button">Esc</button>
+          <span id="measureHintText" data-i18n="shell.measureHintDefault">Length — click two points</span>
+          <button id="btnCancelMeasure" class="measure-hint-esc" type="button" data-i18n="shell.cancel">Esc</button>
         </div>
 
         <!-- Section slider (bottom center glass) -->
         <div class="glass section-slider" id="sectionSlider" hidden>
-          <span class="eyebrow" id="sectionLabel">Section</span>
-          <input type="range" id="sectionPos" min="2" max="98" value="50" aria-label="Section plane position" />
+          <span class="eyebrow" id="sectionLabel" data-i18n="shell.sectionLabel">Section</span>
+          <input type="range" id="sectionPos" min="2" max="98" value="50" data-i18n-attr="aria-label:shell.sectionPosAria"
+            aria-label="Section plane position" />
           <span class="numeric section-pos-label" id="sectionPosLabel">50%</span>
           <button id="btnClearSectionSlider" class="glass-btn glass-btn-sm" type="button" data-icon="close"
-            title="Clear section" aria-label="Clear section"></button>
+            data-i18n-attr="title:shell.clearSection,aria-label:shell.clearSection"></button>
         </div>
 
         <!-- Selection chip (top left glass) -->
@@ -212,20 +219,22 @@
             <div class="sel-chip-meta" id="selChipMeta"></div>
           </div>
           <button id="btnClearSelection" class="glass-btn glass-btn-sm" type="button" data-icon="close"
-            title="Clear selection" aria-label="Clear selection"></button>
+            data-i18n-attr="title:shell.clearSelection,aria-label:shell.clearSelection"></button>
         </div>
 
-        <div id="viewerHint" class="viewer-hint" hidden>Issue pin mode active: click model to place issue anchor</div>
+        <div id="viewerHint" class="viewer-hint" hidden data-i18n="shell.issuePinHint">Issue pin mode active: click the
+          model to place an issue anchor</div>
       </section>
 
       <!-- Splitter (U9: pointer + keyboard) -->
       <div class="panel-splitter" id="panelSplitter" role="separator" aria-orientation="vertical"
-        aria-label="Resize panel" aria-valuemin="280" aria-valuemax="400" aria-valuenow="320" tabindex="0"></div>
+        data-i18n-attr="aria-label:shell.resizePanel" aria-label="Resize panel" aria-valuemin="280" aria-valuemax="400"
+        aria-valuenow="320" tabindex="0"></div>
 
       <!-- Right panel (320px) -->
       <aside class="side-panel" id="sidePanel" aria-label="Details panel">
         <div class="side-panel-header">
-          <span class="side-panel-title" id="panelTitle">Explorer</span>
+          <span class="side-panel-title" id="panelTitle" data-i18n="shell.panelTitle">Explorer</span>
         </div>
 
         <div class="side-panel-body">
@@ -235,35 +244,36 @@
             <div class="search-box">
               <span class="search-icon" data-icon="search"></span>
               <input id="searchInput" class="search-input" type="search" placeholder="Search elements, GlobalId…"
+                data-i18n-attr="placeholder:shell.searchPlaceholder,aria-label:shell.searchAria"
                 aria-label="Search elements" />
-              <button id="btnClearSearch" class="search-clear" type="button" data-icon="close" title="Clear search"
-                aria-label="Clear search" hidden></button>
+              <button id="btnClearSearch" class="search-clear" type="button" data-icon="close"
+                data-i18n-attr="title:shell.clearSearch,aria-label:shell.clearSearch" hidden></button>
             </div>
 
             <div class="panel-group">
-              <div class="eyebrow">Class filters</div>
+              <div class="eyebrow" data-i18n="shell.classFilters">Class filters</div>
               <div id="classFilterList" class="chip-row"></div>
             </div>
 
             <div class="panel-group">
-              <div class="eyebrow">Level filters</div>
+              <div class="eyebrow" data-i18n="shell.levelFilters">Level filters</div>
               <div id="levelFilterList" class="chip-row"></div>
             </div>
 
             <div class="panel-group" id="searchResultsGroup" hidden>
-              <div class="eyebrow">Search results</div>
+              <div class="eyebrow" data-i18n="shell.searchResults">Search results</div>
               <div id="elementResults" class="list-box"></div>
             </div>
 
             <div class="panel-group">
-              <div class="eyebrow">Spatial tree</div>
+              <div class="eyebrow" data-i18n="shell.spatialTree">Spatial tree</div>
               <div id="modelBrowserTree" class="tree-box"></div>
             </div>
           </div>
 
           <!-- MODELS -->
           <div class="tab-panel" id="panel-models" role="tabpanel" aria-labelledby="tab-models" tabindex="0" hidden>
-            <div class="eyebrow">Federated models</div>
+            <div class="eyebrow" data-i18n="shell.federatedModels">Federated models</div>
             <div id="federationTree" class="federation-tree"></div>
           </div>
 
@@ -272,35 +282,41 @@
             hidden>
             <div id="propsEmpty" class="props-empty">
               <span class="props-empty-icon" data-icon="touch_app"></span>
-              <p>Select an element in the viewport or the spatial tree to inspect its properties.</p>
+              <p data-i18n="shell.propsEmpty">Select an element in the viewport or the spatial tree to inspect its
+                properties.</p>
             </div>
 
             <div id="propsContent" class="props-content" hidden>
-              <div class="eyebrow">Attributes</div>
+              <div class="eyebrow" data-i18n="shell.attributes">Attributes</div>
               <div class="property-grid">
-                <div class="prop-row"><span class="prop-key">Type</span><span id="propType" class="prop-val">—</span>
+                <div class="prop-row"><span class="prop-key" data-i18n="shell.propType">Type</span><span id="propType"
+                    class="prop-val">—</span>
                 </div>
-                <div class="prop-row"><span class="prop-key">Name</span><span id="propName" class="prop-val">—</span>
+                <div class="prop-row"><span class="prop-key" data-i18n="shell.propName">Name</span><span id="propName"
+                    class="prop-val">—</span>
                 </div>
-                <div class="prop-row"><span class="prop-key">GlobalId</span><span id="propGlobalId"
-                    class="prop-val prop-mono">—</span></div>
-                <div class="prop-row"><span class="prop-key">Storey</span><span id="propStory"
-                    class="prop-val">—</span></div>
-                <div class="prop-row"><span class="prop-key">Description</span><span id="propDescription"
-                    class="prop-val">—</span></div>
+                <div class="prop-row"><span class="prop-key" data-i18n="shell.propGlobalId">GlobalId</span><span
+                    id="propGlobalId" class="prop-val prop-mono">—</span></div>
+                <div class="prop-row"><span class="prop-key" data-i18n="shell.propStorey">Storey</span><span
+                    id="propStory" class="prop-val">—</span></div>
+                <div class="prop-row"><span class="prop-key" data-i18n="shell.propDescription">Description</span><span
+                    id="propDescription" class="prop-val">—</span></div>
               </div>
 
               <div class="props-filter-row">
                 <span class="search-icon" data-icon="filter_list"></span>
                 <input id="propFilterInput" class="search-input" placeholder="Filter properties"
+                  data-i18n-attr="placeholder:shell.filterProps,aria-label:shell.filterProps"
                   aria-label="Filter properties" />
               </div>
 
               <div id="propSections" class="props-sections"></div>
 
               <div class="props-actions">
-                <button id="btnPropsIsolate" class="btn btn-primary btn-block" type="button">Isolate</button>
-                <button id="btnPropsHide" class="btn btn-ghost btn-block" type="button">Hide</button>
+                <button id="btnPropsIsolate" class="btn btn-primary btn-block" type="button"
+                  data-i18n="shell.propsIsolate">Isolate</button>
+                <button id="btnPropsHide" class="btn btn-ghost btn-block" type="button"
+                  data-i18n="shell.propsHide">Hide</button>
               </div>
             </div>
           </div>
@@ -309,10 +325,12 @@
           <div class="tab-panel" id="panel-viewpoints" role="tabpanel" aria-labelledby="tab-viewpoints" tabindex="0"
             hidden>
             <div class="save-viewpoint-row">
-              <input id="viewpointName" class="text-input" placeholder="Viewpoint name" aria-label="Viewpoint name" />
+              <input id="viewpointName" class="text-input" placeholder="Viewpoint name"
+                data-i18n-attr="placeholder:shell.viewpointName,aria-label:shell.viewpointName"
+                aria-label="Viewpoint name" />
               <button id="btnSaveViewpoint" class="btn btn-primary btn-block" type="button">
                 <span class="btn-icon" data-icon="photo_camera"></span>
-                <span>Save current viewpoint</span>
+                <span data-i18n="shell.saveViewpoint">Save current viewpoint</span>
               </button>
             </div>
             <div id="viewpointList" class="list-box"></div>
@@ -321,68 +339,77 @@
           <!-- ISSUES -->
           <div class="tab-panel" id="panel-issues" role="tabpanel" aria-labelledby="tab-issues" tabindex="0" hidden>
             <div class="issue-form card">
-              <div class="eyebrow">New issue</div>
-              <input id="issueTitle" class="text-input" placeholder="Issue title…" aria-label="Issue title" />
+              <div class="eyebrow" data-i18n="shell.newIssue">New issue</div>
+              <input id="issueTitle" class="text-input" placeholder="Issue title…"
+                data-i18n-attr="placeholder:shell.issueTitle,aria-label:shell.issueTitleAria"
+                aria-label="Issue title" />
               <textarea id="issueDescription" class="text-area" placeholder="Description (optional)"
+                data-i18n-attr="placeholder:shell.issueDescription,aria-label:shell.issueDescriptionAria"
                 aria-label="Issue description"></textarea>
               <div class="issue-form-row">
                 <label class="field">
-                  <span class="field-label">Priority</span>
+                  <span class="field-label" data-i18n="shell.priority">Priority</span>
                   <select id="issuePriority" class="text-input">
-                    <option value="Critical">Critical</option>
-                    <option value="High">High</option>
-                    <option value="Medium" selected>Medium</option>
-                    <option value="Low">Low</option>
+                    <option value="Critical" data-i18n="shell.prioCritical">Critical</option>
+                    <option value="High" data-i18n="shell.prioHigh">High</option>
+                    <option value="Medium" selected data-i18n="shell.prioMedium">Medium</option>
+                    <option value="Low" data-i18n="shell.prioLow">Low</option>
                   </select>
                 </label>
                 <label class="field">
-                  <span class="field-label">Status</span>
+                  <span class="field-label" data-i18n="shell.status">Status</span>
                   <select id="issueStatus" class="text-input">
-                    <option value="Open" selected>Open</option>
-                    <option value="In Progress">In Progress</option>
-                    <option value="Resolved">Resolved</option>
-                    <option value="Closed">Closed</option>
+                    <option value="Open" selected data-i18n="shell.statusOpen">Open</option>
+                    <option value="In Progress" data-i18n="shell.statusInProgress">In progress</option>
+                    <option value="Resolved" data-i18n="shell.statusResolved">Resolved</option>
+                    <option value="Closed" data-i18n="shell.statusClosed">Closed</option>
                   </select>
                 </label>
               </div>
-              <input id="issueAssignee" class="text-input" placeholder="Assignee (optional)" aria-label="Assignee" />
-              <button id="btnCreateIssue" class="btn btn-primary btn-block" type="button">Create issue</button>
+              <input id="issueAssignee" class="text-input" placeholder="Assignee (optional)"
+                data-i18n-attr="placeholder:shell.assignee,aria-label:shell.assigneeAria" aria-label="Assignee" />
+              <button id="btnCreateIssue" class="btn btn-primary btn-block" type="button"
+                data-i18n="shell.createIssue">Create issue</button>
             </div>
 
             <div id="issuesList" class="list-box"></div>
 
             <div class="panel-group" id="issueCommentsGroup" hidden>
-              <div class="eyebrow">Comments</div>
+              <div class="eyebrow" data-i18n="shell.comments">Comments</div>
               <div class="save-viewpoint-row">
-                <input id="issueCommentInput" class="text-input" placeholder="Add comment" aria-label="Add comment" />
+                <input id="issueCommentInput" class="text-input" placeholder="Add comment"
+                  data-i18n-attr="placeholder:shell.addComment,aria-label:shell.addComment" aria-label="Add comment" />
                 <button id="btnAddIssueComment" class="btn btn-ghost btn-block" type="button">
-                  <span class="btn-icon" data-icon="add_comment"></span><span>Add comment</span>
+                  <span class="btn-icon" data-icon="add_comment"></span><span data-i18n="shell.addComment">Add
+                    comment</span>
                 </button>
               </div>
               <div id="issueComments" class="list-box compact"></div>
             </div>
-            <button id="btnDeleteIssue" class="btn btn-ghost btn-block" type="button" hidden>Delete selected
-              issue</button>
+            <button id="btnDeleteIssue" class="btn btn-ghost btn-block" type="button" hidden
+              data-i18n="shell.deleteIssue">Delete selected issue</button>
           </div>
 
           <!-- HELP -->
           <div class="tab-panel" id="panel-help" role="tabpanel" aria-labelledby="tab-help" tabindex="0" hidden>
-            <div class="eyebrow">Keyboard shortcuts</div>
+            <div class="eyebrow" data-i18n="shell.keyboardShortcuts">Keyboard shortcuts</div>
             <div class="shortcut-list">
-              <div class="shortcut-row"><kbd>F</kbd><span>Fit model</span></div>
-              <div class="shortcut-row"><kbd>1–3</kbd><span>Orbit / Plan / Walk mode</span></div>
-              <div class="shortcut-row"><kbd>M</kbd><span>Toggle multi-select</span></div>
-              <div class="shortcut-row"><kbd>L</kbd><span>Length measurement</span></div>
-              <div class="shortcut-row"><kbd>A</kbd><span>Area measurement</span></div>
-              <div class="shortcut-row"><kbd>G</kbd><span>Toggle grid</span></div>
-              <div class="shortcut-row"><kbd>X</kbd><span>Toggle X-ray</span></div>
-              <div class="shortcut-row"><kbd>E</kbd><span>Toggle edges</span></div>
-              <div class="shortcut-row"><kbd>I</kbd><span>Toggle issue pin mode</span></div>
-              <div class="shortcut-row"><kbd>Esc</kbd><span>Cancel active tool</span></div>
+              <div class="shortcut-row"><kbd>F</kbd><span data-i18n="shell.scFit">Fit model</span></div>
+              <div class="shortcut-row"><kbd>1–3</kbd><span data-i18n="shell.scModes">Orbit / plan / walk mode</span>
+              </div>
+              <div class="shortcut-row"><kbd>M</kbd><span data-i18n="shell.scMultiSelect">Toggle multi-select</span></div>
+              <div class="shortcut-row"><kbd>L</kbd><span data-i18n="shell.scLength">Length measurement</span></div>
+              <div class="shortcut-row"><kbd>A</kbd><span data-i18n="shell.scArea">Area measurement</span></div>
+              <div class="shortcut-row"><kbd>G</kbd><span data-i18n="shell.scGrid">Toggle grid</span></div>
+              <div class="shortcut-row"><kbd>X</kbd><span data-i18n="shell.scXray">Toggle X-ray</span></div>
+              <div class="shortcut-row"><kbd>E</kbd><span data-i18n="shell.scEdges">Toggle edges</span></div>
+              <div class="shortcut-row"><kbd>I</kbd><span data-i18n="shell.scIssuePin">Toggle issue pin mode</span></div>
+              <div class="shortcut-row"><kbd>Esc</kbd><span data-i18n="shell.scEscape">Cancel active tool</span></div>
             </div>
-            <div class="eyebrow">Tips</div>
-            <p class="help-tip">Use class and level filters in the Explorer to isolate scope. Save viewpoints before
-              creating issues for better traceability. Export state to persist a standalone session.</p>
+            <div class="eyebrow" data-i18n="shell.tips">Tips</div>
+            <p class="help-tip" data-i18n="shell.tipsBody">Use class and level filters in the Explorer to isolate scope.
+              Save viewpoints before creating issues for better traceability. Export state to persist a standalone
+              session.</p>
           </div>
         </div>
       </aside>
@@ -390,61 +417,63 @@
       <!-- Right tab strip (48px) -->
       <div class="tab-strip" role="tablist" aria-label="Panel tabs" aria-orientation="vertical">
         <button class="tab-strip-btn is-active" id="tab-explorer" role="tab" data-tab="explorer"
-          aria-selected="true" aria-controls="panel-explorer" data-icon="account_tree" title="Explorer"
-          aria-label="Explorer"></button>
+          aria-selected="true" aria-controls="panel-explorer" data-icon="account_tree"
+          data-i18n-attr="title:shell.tabExplorer,aria-label:shell.tabExplorer"></button>
         <button class="tab-strip-btn" id="tab-models" role="tab" data-tab="models" aria-selected="false"
-          aria-controls="panel-models" tabindex="-1" data-icon="deployed_code" title="Models"
-          aria-label="Models"></button>
+          aria-controls="panel-models" tabindex="-1" data-icon="deployed_code"
+          data-i18n-attr="title:shell.tabModels,aria-label:shell.tabModels"></button>
         <button class="tab-strip-btn" id="tab-properties" role="tab" data-tab="properties" aria-selected="false"
-          aria-controls="panel-properties" tabindex="-1" data-icon="info" title="Properties"
-          aria-label="Properties"></button>
+          aria-controls="panel-properties" tabindex="-1" data-icon="info"
+          data-i18n-attr="title:shell.tabProperties,aria-label:shell.tabProperties"></button>
         <button class="tab-strip-btn" id="tab-viewpoints" role="tab" data-tab="viewpoints" aria-selected="false"
-          aria-controls="panel-viewpoints" tabindex="-1" data-icon="photo_camera" title="Viewpoints"
-          aria-label="Viewpoints"></button>
+          aria-controls="panel-viewpoints" tabindex="-1" data-icon="photo_camera"
+          data-i18n-attr="title:shell.tabViewpoints,aria-label:shell.tabViewpoints"></button>
         <button class="tab-strip-btn" id="tab-issues" role="tab" data-tab="issues" aria-selected="false"
-          aria-controls="panel-issues" tabindex="-1" data-icon="flag" title="Issues" aria-label="Issues"></button>
+          aria-controls="panel-issues" tabindex="-1" data-icon="flag"
+          data-i18n-attr="title:shell.tabIssues,aria-label:shell.tabIssues"></button>
         <button class="tab-strip-btn" id="tab-help" role="tab" data-tab="help" aria-selected="false"
-          aria-controls="panel-help" tabindex="-1" data-icon="help" title="Help" aria-label="Help"></button>
+          aria-controls="panel-help" tabindex="-1" data-icon="help"
+          data-i18n-attr="title:shell.tabHelp,aria-label:shell.tabHelp"></button>
       </div>
     </div>
 
     <!-- ══════════════ STATUS BAR (30px) ══════════════ -->
     <footer class="status-bar">
       <span class="status-dot" aria-hidden="true"></span>
-      <span id="statusText" class="status-item" role="status" aria-live="polite">Ready</span>
+      <span id="statusText" class="status-item" role="status" aria-live="polite" data-i18n="shell.statusReady">Ready</span>
       <span id="selectionCount" class="numeric status-pill">0 selected</span>
       <span id="elementCount" class="numeric status-pill">0 elements</span>
       <span id="visibleCount" class="numeric status-pill">0 visible</span>
       <span class="status-spacer"></span>
       <span id="loadInfo" class="status-item"></span>
       <span id="perfInfo" class="numeric status-item"></span>
-      <span id="viewLabel" class="status-item">Orbit · perspective</span>
+      <span id="viewLabel" class="status-item" data-i18n="shell.viewLabel">Orbit · perspective</span>
     </footer>
 
     <!-- ══════════════ MOBILE: bottom nav + fit FAB (≤767px) ══════════════ -->
-    <button class="mobile-fab" id="mobileFab" type="button" data-icon="fit_screen" title="Fit model"
-      aria-label="Fit model"></button>
+    <button class="mobile-fab" id="mobileFab" type="button" data-icon="fit_screen"
+      data-i18n-attr="title:shell.fitModel,aria-label:shell.fitModel"></button>
 
     <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
       <button class="mobile-nav-btn is-active" data-mobile-nav="tree" type="button">
         <span class="mobile-nav-pill"><span class="btn-icon" data-icon="account_tree"></span></span>
-        <span class="mobile-nav-label">Tree</span>
+        <span class="mobile-nav-label" data-i18n="shell.mobileTree">Tree</span>
       </button>
       <button class="mobile-nav-btn" data-mobile-nav="orbit" type="button">
         <span class="mobile-nav-pill"><span class="btn-icon" data-icon="3d_rotation"></span></span>
-        <span class="mobile-nav-label">Orbit</span>
+        <span class="mobile-nav-label" data-i18n="shell.mobileOrbit">Orbit</span>
       </button>
       <button class="mobile-nav-btn" data-mobile-nav="section" type="button">
         <span class="mobile-nav-pill"><span class="btn-icon" data-icon="content_cut"></span></span>
-        <span class="mobile-nav-label">Section</span>
+        <span class="mobile-nav-label" data-i18n="shell.mobileSection">Section</span>
       </button>
       <button class="mobile-nav-btn" data-mobile-nav="measure" type="button">
         <span class="mobile-nav-pill"><span class="btn-icon" data-icon="straighten"></span></span>
-        <span class="mobile-nav-label">Measure</span>
+        <span class="mobile-nav-label" data-i18n="shell.mobileMeasure">Measure</span>
       </button>
       <button class="mobile-nav-btn" data-mobile-nav="more" type="button">
         <span class="mobile-nav-pill"><span class="btn-icon" data-icon="more_horiz"></span></span>
-        <span class="mobile-nav-label">More</span>
+        <span class="mobile-nav-label" data-i18n="shell.mobileMore">More</span>
       </button>
     </nav>
 
@@ -452,12 +481,13 @@
     <div class="scrim" id="scrim" hidden></div>
 
     <!-- Mobile "More" sheet (U2: theme/style/settings reachable) -->
-    <div class="mobile-sheet" id="mobileSheet" role="dialog" aria-modal="false" aria-label="View settings">
+    <div class="mobile-sheet" id="mobileSheet" role="dialog" aria-modal="false"
+      data-i18n-attr="aria-label:shell.viewSettings" aria-label="View settings">
       <div class="sheet-handle"></div>
       <div class="sheet-header">
-        <span class="sheet-title" id="sheetTitle">View settings</span>
-        <button id="btnCloseSheet" class="btn-icon-only" type="button" data-icon="close" title="Close"
-          aria-label="Close sheet"></button>
+        <span class="sheet-title" id="sheetTitle" data-i18n="shell.viewSettings">View settings</span>
+        <button id="btnCloseSheet" class="btn-icon-only" type="button" data-icon="close"
+          data-i18n-attr="title:shell.close,aria-label:shell.closeSheet"></button>
       </div>
       <div class="sheet-body" id="sheetBody"></div>
     </div>
@@ -468,8 +498,10 @@
     <form method="dialog" class="confirm-form">
       <p class="confirm-message" id="confirmMessage"></p>
       <div class="confirm-actions">
-        <button id="confirmCancel" class="btn btn-ghost" value="cancel" type="submit">Cancel</button>
-        <button id="confirmOk" class="btn btn-primary" value="confirm" type="submit">Confirm</button>
+        <button id="confirmCancel" class="btn btn-ghost" value="cancel" type="submit"
+          data-i18n="confirm.cancel">Cancel</button>
+        <button id="confirmOk" class="btn btn-primary" value="confirm" type="submit"
+          data-i18n="confirm.ok">Confirm</button>
       </div>
     </form>
   </dialog>
