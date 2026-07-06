@@ -30,7 +30,7 @@ test.describe('i18n — EN/DE language switch (C7)', () => {
     await expect(page.locator('#viewLabel')).toHaveText('Orbit · perspective');
     await expect(page.locator('#panelTitle')).toHaveText('Explorer');
     // A localized aria/title attribute (data-i18n-attr).
-    await expect(page.locator('#btnFitAll')).toHaveAttribute('aria-label', 'Fit all');
+    await expect(page.locator('#btnFitAll')).toHaveAttribute('aria-label', 'Fit all (F)');
 
     // --- Switch to German via the real toggle ---
     await page.click('#btnLangToggle');
