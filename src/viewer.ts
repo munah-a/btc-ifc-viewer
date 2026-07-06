@@ -35,6 +35,7 @@ import {
   type PropertySectionData,
 } from './core/property-engine';
 import { getClipperPlaneGizmoHelper, type FragmentsModelLike } from './core/fragments-model';
+import { bootstrapEngine, createFpsMonitor, ShaderWarningFilter } from './core/viewer-core';
 import type { TestItemRef, ViewerTestApi } from './core/test-api';
 import { getViewCubeAxes, getViewCubeNavigationDistance, resolveViewCubeCameraUp } from './core/view-cube';
 import type {
@@ -112,7 +113,7 @@ const required = <T extends HTMLElement>(id: string): T => {
 
 class ViewerApp {
   private readonly abortController = new AbortController();
-  private fpsAnimationFrameId: number | null = null;
+  private fpsMonitor: { stop: () => void } | null = null;
 
   private get signal(): AbortSignal {
     return this.abortController.signal;
@@ -309,8 +310,6 @@ class ViewerApp {
   private activeIssueId: string | null = null;
   private lastPointerDown = { x: 0, y: 0 };
   private pointerDragged = false;
-  private frameCount = 0;
-  private fpsLastTs = performance.now();
   private isModelLoading = false;
   private loadRequestId = 0;
   private suppressAutoFit = false;
@@ -318,10 +317,9 @@ class ViewerApp {
   private gizmoDragging = false;
   private propertyFilterText = '';
   private activeView: 'orbit' | 'front' | 'top' = 'orbit';
-  private shaderWarningFilterInstalled = false;
-  // A5: keep the original console.warn so the filter can be uninstalled in
-  // destroy() rather than leaving console.warn permanently monkey-patched.
-  private originalConsoleWarn: typeof console.warn | null = null;
+  // A5: scoped console.warn filter (install/uninstall paired; restored in
+  // destroy() rather than leaving console.warn permanently monkey-patched).
+  private readonly shaderWarningFilter = new ShaderWarningFilter();
 
   constructor() {
     hydrateIcons(document);
@@ -369,10 +367,8 @@ class ViewerApp {
     this.abortController.abort();
 
     // 2. Cancel animation frames
-    if (this.fpsAnimationFrameId !== null) {
-      cancelAnimationFrame(this.fpsAnimationFrameId);
-      this.fpsAnimationFrameId = null;
-    }
+    this.fpsMonitor?.stop();
+    this.fpsMonitor = null;
 
     // 3. Dispose THREE.js resources
     this.edgeMaterial.dispose();
@@ -406,13 +402,13 @@ class ViewerApp {
     }
 
     // 6. Restore the patched console.warn (A5).
-    this.uninstallShaderWarningFilter();
+    this.shaderWarningFilter.uninstall();
   }
 
   async init(): Promise<void> {
     try {
       this.setStatus('Initializing BTC IFC Viewer...');
-      this.installShaderWarningFilter();
+      this.shaderWarningFilter.install();
       await this.initEngine();
       await this.restoreLocalState();
       this.syncVisualSettingsUi();
@@ -431,31 +427,6 @@ class ViewerApp {
       this.setStatus(`Initialization failed: ${serializeError(error)}`);
       console.error(error);
     }
-  }
-
-  private installShaderWarningFilter(): void {
-    if (this.shaderWarningFilterInstalled) return;
-    const originalWarn = console.warn.bind(console);
-    this.originalConsoleWarn = originalWarn;
-    console.warn = (...args: unknown[]) => {
-      const header = typeof args[0] === 'string' ? args[0] : '';
-      const payload = args
-        .map((entry) => (typeof entry === 'string' ? entry : ''))
-        .join(' ');
-      const isThreeProgramLog = header.includes('THREE.WebGLProgram: Program Info Log:');
-      const isKnownNoise = payload.includes('dyn_index_vec4_float4_int');
-      if (isThreeProgramLog && isKnownNoise) return;
-      originalWarn(...args);
-    };
-    this.shaderWarningFilterInstalled = true;
-  }
-
-  /** A5: restore the un-patched console.warn (paired with install, for destroy). */
-  private uninstallShaderWarningFilter(): void {
-    if (!this.shaderWarningFilterInstalled || !this.originalConsoleWarn) return;
-    console.warn = this.originalConsoleWarn;
-    this.originalConsoleWarn = null;
-    this.shaderWarningFilterInstalled = false;
   }
 
   private bindUiEvents(): void {
@@ -1141,40 +1112,30 @@ class ViewerApp {
   }
 
   private async initEngine(): Promise<void> {
-    this.components = new OBC.Components();
-    const worlds = this.components.get(OBC.Worlds);
-
-    this.world = worlds.create<OBC.SimpleScene, OBC.OrthoPerspectiveCamera, OBCF.PostproductionRenderer>();
-    this.world.scene = new OBC.SimpleScene(this.components);
-    this.world.scene.setup();
-    this.world.scene.three.background = new THREE.Color(this.backgroundColor);
-
-    this.world.renderer = new OBCF.PostproductionRenderer(this.components, this.dom.viewerContainer);
-
-    // Hook into the render loop to clear composer targets before each frame in PEN mode.
-    // PEN mode (PostproductionAspect.PEN) skips the BasePass, so the EffectComposer's
-    // read/write buffers never get cleared — causing ghost lines from previous frames.
-    this.world.renderer.onBeforeUpdate.add(() => {
-      const postRenderer = this.getPostproductionRenderer();
-      const post = postRenderer?.postproduction;
-      if (!post?.enabled || !post.composer) return;
-      // PEN = 1, PEN_SHADOWS = 2 — these use EdgeDetectionPass without a prior clear
-      const isPenStyle = post.style === OBCF.PostproductionAspect.PEN
-        || post.style === OBCF.PostproductionAspect.PEN_SHADOWS;
-      if (!isPenStyle) return;
-      const renderer = postRenderer!.three;
-      const bgColor = new THREE.Color(this.backgroundColor);
-      renderer.setClearColor(bgColor, 1);
-      renderer.setRenderTarget(post.composer.renderTarget1);
-      renderer.clear();
-      renderer.setRenderTarget(post.composer.renderTarget2);
-      renderer.clear();
-      renderer.setRenderTarget(null);
+    // Engine construction lives in core/viewer-core.ts (shared with the future
+    // /embed entry, W4). The `this`-coupled callbacks (model registration,
+    // camera->fragments update, gizmo->panel re-render) are wired here against
+    // the returned handles so behaviour matches the pre-extraction inline setup.
+    const engine = await bootstrapEngine({
+      container: this.dom.viewerContainer,
+      backgroundColor: this.backgroundColor,
+      gridVisible: this.gridVisible,
+      getBackgroundColor: () => this.backgroundColor,
+      getPostproductionRenderer: () => this.getPostproductionRenderer(),
     });
-    this.world.camera = new OBC.OrthoPerspectiveCamera(this.components);
-    await this.world.camera.controls.setLookAt(18, 18, 18, 0, 0, 0);
-
-    this.components.init();
+    this.components = engine.components;
+    this.world = engine.world;
+    this.ifcLoader = engine.ifcLoader;
+    this.fragments = engine.fragments;
+    this.clipper = engine.clipper;
+    this.hider = engine.hider;
+    this.raycaster = engine.raycaster;
+    this.lengthMeasurement = engine.lengthMeasurement;
+    this.areaMeasurement = engine.areaMeasurement;
+    this.markerManager = engine.markerManager;
+    this.transformControls = engine.transformControls;
+    this.transformControlsHelper = engine.transformControlsHelper;
+    this.gridHelper = engine.gridHelper;
 
     // Expose test/debug handles only in builds made with the explicit VITE_E2E
     // define (vite.e2e.config.ts) so e2e can exercise the real production
@@ -1184,33 +1145,6 @@ class ViewerApp {
     if (import.meta.env.VITE_E2E === 'true') {
       window.__viewerTestApi = this.buildTestApi();
     }
-
-    const grids = this.components.get(OBC.Grids);
-    const grid = grids.create(this.world);
-    this.gridHelper = grid as unknown as THREE.Object3D;
-    this.gridHelper.visible = this.gridVisible;
-    if (grid.material?.uniforms?.uColor) grid.material.uniforms.uColor.value = new THREE.Color(0x25334a);
-
-    // Self-hosted runtime assets (A2/P2): web-ifc.wasm and the fragments
-    // worker are vendored from node_modules into public/ by
-    // scripts/vendor-assets.mjs (prebuild/predev) — no CDN at runtime (C1).
-    this.ifcLoader = this.components.get(OBC.IfcLoader);
-    await this.ifcLoader.setup({
-      autoSetWasm: false,
-      wasm: {
-        path: import.meta.env.BASE_URL,
-        absolute: true,
-      },
-    });
-    this.ifcLoader.settings.webIfc.CIRCLE_SEGMENTS = 24;
-
-    this.fragments = this.components.get(OBC.FragmentsManager);
-    const workerUrl = `${import.meta.env.BASE_URL}worker.mjs`;
-    const fetchedWorker = await fetch(workerUrl);
-    const workerBlob = await fetchedWorker.blob();
-    const workerFile = new File([workerBlob], 'worker.mjs', { type: 'text/javascript' });
-    this.fragments.init(URL.createObjectURL(workerFile));
-    this.fragments.core.settings.graphicsQuality = 1;
 
     this.world.camera.controls.addEventListener('update', () => {
       this.fireAndForget(this.fragments.core.update(), 'Camera update');
@@ -1222,41 +1156,6 @@ class ViewerApp {
       this.fireAndForget(this.registerModel(modelId, model), 'Register model');
     });
 
-    this.fragments.core.models.materials.list.onItemSet.add(({ value: material }) => {
-      if (!('isLodMaterial' in material && (material as unknown as { isLodMaterial: boolean }).isLodMaterial)) {
-        const cast = material as THREE.Material & {
-          polygonOffset?: boolean;
-          polygonOffsetFactor?: number;
-          polygonOffsetUnits?: number;
-        };
-        cast.polygonOffset = true;
-        cast.polygonOffsetFactor = 1;
-        cast.polygonOffsetUnits = 1;
-      }
-    });
-
-    this.clipper = this.components.get(OBC.Clipper);
-    this.clipper.enabled = false;
-    this.hider = this.components.get(OBC.Hider);
-    const raycasters = this.components.get(OBC.Raycasters);
-    this.raycaster = raycasters.get(this.world);
-
-    this.lengthMeasurement = this.components.get(OBCF.LengthMeasurement);
-    this.lengthMeasurement.world = this.world;
-    this.lengthMeasurement.enabled = false;
-
-    this.areaMeasurement = this.components.get(OBCF.AreaMeasurement);
-    this.areaMeasurement.world = this.world;
-    this.areaMeasurement.enabled = false;
-
-    this.markerManager = this.components.get(OBCF.Marker);
-    this.markerManager.threshold = 64;
-    this.markerManager.autoCluster = true;
-
-    this.transformControls = new TransformControls(this.world.camera.three, this.world.renderer.three.domElement);
-    this.transformControls.setSize(0.75);
-    this.transformControls.setSpace('world');
-    this.transformControls.enabled = false;
     this.transformControls.addEventListener('dragging-changed', (event) => {
       const dragging = Boolean((event as { value?: unknown }).value);
       this.gizmoDragging = dragging;
@@ -1279,9 +1178,6 @@ class ViewerApp {
       this.renderFederatedTree();
       this.setStatus(`Gizmo updated: ${model.fileName}`);
     });
-    this.transformControlsHelper = this.transformControls.getHelper();
-    this.transformControlsHelper.visible = false;
-    this.world.scene.three.add(this.transformControlsHelper);
 
     await this.updateVisibilityCount();
   }
@@ -3816,18 +3712,7 @@ class ViewerApp {
   }
 
   private startFpsMonitor(): void {
-    const tick = (): void => {
-      this.frameCount += 1;
-      const now = performance.now();
-      if (now - this.fpsLastTs >= 1000) {
-        const fps = this.frameCount;
-        this.frameCount = 0;
-        this.fpsLastTs = now;
-        this.dom.perfInfo.textContent = `${fps} FPS`;
-      }
-      this.fpsAnimationFrameId = requestAnimationFrame(tick);
-    };
-    this.fpsAnimationFrameId = requestAnimationFrame(tick);
+    this.fpsMonitor = createFpsMonitor(this.dom.perfInfo);
   }
 }
 
