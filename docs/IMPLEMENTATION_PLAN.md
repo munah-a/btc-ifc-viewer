@@ -59,12 +59,15 @@ Repo (post-W2 layout)
 │  │                          #   viewpoints-panel/issues-panel/mobile-sheet/icons (delegation A11) [done W3.5]
 │  ├─ index.html / embed.html
 │  └─ styles/                 # design tokens + components from .dc.html   [W3]
-├─ api/                       # Vercel functions                           [W4]
-│  ├─ uploads.ts              # POST: validate→Blob put→KV meta(TTL)→{embedUrl, deleteToken}
+├─ api/                       # Vercel functions (framework=other Web handlers)   [W4 done]
+│  ├─ uploads.ts              # POST: rate→size→quota→Blob put→meta(TTL)→{embedUrl,viewerUrl,deleteToken}
 │  ├─ e/[id].ts               # GET meta → {fragUrl: direct Blob-CDN URL, expiresAt}; DELETE (requires deleteToken)
-│  ├─ oembed.ts               # oEmbed JSON for paste-a-link boards
-│  ├─ cron-cleanup.ts         # daily: delete expired Blob objects + KV records
-│  └─ _lib/entitlements.ts    # tier→{maxSizeMB, ttlDays, maxActiveUploads}; anon defaults
+│  ├─ oembed.ts               # oEmbed JSON (own-origin embed URLs only) for paste-a-link boards
+│  ├─ cron-cleanup.ts         # daily (CRON_SECRET): delete expired Blob objects + meta records
+│  └─ _lib/                   # storage.ts (StorageAdapter: InMemory[test] | Blob+Upstash-Redis[prod]),
+│                             #   entitlements.ts (C4 seam), hosting.ts (pure logic), http.ts, oembed.ts,
+│                             #   optional-deps.d.ts (@vercel/blob + @upstash/redis ambient — NOT installed)
+│                             # NOTE: @vercel/kv is SUNSET → KV-style meta lives in Upstash Redis.
 ├─ e2e/  (split specs + fixtures/*.ifc — moved out of public/, P5)
 ├─ public/  (web-ifc.wasm, worker.mjs — vendored, A2; manifest+sw in W5)
 └─ docs/   (this plan, AUDIT.md, design/, DECISIONS.md as needed)
@@ -346,32 +349,57 @@ Title Case buttons, `—` for empty values, tabular numerics.)*
 
 ### Wave 4 — Embed & sharing platform
 
-- [ ] W4.1 Vite MPA: `embed.html` + `src/embed.ts` on viewer-core — chromeless (canvas, orbit,
-  fullscreen, fit, BTC badge, "Open in Viewer" link), `ui=min` param set, on-demand render default
+- [x] W4.1 Vite MPA: `embed.html` + `src/embed.ts` on viewer-core — chromeless (canvas, orbit,
+  fullscreen, fit, BTC badge, "Open in Viewer" link), on-demand render default
   (P6 subset), poster + click-to-activate (WebGL context budget on boards).
-- [ ] W4.2 `core/url-state.ts`: `?m=<model-url>&vp=<hash>` codec (camera/projection/clip/hidden
-  summary); load-by-URL in model-registry with CORS fetch + progress; also powers deep links in the
-  full app ("Copy link to view").
-- [ ] W4.3 Hosting API (C2/C3/C4): `api/uploads.ts` (size cap from entitlements, rate limit,
-  Blob put, KV meta with TTL, returns embedUrl+deleteToken), `api/e/[id].ts` (GET meta with direct
-  Blob-CDN fragUrl; **DELETE with valid deleteToken** removes blob+meta), `api/cron-cleanup.ts`
-  (daily), `api/_lib/entitlements.ts` (anon defaults: **50 MB/upload, 7-day TTL, 3 active uploads
-  per anon key**; anon key = salted hash of IP stored as surrogate `ownerId`, so real accounts later
-  just replace the key — no schema rework), `api/oembed.ts` + OG tags on embed.html. Provision Vercel
-  Blob + KV. `.frag` blobs get long-lived immutable cache-control at **Blob put-time**
-  (`cacheControlMaxAge` — vercel.json headers don't apply to the Blob CDN host). **Cost envelope
-  (PO defaults, user-adjustable): target ≤ $20/mo storage+egress; R2 migration trigger = Blob
-  egress > $10/mo for 2 consecutive months** (R2 egress is $0).
-- [ ] W4.4 Share dialog in app: convert→upload→link/iframe snippet/QR; expiry shown; delete-my-upload
-  with token; PowerPoint how-to (Web Viewer add-in steps + GLB alternative).
-- [ ] W4.5 **GLB export** button via three `GLTFExporter` (current visibility/isolation state;
-  section-capped geometry excluded) — native PowerPoint Insert→3D path.
-- [ ] W4.6 `vercel.json` headers: `frame-ancestors` allowlist on `/embed*` — `*.officeapps.live.com`,
-  `teams.microsoft.com`, `*.cloud.microsoft`, `*.sharepoint.com`, `miro.com`, `*.notion.so`,
-  `*.atlassian.net` (CSP host sources match exactly unless wildcarded; config-driven list, easy to
-  extend). App-served routes only — `.frag` caching lives in W4.3 at Blob put-time.
-- [ ] W4.7 E2E: embed loads fixture by URL; expired id shows friendly state; oEmbed contract test.
-  API unit tests for entitlements/TTL. Update plan + Status Log.
+  > Note: loads a model by URL (`?m=`) — a `.frag` from the Blob CDN or an `.ifc` URL converted
+  > client-side; `?vp=` restores camera/projection/section/x-ray. `initLanguage`+`hydrateIcons`+
+  > `hydrateI18n` at bootstrap; embed strings in en+de. "On-demand" here = cheapest render path (no PEN
+  > postprocessing) + fragments update on camera-move/load/resize; the engine's own rAF still drives
+  > frames (that's what reliably streams+renders under WebGL). MPA shares one engine chunk across both
+  > entries (embed JS ~8KB).
+- [x] W4.2 `core/url-state.ts`: `?m=<model-url>&vp=<hash>` codec (camera/projection/clip/hidden
+  summary), 18 round-trip/defensive unit tests; load-by-URL in the full app at boot (CORS fetch) +
+  "Copy link to view" deep links.
+  > Note: `vp` is compact URL-safe base64 of a terse wire object; hidden-id sample capped at 200/model
+  > with the true count preserved. Load-by-URL lives in viewer.ts `loadFromUrlParams` (the app didn't
+  > have a load-by-URL path before); "Copy link" uses the hosted URL recorded on `?m=` boot or after a
+  > publish.
+- [x] W4.3 Hosting API (C2/C3/C4): `api/uploads.ts`, `api/e/[id].ts` (GET direct Blob-CDN fragUrl;
+  **DELETE with valid deleteToken**), `api/cron-cleanup.ts` (daily, CRON_SECRET-guarded),
+  `api/_lib/entitlements.ts` (anon **50 MB/upload, 7-day TTL, 3 active per salted-IP surrogate
+  ownerId**, env-overridable), `api/oembed.ts` + OG tags on embed.html. `.frag` gets long immutable
+  cache at Blob put-time. **All behind a storage-adapter seam: `InMemoryStorage` (tests) vs
+  `createRealStorage` (prod). 36 API unit tests** (entitlements/size/TTL-expiry/quota/rate-limit/
+  delete-token[valid|missing|wrong|bearer]/cron-secret/oEmbed-contract+own-origin-guard/adapter map).
+  > **Deviation (current Vercel API): `@vercel/kv` is SUNSET.** Metadata + rate-limit now use Upstash
+  > Redis (`@upstash/redis`, `Redis.fromEnv()`) via the Marketplace; Blob via `@vercel/blob`. Both are
+  > OPTIONAL at build/test time (lazy `import()` + `api/_lib/optional-deps.d.ts` ambient decls) — **NOT
+  > installed / NOT provisioned this wave** (PO step). No live storage is ever touched. Cost envelope
+  > unchanged.
+- [x] W4.4 Share dialog in app: "Copy link to view" (offline deep link) + convert→upload→embed link/
+  iframe snippet/**offline QR**/expiry/delete-my-upload-with-token; PowerPoint how-to (Web Viewer
+  add-in steps + GLB). All strings i18n en+de.
+  > Note: QR is a **dependency-free, self-hosted byte-mode encoder** (`core/qrcode.ts`, C1: no CDN/dep)
+  > — VERIFIED SCANNABLE (matrices decoded back with jsQR during dev: v1, multi-block v6, long embed
+  > URL). Upload/delete via `core/upload-client.ts` (injectable fetch, unit-tested). Publish is mocked
+  > in the e2e (no live API).
+- [x] W4.5 **GLB export** button via three `GLTFExporter` (current visibility/isolation state) — native
+  PowerPoint Insert→3D path. Verified: non-empty valid `.glb` (unit header check + e2e byteLength).
+  > **Deviation (fragments geometry is not CPU-readable via the three scene graph):** @thatopen
+  > fragment meshes are custom subclasses whose BufferAttributes have no CPU `.array` and whose
+  > `getX/getY/getZ` throw — GLTFExporter over the live scene yields an EMPTY glb. Fixed by sourcing
+  > geometry from `model.getItemsGeometry(visibleIds)` (CPU-side MeshData: positions/indices/transform),
+  > building plain THREE.Meshes with model+mesh matrices baked in, then exporting. Section-clipped
+  > geometry stays in the mesh (render-time effect) → the app toasts a warning when clipping is active.
+- [x] W4.6 `vercel.json` headers: `frame-ancestors` allowlist on `/embed.html`+`/embed` — 'self'
+  `*.officeapps.live.com teams.microsoft.com *.cloud.microsoft *.sharepoint.com miro.com *.notion.so
+  *.atlassian.net`. Added the daily `crons` entry for `/api/cron-cleanup`. W0 base/asset headers kept.
+- [~] W4.7 E2E: `e2e/embed.spec.ts` (load-by-URL convert+render+console-clean; no-model + expired 404
+  friendly states) + `e2e/share.spec.ts` (publish→link/iframe/QR/expiry/delete mocked; PowerPoint tab;
+  GLB non-empty). **oEmbed contract test is the 9 `api-oembed` unit tests** (the Vercel function does
+  not run under `vite preview`, so a Playwright oEmbed test isn't feasible in this preview-only gate).
+  API unit tests for entitlements/TTL/delete/rate-limit done in W4.3. Update plan + Status Log.
 
 ### Wave 5 — Performance & field readiness
 

@@ -49,28 +49,104 @@ export function hasActiveClipping(clipperEnabled: boolean, planeCount: number): 
 }
 
 /**
- * Exports the given model objects to a binary GLB. `onlyVisible` (default true)
- * makes hide/isolate state carry through. Rejects with a clear error if the
- * export produces an empty/invalid buffer (e.g. nothing visible to export).
+ * The subset of `@thatopen/fragments`' MeshData this exporter consumes. Fragment
+ * geometry lives worker/GPU-side and is NOT exposed as CPU-readable three
+ * BufferAttributes — but `model.getItemsGeometry()` returns this CPU-side data.
+ * That is the only reliable geometry source for a client-side GLB export.
  */
-export async function exportObjectsToGlb(
-  objects: THREE.Object3D[],
+export interface ExportMeshData {
+  transform: THREE.Matrix4;
+  positions?: Float32Array | Float64Array;
+  indices?: Uint8Array | Uint16Array | Uint32Array;
+  normals?: Int16Array;
+}
+
+/** A fragments model we can pull visible geometry out of for export. */
+export interface ExportableModel {
+  /** The model's world object (its matrix positions the whole model, incl. federation offsets). */
+  object: THREE.Object3D;
+  /** Fetches CPU-side geometry for the given local ids. */
+  getItemsGeometry(localIds: number[]): Promise<ExportMeshData[][]>;
+  /** All local ids that have geometry. */
+  getItemsIdsWithGeometry(): Promise<number[]>;
+}
+
+/**
+ * Builds a plain-three scene (THREE.Group of standard Meshes) from fragments
+ * MeshData. Each mesh's own `transform` is applied, then the model's world
+ * matrix, so federation offsets are honoured. Pure (no exporter/DOM) →
+ * unit-testable with synthetic MeshData. Returns the group + a dispose().
+ */
+export function buildMeshDataScene(
+  entries: { meshes: ExportMeshData[]; modelMatrix: THREE.Matrix4 }[],
+): { group: THREE.Group; meshCount: number; dispose: () => void } {
+  const group = new THREE.Group();
+  const disposables: { dispose: () => void }[] = [];
+  let meshCount = 0;
+
+  for (const { meshes, modelMatrix } of entries) {
+    for (const mesh of meshes) {
+      if (!mesh.positions || mesh.positions.length === 0) continue;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(Float32Array.from(mesh.positions), 3));
+      if (mesh.indices && mesh.indices.length > 0) {
+        geometry.setIndex(new THREE.BufferAttribute(Uint32Array.from(mesh.indices), 1));
+      }
+      // Fragment normals are Int16 (normalized) — recompute for a clean export.
+      geometry.computeVertexNormals();
+      // Bake mesh transform, then the model's world transform (federation offset).
+      geometry.applyMatrix4(mesh.transform);
+      geometry.applyMatrix4(modelMatrix);
+      const material = new THREE.MeshStandardMaterial({ color: 0xb0b4bd, metalness: 0, roughness: 0.9 });
+      group.add(new THREE.Mesh(geometry, material));
+      disposables.push(geometry, material);
+      meshCount += 1;
+    }
+  }
+
+  return { group, meshCount, dispose: () => disposables.forEach((d) => d.dispose()) };
+}
+
+/** Serializes a three Object3D/Group to a binary GLB via GLTFExporter. */
+export async function serializeGroupToGlb(
+  group: THREE.Object3D,
   options: GLTFExporterOptions = {},
 ): Promise<ArrayBuffer> {
-  if (objects.length === 0) {
+  const exporter = new GLTFExporter();
+  const result = await exporter.parseAsync(group, { binary: true, ...options });
+  if (!(result instanceof ArrayBuffer)) throw new Error('GLB export did not return binary output.');
+  if (!isValidGlb(result)) throw new Error('GLB export produced an invalid or empty file.');
+  return result;
+}
+
+/**
+ * Exports the VISIBLE geometry of the given fragments models to a binary GLB.
+ * `visibleIds` per model already excludes hidden/isolated-away elements (the
+ * caller computes it from the hider state), so hide/isolate carries through.
+ * Rejects with a clear error when there is nothing visible to export.
+ */
+export async function exportModelsToGlb(
+  models: { model: ExportableModel; visibleIds: number[] }[],
+): Promise<ArrayBuffer> {
+  if (models.length === 0) throw new Error('Nothing to export — no visible model geometry.');
+
+  const entries: { meshes: ExportMeshData[]; modelMatrix: THREE.Matrix4 }[] = [];
+  for (const { model, visibleIds } of models) {
+    if (visibleIds.length === 0) continue;
+    model.object.updateWorldMatrix(true, false);
+    const perItem = await model.getItemsGeometry(visibleIds);
+    const flat: ExportMeshData[] = perItem.flat();
+    entries.push({ meshes: flat, modelMatrix: model.object.matrixWorld });
+  }
+
+  const scene = buildMeshDataScene(entries);
+  if (scene.meshCount === 0) {
+    scene.dispose();
     throw new Error('Nothing to export — no visible model geometry.');
   }
-  const exporter = new GLTFExporter();
-  const result = await exporter.parseAsync(objects, {
-    binary: true,
-    onlyVisible: true,
-    ...options,
-  });
-  if (!(result instanceof ArrayBuffer)) {
-    throw new Error('GLB export did not return binary output.');
+  try {
+    return await serializeGroupToGlb(scene.group);
+  } finally {
+    scene.dispose();
   }
-  if (!isValidGlb(result)) {
-    throw new Error('GLB export produced an invalid or empty file.');
-  }
-  return result;
 }

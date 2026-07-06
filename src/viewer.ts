@@ -44,7 +44,7 @@ import {
   type Language,
 } from './core/i18n';
 import { bootstrapEngine, createFpsMonitor, ShaderWarningFilter } from './core/viewer-core';
-import { exportObjectsToGlb, hasActiveClipping, isValidGlb } from './core/glb-export';
+import { exportModelsToGlb, hasActiveClipping, isValidGlb } from './core/glb-export';
 import { buildShareUrl, decodeUrlState, type UrlViewpointState } from './core/url-state';
 import { UploadClient } from './core/upload-client';
 import { ShareDialogController } from './ui/share-dialog';
@@ -3128,14 +3128,14 @@ class ViewerApp {
    * the mesh, so we warn when clipping is active.
    */
   private async exportGlb(): Promise<void> {
-    if (this.modelObjects.length === 0) {
+    if (this.federatedModels.size === 0) {
       this.showToast(t('share.glbNoModel'), 'error');
       this.setStatus(t('share.glbNoModel'));
       return;
     }
     this.setStatus(t('share.glbExporting'));
     try {
-      const buffer = await exportObjectsToGlb(this.modelObjects);
+      const buffer = await exportModelsToGlb(await this.collectExportModels());
       const blob = new Blob([buffer], { type: 'model/gltf-binary' });
       const name = `bim-model-${new Date().toISOString().replace(/[:.]/g, '-')}.glb`;
       downloadBlob(name, blob);
@@ -3147,6 +3147,26 @@ class ViewerApp {
       this.showToast(t('share.glbFailed', { error: serializeError(error) }), 'error');
       this.setStatus(t('share.glbFailed', { error: serializeError(error) }));
     }
+  }
+
+  /**
+   * Gathers each visible model + the local ids to export (all geometry ids minus
+   * hidden), so GLB export honours hide/isolate. Hidden whole-models are skipped.
+   */
+  private async collectExportModels(): Promise<{ model: FragmentsModelLike; visibleIds: number[] }[]> {
+    const hiddenMap = await this.hider.getVisibilityMap(false);
+    const result: { model: FragmentsModelLike; visibleIds: number[] }[] = [];
+    for (const [modelId, record] of this.federatedModels) {
+      if (!record.visible) continue;
+      const model = this.getFragmentsModel(modelId);
+      if (!model) continue;
+      const allIds = await model.getItemsIdsWithGeometry();
+      const hiddenList = hiddenMap[modelId] ?? [];
+      const hidden = new Set<number>(hiddenList);
+      const visibleIds = hidden.size > 0 ? allIds.filter((id) => !hidden.has(id)) : allIds;
+      if (visibleIds.length > 0) result.push({ model, visibleIds });
+    }
+    return result;
   }
 
   private exportViewerState(): void {
@@ -3719,7 +3739,9 @@ class ViewerApp {
         return this.pickAndSelect(ndc);
       },
       exportGlbBytes: async (): Promise<{ byteLength: number; valid: boolean }> => {
-        const buffer = await exportObjectsToGlb(this.modelObjects);
+        // Geometry comes from model.getItemsGeometry (CPU-side), so no render
+        // frame is required — works even under headless software WebGL.
+        const buffer = await exportModelsToGlb(await this.collectExportModels());
         return { byteLength: buffer.byteLength, valid: isValidGlb(buffer) };
       },
     };

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
 
-import { GLB_MAGIC, hasActiveClipping, isValidGlb } from '../../src/core/glb-export';
+import { buildMeshDataScene, GLB_MAGIC, hasActiveClipping, isValidGlb } from '../../src/core/glb-export';
 
 /** Builds a minimal, well-formed GLB header (12-byte header + given total length). */
 function makeGlb(opts: { magicOk?: boolean; version?: number; declaredLen?: number; totalLen?: number } = {}): ArrayBuffer {
@@ -43,6 +44,39 @@ describe('glb-export · isValidGlb', () => {
 
   it('rejects a declared length that does not match the buffer', () => {
     expect(isValidGlb(makeGlb({ totalLen: 32, declaredLen: 999 }))).toBe(false);
+  });
+});
+
+describe('glb-export · buildMeshDataScene', () => {
+  // A single triangle as CPU-side MeshData (the shape getItemsGeometry returns).
+  const triangle = {
+    transform: new THREE.Matrix4(),
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    indices: new Uint32Array([0, 1, 2]),
+  };
+
+  it('builds a plain THREE.Mesh per MeshData with position + index', () => {
+    const modelMatrix = new THREE.Matrix4().makeTranslation(10, 0, 0);
+    const { group, meshCount, dispose } = buildMeshDataScene([{ meshes: [triangle], modelMatrix }]);
+    expect(meshCount).toBe(1);
+    const mesh = group.children[0] as THREE.Mesh;
+    expect(mesh).toBeInstanceOf(THREE.Mesh);
+    const pos = mesh.geometry.getAttribute('position');
+    expect(pos.count).toBe(3);
+    // Model matrix (x+10) is baked in.
+    mesh.geometry.computeBoundingBox();
+    const center = mesh.geometry.boundingBox!.getCenter(new THREE.Vector3());
+    expect(center.x).toBeGreaterThan(9);
+    dispose();
+  });
+
+  it('skips meshes with no positions', () => {
+    const empty = { transform: new THREE.Matrix4(), positions: new Float32Array(0) };
+    expect(buildMeshDataScene([{ meshes: [empty], modelMatrix: new THREE.Matrix4() }]).meshCount).toBe(0);
+  });
+
+  it('returns an empty group for no input', () => {
+    expect(buildMeshDataScene([]).meshCount).toBe(0);
   });
 });
 
