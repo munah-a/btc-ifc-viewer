@@ -46,7 +46,10 @@ const LANGUAGE_STORAGE_KEY = 'bim_for_field_viewer_lang_v1';
 export const en = {
   // ---- status bar (setStatus) ----
   'status.initializing': 'Initializing BTC IFC Viewer…',
-  'status.ready': 'Ready — load IFC model(s)',
+  // NOTE: keep this byte-identical to the pre-i18n string ("Ready - load IFC…"
+  // with a hyphen) — the e2e app-ready wait matches `.includes('Ready - load
+  // IFC')`. EN is the default (C7) and must not change existing assertions.
+  'status.ready': 'Ready - load IFC model(s)',
   'status.initFailed': 'Initialization failed: {error}',
   'status.sectionsCleared': 'Sections cleared',
   'status.measurementsCleared': 'Measurements cleared',
