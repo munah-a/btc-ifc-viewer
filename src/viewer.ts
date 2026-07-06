@@ -347,9 +347,6 @@ class ViewerApp {
   };
   private gridHelper: THREE.Object3D | null = null;
   private readonly appliedModelOpacity = new Map<string, number>();
-  private hiddenLineColorOverride = false;
-  private consistentLightOverride = false;
-  private savedLightStates: { light: THREE.Light; visible: boolean; intensity: number }[] = [];
 
   private edgeOverlays: THREE.LineSegments[] = [];
   private readonly edgeMaterial = new THREE.LineBasicMaterial({ color: 0xc8145c, transparent: true, opacity: 0.65 });
@@ -402,6 +399,9 @@ class ViewerApp {
   private readonly cubeProjectedNormal = new THREE.Vector3();
   private readonly cubeLocalDirection = new THREE.Vector3();
   private shaderWarningFilterInstalled = false;
+  // A5: keep the original console.warn so the filter can be uninstalled in
+  // destroy() rather than leaving console.warn permanently monkey-patched.
+  private originalConsoleWarn: typeof console.warn | null = null;
 
   constructor() {
     this.patchEventListenersWithAbort();
@@ -485,6 +485,9 @@ class ViewerApp {
     if (this.components) {
       this.components.dispose();
     }
+
+    // 6. Restore the patched console.warn (A5).
+    this.uninstallShaderWarningFilter();
   }
 
   async init(): Promise<void> {
@@ -514,6 +517,7 @@ class ViewerApp {
   private installShaderWarningFilter(): void {
     if (this.shaderWarningFilterInstalled) return;
     const originalWarn = console.warn.bind(console);
+    this.originalConsoleWarn = originalWarn;
     console.warn = (...args: unknown[]) => {
       const header = typeof args[0] === 'string' ? args[0] : '';
       const payload = args
@@ -525,6 +529,14 @@ class ViewerApp {
       originalWarn(...args);
     };
     this.shaderWarningFilterInstalled = true;
+  }
+
+  /** A5: restore the un-patched console.warn (paired with install, for destroy). */
+  private uninstallShaderWarningFilter(): void {
+    if (!this.shaderWarningFilterInstalled || !this.originalConsoleWarn) return;
+    console.warn = this.originalConsoleWarn;
+    this.originalConsoleWarn = null;
+    this.shaderWarningFilterInstalled = false;
   }
 
   private setupViewCube(): void {
@@ -651,33 +663,10 @@ class ViewerApp {
       })(), 'Reset visibility');
     });
 
-    this.dom.btnSectionX.addEventListener('click', () => {
-      if (this.dom.btnSectionX.classList.contains('active')) {
-        this.clearSections();
-      } else {
-        this.clearSections(false);
-        this.addSectionPlane(new THREE.Vector3(-1, 0, 0));
-        this.dom.btnSectionX.classList.add('active');
-      }
-    });
-    this.dom.btnSectionY.addEventListener('click', () => {
-      if (this.dom.btnSectionY.classList.contains('active')) {
-        this.clearSections();
-      } else {
-        this.clearSections(false);
-        this.addSectionPlane(new THREE.Vector3(0, 0, -1));
-        this.dom.btnSectionY.classList.add('active');
-      }
-    });
-    this.dom.btnSectionZ.addEventListener('click', () => {
-      if (this.dom.btnSectionZ.classList.contains('active')) {
-        this.clearSections();
-      } else {
-        this.clearSections(false);
-        this.addSectionPlane(new THREE.Vector3(0, -1, 0));
-        this.dom.btnSectionZ.classList.add('active');
-      }
-    });
+    // A12: the three axis section handlers were byte-identical bar button+normal.
+    this.dom.btnSectionX.addEventListener('click', () => this.toggleSectionPlane(this.dom.btnSectionX, new THREE.Vector3(-1, 0, 0)));
+    this.dom.btnSectionY.addEventListener('click', () => this.toggleSectionPlane(this.dom.btnSectionY, new THREE.Vector3(0, 0, -1)));
+    this.dom.btnSectionZ.addEventListener('click', () => this.toggleSectionPlane(this.dom.btnSectionZ, new THREE.Vector3(0, -1, 0)));
     this.dom.btnSectionBox.addEventListener('click', () => {
       if (this.dom.btnSectionBox.classList.contains('active')) {
         this.clearSections();
@@ -2058,37 +2047,14 @@ class ViewerApp {
     }
   }
 
-  private async resetModelColors(): Promise<void> {
-    if (!this.hiddenLineColorOverride) return;
-    const tasks: Promise<unknown>[] = [];
-    for (const model of this.federatedModels.values()) {
-      const fragmentsModel = this.getFragmentsModel(model.modelId);
-      if (!fragmentsModel || typeof fragmentsModel?.resetColor !== 'function') continue;
-      tasks.push(fragmentsModel.resetColor(undefined));
-    }
-    if (tasks.length > 0) await Promise.allSettled(tasks);
-    this.hiddenLineColorOverride = false;
-  }
-
-  private restoreOriginalLighting(): void {
-    if (!this.consistentLightOverride) return;
-
-    // Restore all lights to their original intensities
-    for (const state of this.savedLightStates) {
-      state.light.visible = state.visible;
-      state.light.intensity = state.intensity;
-    }
-    this.savedLightStates = [];
-    this.consistentLightOverride = false;
-  }
-
   private async setVisualStyle(style: VisualStyle, updateStatus: boolean, persist: boolean, resetToggles = false): Promise<void> {
     const resolvedStyle = this.parseVisualStyle(style);
     this.visualStyle = resolvedStyle;
     this.dom.visualStyleSelect.value = resolvedStyle;
 
-    await this.resetModelColors();
-    this.restoreOriginalLighting();
+    // A16: resetModelColors()/restoreOriginalLighting() were permanent no-ops —
+    // their guard flags could never be set true after the W0.4 deletion of
+    // applyHiddenLineColors()/applyConsistentLighting(). Removed with the flags.
     this.configurePostproduction(resolvedStyle);
 
     // F3: X-ray/edges are reset only on an explicit user style change —
@@ -2811,12 +2777,8 @@ class ViewerApp {
   }
 
   private setHomeView(): void {
-    const bbox = this.getModelBoundingBox();
-    if (!bbox || bbox.isEmpty()) return;
-    const center = bbox.getCenter(new THREE.Vector3());
-    const size = bbox.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    this.navigateToDirection(center, maxDim, this.getViewCubeBasisQuaternion(new THREE.Quaternion()), VIEW_CUBE_HOME_VECTOR);
+    // A12: home view == fit-all (both frame the model along the home vector).
+    this.fitToModel();
   }
 
   private navigateToCubeTarget(key: CubeTargetKey): void {
@@ -2980,6 +2942,17 @@ class ViewerApp {
     const center = bbox.getCenter(new THREE.Vector3());
     this.createClipPlane(normal, center);
     this.setStatus('Section plane added');
+  }
+
+  /** A12: shared toggle for the X/Y/Z axis section buttons. */
+  private toggleSectionPlane(button: HTMLButtonElement, normal: THREE.Vector3): void {
+    if (button.classList.contains('active')) {
+      this.clearSections();
+      return;
+    }
+    this.clearSections(false);
+    this.addSectionPlane(normal);
+    button.classList.add('active');
   }
 
   private createSectionBox(): void {
@@ -4118,4 +4091,12 @@ class ViewerApp {
   }
 }
 
-void new ViewerApp().init();
+const viewerApp = new ViewerApp();
+void viewerApp.init();
+
+// A5: on HMR reload, tear the previous instance down (aborts listeners, cancels
+// rAF, disposes THREE/engine resources, restores console.warn) so dev reloads
+// don't leak a second viewer/render loop. No-op in production builds.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => viewerApp.destroy());
+}
