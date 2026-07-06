@@ -101,3 +101,9 @@ Verdicts: ✅ confirmed by adversarial verifier · 🔬 confirmed by live-runnin
 - ThatOpen v3.3 API usage in Hider/Clipper/Marker/measurements/highlight verified correct against installed lib.
 - deploy.yml secrets/OIDC handling is correct; concurrency group sane.
 - GLB-relevant: all meshes reachable via three scene graph (export feasible).
+
+## Post-audit findings (added during execution)
+
+| ID | Sev | Verdict | Location | Issue → Fix |
+|----|-----|---------|----------|-------------|
+| T11 | High | ✅ (CI run 28756787701, PR #7) | `e2e suite on ubuntu CI` | E2E suite passes locally (GPU) but fails wholesale on the 2-core SwiftShader runner: the continuous render loop at the heaviest default postprocessing preset (P6) starves rAF, so Playwright's element-stability check times out (~uniform 15s actionTimeout failures on nearly every click; run got through install/build fine post-lockfix). → CI-stabilization: under VITE_E2E switch to cheapest visual style after fixture load; shrink test viewport (1600×1000 → 1280×720); raise CI actionTimeout (~45s) and consider `--enable-unsafe-swiftshader` launch arg; long-term fix is P6 on-demand rendering (W5.3). |
