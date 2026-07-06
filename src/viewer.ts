@@ -37,6 +37,7 @@ import {
 } from './core/property-engine';
 import { getClipperPlaneGizmoHelper, type FragmentsModelLike } from './core/fragments-model';
 import type { TestItemRef, ViewerTestApi } from './core/test-api';
+import { getViewCubeAxes, getViewCubeNavigationDistance, resolveViewCubeCameraUp } from './core/view-cube';
 
 type MeasureMode = 'none' | 'length' | 'area';
 type CubeFaceKey = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom';
@@ -2759,51 +2760,6 @@ class ViewerApp {
     return target.normalize();
   }
 
-  private getViewCubeAxes(basis: THREE.Quaternion): { right: THREE.Vector3; up: THREE.Vector3; front: THREE.Vector3 } {
-    return {
-      right: new THREE.Vector3(1, 0, 0).applyQuaternion(basis).normalize(),
-      up: new THREE.Vector3(0, 1, 0).applyQuaternion(basis).normalize(),
-      front: new THREE.Vector3(0, 0, 1).applyQuaternion(basis).normalize(),
-    };
-  }
-
-  private getViewCubeNavigationDistance(maxDim: number, localDirection: THREE.Vector3): number {
-    const components =
-      Number(Math.abs(localDirection.x) > 0.01)
-      + Number(Math.abs(localDirection.y) > 0.01)
-      + Number(Math.abs(localDirection.z) > 0.01);
-    if (components >= 3) return maxDim * 2.45;
-    if (components === 2) return maxDim * 2.25;
-    return maxDim * 2;
-  }
-
-  private resolveViewCubeCameraUp(
-    localDirection: THREE.Vector3,
-    worldDirection: THREE.Vector3,
-    axes: { right: THREE.Vector3; up: THREE.Vector3; front: THREE.Vector3 },
-  ): THREE.Vector3 {
-    const candidates: THREE.Vector3[] = [];
-    const axialX = Math.abs(localDirection.x) > 0.999 && Math.abs(localDirection.y) < 0.001 && Math.abs(localDirection.z) < 0.001;
-    const axialY = Math.abs(localDirection.y) > 0.999 && Math.abs(localDirection.x) < 0.001 && Math.abs(localDirection.z) < 0.001;
-    const axialZ = Math.abs(localDirection.z) > 0.999 && Math.abs(localDirection.x) < 0.001 && Math.abs(localDirection.y) < 0.001;
-
-    if (axialY) {
-      candidates.push(localDirection.y >= 0 ? axes.front.clone() : axes.front.clone().negate(), axes.right.clone());
-    } else if (axialX) {
-      candidates.push(axes.up.clone(), localDirection.x >= 0 ? axes.front.clone() : axes.front.clone().negate());
-    } else if (axialZ) {
-      candidates.push(axes.up.clone(), localDirection.z >= 0 ? axes.right.clone() : axes.right.clone().negate());
-    } else {
-      candidates.push(axes.up.clone(), axes.front.clone(), axes.right.clone());
-    }
-
-    for (const candidate of candidates) {
-      candidate.addScaledVector(worldDirection, -candidate.dot(worldDirection));
-      if (candidate.lengthSq() > 0.0001) return candidate.normalize();
-    }
-    return new THREE.Vector3(0, 1, 0);
-  }
-
   private navigateToDirection(
     center: THREE.Vector3,
     maxDim: number,
@@ -2813,9 +2769,9 @@ class ViewerApp {
     if (!this.world?.camera) return;
     const localDirection = new THREE.Vector3(directionTuple[0], directionTuple[1], directionTuple[2]).normalize();
     const worldDirection = localDirection.clone().applyQuaternion(basis).normalize();
-    const distance = this.getViewCubeNavigationDistance(maxDim, localDirection);
-    const axes = this.getViewCubeAxes(basis);
-    const up = this.resolveViewCubeCameraUp(localDirection, worldDirection, axes);
+    const distance = getViewCubeNavigationDistance(maxDim, localDirection);
+    const axes = getViewCubeAxes(basis);
+    const up = resolveViewCubeCameraUp(localDirection, worldDirection, axes);
     const eye = center.clone().addScaledVector(worldDirection, distance);
     this.world.camera.three.up.copy(up);
     this.world.camera.three.updateMatrixWorld();
