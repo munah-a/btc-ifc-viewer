@@ -44,16 +44,17 @@ const load = async (page: Page): Promise<void> => {
 const setTheme = async (page: Page, theme: 'dark' | 'light'): Promise<void> => {
   const current = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
   if (current === theme) return;
-  // Prefer the real toggle (also swaps canvas bg); fall back to the attribute.
-  const toggle = page.locator('#toggleTheme, [data-action="theme"], [aria-label*="theme" i]').first();
-  if (await toggle.count()) {
-    await toggle.click().catch(() => undefined);
-  }
-  const after = await page.evaluate(() => document.documentElement.getAttribute('data-theme'));
-  if (after !== theme) {
-    await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
-  }
-  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  // Use the real in-app toggle (id btnThemeToggle) so the full theme swap runs
+  // (tokens + canvas bg), then wait for it to actually take effect.
+  await page.click('#btnThemeToggle');
+  await page.waitForFunction(
+    (t) => document.documentElement.getAttribute('data-theme') === t,
+    theme,
+    { timeout: 5000 },
+  );
+  // Wait past the 150ms token/background transition so the shot isn't frozen
+  // mid-animation (which made light-theme buttons look stale/unreadable).
+  await page.waitForTimeout(450);
 };
 
 test('capture rebrand screenshots', async ({ browser }) => {
