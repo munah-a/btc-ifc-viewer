@@ -1,0 +1,50 @@
+import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
+import { sectionBoxPlanes, sectionPlanePoint } from '../../src/tools/section';
+
+const box = () => new THREE.Box3(new THREE.Vector3(-2, 0, 10), new THREE.Vector3(4, 6, 20));
+
+describe('sectionPlanePoint', () => {
+  it('slides along X for an X-normal at 0/50/100%', () => {
+    const b = box();
+    const n = new THREE.Vector3(-1, 0, 0);
+    expect(sectionPlanePoint(b, n, 0).x).toBeCloseTo(-2, 5);
+    expect(sectionPlanePoint(b, n, 50).x).toBeCloseTo(1, 5);
+    expect(sectionPlanePoint(b, n, 100).x).toBeCloseTo(4, 5);
+  });
+
+  it('non-dominant axes stay at the box center', () => {
+    const b = box();
+    const point = sectionPlanePoint(b, new THREE.Vector3(-1, 0, 0), 25);
+    const center = b.getCenter(new THREE.Vector3());
+    expect(point.y).toBeCloseTo(center.y, 5);
+    expect(point.z).toBeCloseTo(center.z, 5);
+  });
+
+  it('slides along Y for a Y-normal and Z for a Z-normal', () => {
+    const b = box();
+    expect(sectionPlanePoint(b, new THREE.Vector3(0, -1, 0), 100).y).toBeCloseTo(6, 5);
+    expect(sectionPlanePoint(b, new THREE.Vector3(0, 0, -1), 0).z).toBeCloseTo(10, 5);
+  });
+
+  it('clamps pct outside 0–100', () => {
+    const b = box();
+    const n = new THREE.Vector3(-1, 0, 0);
+    expect(sectionPlanePoint(b, n, -50).x).toBeCloseTo(-2, 5);
+    expect(sectionPlanePoint(b, n, 150).x).toBeCloseTo(4, 5);
+  });
+});
+
+describe('sectionBoxPlanes', () => {
+  it('returns six planes hugging the box extremes', () => {
+    const planes = sectionBoxPlanes(box());
+    expect(planes).toHaveLength(6);
+    // -X plane sits at max.x; +X plane at min.x (each plane clips the opposite side).
+    expect(planes[0].normal.toArray()).toEqual([-1, 0, 0]);
+    expect(planes[0].point.x).toBeCloseTo(4, 5);
+    expect(planes[1].normal.toArray()).toEqual([1, 0, 0]);
+    expect(planes[1].point.x).toBeCloseTo(-2, 5);
+    expect(planes[4].point.z).toBeCloseTo(20, 5);
+    expect(planes[5].point.z).toBeCloseTo(10, 5);
+  });
+});

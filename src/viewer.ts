@@ -38,6 +38,9 @@ import { getClipperPlaneGizmoHelper, type FragmentsModelLike } from './core/frag
 import { bootstrapEngine, createFpsMonitor, ShaderWarningFilter } from './core/viewer-core';
 import type { TestItemRef, ViewerTestApi } from './core/test-api';
 import { getViewCubeAxes, getViewCubeNavigationDistance, resolveViewCubeCameraUp } from './core/view-cube';
+import { buildEdgeOverlays } from './tools/edges';
+import { sectionBoxPlanes, sectionPlanePoint } from './tools/section';
+import { computeXrayOpacity } from './tools/xray';
 import type {
   BrowserTreeNode,
   FederatedModelRecord,
@@ -2532,15 +2535,7 @@ class ViewerApp {
   /** Moves the active section plane along its normal to the given percentage. */
   private setSectionPosition(pct: number): void {
     if (!this.activeSectionNormal || !this.activeSectionBox || this.activeSectionBox.isEmpty()) return;
-    const t = this.clamp(pct / 100, 0, 1);
-    const { min, max } = this.activeSectionBox;
-    const center = this.activeSectionBox.getCenter(new THREE.Vector3());
-    const point = center.clone();
-    const n = this.activeSectionNormal;
-    // Slide along the dominant axis of the normal between the bbox extremes.
-    if (Math.abs(n.x) > 0.5) point.x = min.x + (max.x - min.x) * t;
-    else if (Math.abs(n.y) > 0.5) point.y = min.y + (max.y - min.y) * t;
-    else point.z = min.z + (max.z - min.z) * t;
+    const point = sectionPlanePoint(this.activeSectionBox, this.activeSectionNormal, pct);
     this.clipper.deleteAll();
     this.createClipPlane(this.activeSectionNormal.clone(), point);
     this.fireAndForget(this.fragments.core.update(true), 'Section move');
@@ -2554,13 +2549,9 @@ class ViewerApp {
     }
     this.clearSections(false);
     this.clipper.enabled = true;
-    const { min, max } = bbox;
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(-1, 0, 0), new THREE.Vector3(max.x, 0, 0));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(1, 0, 0), new THREE.Vector3(min.x, 0, 0));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, max.y, 0));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, min.y, 0));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, max.z));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, min.z));
+    for (const { normal, point } of sectionBoxPlanes(bbox)) {
+      this.clipper.createFromNormalAndCoplanarPoint(this.world, normal, point);
+    }
     this.setStatus('Section box created');
   }
 
@@ -2586,11 +2577,7 @@ class ViewerApp {
         continue;
       }
 
-      const baseOpacity = this.clamp(record.opacity, 0, 1);
-      const effectiveOpacity = this.xrayEnabled ? this.clamp(baseOpacity * 0.28, 0, 1) : baseOpacity;
-      const targetOpacity = effectiveOpacity >= 0.999
-        ? 1
-        : this.clamp(Number(effectiveOpacity.toFixed(3)), 0.02, 0.999);
+      const targetOpacity = computeXrayOpacity(record.opacity, this.xrayEnabled);
       const previousOpacity = this.appliedModelOpacity.get(record.modelId) ?? 1;
       if (Math.abs(previousOpacity - targetOpacity) < 0.001) continue;
 
@@ -2615,23 +2602,8 @@ class ViewerApp {
     this.edgeOverlays.length = 0;
     if (!this.edgesEnabled) return;
 
-    for (const object of this.modelObjects) {
-      if (!object.visible) continue;
-      object.traverse((child: THREE.Object3D) => {
-        const mesh = child as THREE.Mesh;
-        if (!mesh.isMesh || !mesh.geometry || !mesh.visible) return;
-        try {
-          const geometry = new THREE.EdgesGeometry(mesh.geometry, 35);
-          const lines = new THREE.LineSegments(geometry, this.edgeMaterial);
-          lines.matrixAutoUpdate = false;
-          lines.matrix.copy(mesh.matrixWorld);
-          this.world.scene.three.add(lines);
-          this.edgeOverlays.push(lines);
-        } catch {
-          // ignore invalid geometry
-        }
-      });
-    }
+    this.edgeOverlays = buildEdgeOverlays(this.modelObjects, this.edgeMaterial);
+    for (const overlay of this.edgeOverlays) this.world.scene.three.add(overlay);
   }
 
   private async onViewerClick(_event: MouseEvent): Promise<void> {
