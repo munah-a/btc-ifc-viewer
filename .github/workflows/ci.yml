@@ -1,11 +1,25 @@
-# CI gate (AUDIT T1): every PR and every main push must pass this before any
-# deploy. Actions are pinned to full commit SHAs (AUDIT T9); the trailing
-# comment records the tag each SHA was resolved from.
+# CI gate (AUDIT T1). Actions pinned to full commit SHAs (AUDIT T9); the
+# trailing comment records the tag each SHA was resolved from.
+#
+# COST / PARITY POLICY (user directive 2026-07-06): the automatic PR gate runs
+# only the FAST, deterministic, hardware-independent checks (typecheck, lint,
+# unit, audit, build). The heavy Playwright e2e suite is NOT run automatically —
+# it converts real IFC models in-browser and is ~24min on GitHub's 2-core
+# SwiftShader runner, AND that slow/GPU-less runner is exactly where e2e is
+# unreliable (findings T11/T12/T13 were all "passes locally, fails GitHub e2e").
+# So e2e is the LOCAL wave-gate (`npm run ci:local`, run by the PO before every
+# merge) and is available in GitHub only on manual `workflow_dispatch`.
 name: CI
 
 on:
   pull_request:
   workflow_call:
+  workflow_dispatch:
+    inputs:
+      run_e2e:
+        description: 'Also run the full Playwright e2e suite (~25min on the runner)'
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -13,7 +27,7 @@ permissions:
 jobs:
   ci:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -38,6 +52,22 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # Heavy browser e2e — manual only (Actions → CI → Run workflow), never on PR.
+  # The authoritative e2e gate is local `npm run ci:local` (SwiftShader parity).
+  e2e:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
 
       - name: Install Playwright browsers
         run: npx playwright install chromium --with-deps

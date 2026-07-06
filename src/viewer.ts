@@ -17,7 +17,27 @@ import {
   type SelectionMode,
   type VisualStyle,
 } from './core/persistence';
-import { DEFAULT_MODEL_UNITS, resolveModelUnits, unitSuffixForLabel, type ModelUnits } from './core/units';
+import { DEFAULT_MODEL_UNITS, resolveModelUnits, type ModelUnits } from './core/units';
+import {
+  clearMap,
+  cloneMap,
+  countMapItems,
+  intersectMaps,
+  isMapEmpty,
+  toSetMap,
+} from './core/model-id-map';
+import {
+  buildPropertySections,
+  extractStoreyNameFromItemData,
+  getModelTreeItemLabel,
+  readPrimitiveValue,
+  toPropertyString,
+  type GeometryProbe,
+  type PropertySectionData,
+} from './core/property-engine';
+import { getClipperPlaneGizmoHelper, type FragmentsModelLike } from './core/fragments-model';
+import type { TestItemRef, ViewerTestApi } from './core/test-api';
+import { getViewCubeAxes, getViewCubeNavigationDistance, resolveViewCubeCameraUp } from './core/view-cube';
 
 type MeasureMode = 'none' | 'length' | 'area';
 type CubeFaceKey = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom';
@@ -45,40 +65,12 @@ type CubeCornerKey =
   | 'bottom-back-left';
 type CubeTargetKey = CubeFaceKey | CubeEdgeKey | CubeCornerKey;
 type CubeTargetKind = 'face' | 'edge' | 'corner';
-type PropertySectionId = 'identity' | 'type' | 'dimensions' | 'location' | 'levels' | 'materials' | 'quantities' | 'relations' | 'raw';
-
 interface ViewCubeTargetDefinition {
   key: CubeTargetKey;
   kind: CubeTargetKind;
   label: string;
   title: string;
   vector: readonly [number, number, number];
-}
-
-interface PropertyRowData {
-  key: string;
-  value: string;
-  searchText: string;
-}
-
-interface PropertySectionData {
-  id: PropertySectionId;
-  title: string;
-  defaultOpen: boolean;
-  rows: PropertyRowData[];
-}
-
-interface ExtractedPropertyFact {
-  label: string;
-  value: string;
-  category: string;
-  setName: string;
-  path: string;
-}
-
-interface GeometryProbe {
-  center: { x: number; y: number; z: number };
-  size: { x: number; y: number; z: number };
 }
 
 // Persisted shapes (SavedViewpoint, PersistedIssue, PersistedViewerState) live
@@ -141,10 +133,6 @@ const DEFAULT_LIGHT_BACKGROUND_COLOR = '#c6d5e8';
 const VIEWPOINT_THUMBNAIL_MAX_DIM = 320;
 const VIEWPOINT_THUMBNAIL_JPEG_QUALITY = 0.72;
 const MAX_PERSISTED_SNAPSHOT_CHARS = 150_000;
-const MAX_PROPERTY_ROWS = 280;
-const MAX_PROPERTY_DEPTH = 4;
-const MAX_PROPERTY_VALUE_LENGTH = 220;
-const MAX_PROPERTY_ARRAY_PREVIEW = 6;
 const MAX_BROWSER_LEVELS = 120;
 const MAX_BROWSER_CLASSES_PER_LEVEL = 28;
 const MAX_BROWSER_ELEMENTS_PER_CLASS = 26;
@@ -185,87 +173,6 @@ const VIEW_CUBE_TARGETS: ViewCubeTargetDefinition[] = [
 const VIEW_CUBE_TARGETS_BY_KEY = new Map<CubeTargetKey, ViewCubeTargetDefinition>(
   VIEW_CUBE_TARGETS.map((target) => [target.key, target] as const),
 );
-const PROPERTY_SECTION_DEFINITIONS: Array<Omit<PropertySectionData, 'rows'>> = [
-  { id: 'identity', title: 'Identity', defaultOpen: true },
-  { id: 'type', title: 'Type', defaultOpen: true },
-  { id: 'dimensions', title: 'Dimensions', defaultOpen: true },
-  { id: 'location', title: 'Location', defaultOpen: true },
-  { id: 'levels', title: 'Levels', defaultOpen: true },
-  { id: 'materials', title: 'Materials', defaultOpen: true },
-  { id: 'quantities', title: 'Quantities', defaultOpen: true },
-  { id: 'relations', title: 'Relations', defaultOpen: false },
-  { id: 'raw', title: 'Raw IFC', defaultOpen: false },
-];
-const IFC_FACT_VALUE_KEYS = [
-  'NominalValue',
-  'LengthValue',
-  'AreaValue',
-  'VolumeValue',
-  'CountValue',
-  'WeightValue',
-  'TimeValue',
-  'PositiveLengthValue',
-  'MassValue',
-  'Width',
-  'Depth',
-  'Height',
-  'Thickness',
-  'LayerThickness',
-  'Elevation',
-];
-const DIMENSION_KEYWORDS = ['thickness', 'width', 'height', 'length', 'depth', 'diameter', 'radius', 'slope', 'span', 'perimeter'];
-const QUANTITY_KEYWORDS = ['area', 'volume', 'count', 'mass', 'weight', 'gross', 'net', 'perimeter', 'quantity', 'length'];
-const LOCATION_KEYWORDS = ['location', 'placement', 'coordinate', 'elevation', 'axis', 'direction', 'reference level', 'offset', 'origin', 'x', 'y', 'z'];
-const LEVEL_KEYWORDS = ['storey', 'level', 'floor', 'roof', 'sub level', 'contained in structure'];
-const MATERIAL_KEYWORDS = ['material', 'layer', 'constituent', 'finish', 'grade', 'profile'];
-const TYPE_KEYWORDS = ['type', 'family', 'assembly', 'classification', 'reference'];
-const RELATION_KEYWORDS = ['association', 'opening', 'void', 'fills', 'defines', 'typed', 'connected', 'decomposes', 'group'];
-
-const toSetMap = (plain: Record<string, number[] | Set<number>>): OBC.ModelIdMap => {
-  const result: OBC.ModelIdMap = {};
-  for (const [modelId, ids] of Object.entries(plain)) {
-    const set = ids instanceof Set ? ids : new Set(ids);
-    if (set.size > 0) result[modelId] = set;
-  }
-  return result;
-};
-
-const cloneMap = (map: OBC.ModelIdMap): OBC.ModelIdMap => {
-  const copy: OBC.ModelIdMap = {};
-  for (const [modelId, ids] of Object.entries(map)) copy[modelId] = new Set(ids);
-  return copy;
-};
-
-const clearMap = (map: OBC.ModelIdMap): void => {
-  for (const key of Object.keys(map)) delete map[key];
-};
-
-const isMapEmpty = (map: OBC.ModelIdMap): boolean => {
-  for (const ids of Object.values(map)) {
-    if (ids.size > 0) return false;
-  }
-  return true;
-};
-
-const countMapItems = (map: OBC.ModelIdMap): number => {
-  let count = 0;
-  for (const ids of Object.values(map)) count += ids.size;
-  return count;
-};
-
-const intersectMaps = (a: OBC.ModelIdMap, b: OBC.ModelIdMap): OBC.ModelIdMap => {
-  const result: OBC.ModelIdMap = {};
-  for (const [modelId, idsA] of Object.entries(a)) {
-    const idsB = b[modelId];
-    if (!idsB) continue;
-    const intersection = new Set<number>();
-    for (const id of idsA) {
-      if (idsB.has(id)) intersection.add(id);
-    }
-    if (intersection.size > 0) result[modelId] = intersection;
-  }
-  return result;
-};
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -442,9 +349,6 @@ class ViewerApp {
   };
   private gridHelper: THREE.Object3D | null = null;
   private readonly appliedModelOpacity = new Map<string, number>();
-  private hiddenLineColorOverride = false;
-  private consistentLightOverride = false;
-  private savedLightStates: { light: THREE.Light; visible: boolean; intensity: number }[] = [];
 
   private edgeOverlays: THREE.LineSegments[] = [];
   private readonly edgeMaterial = new THREE.LineBasicMaterial({ color: 0xc8145c, transparent: true, opacity: 0.65 });
@@ -497,6 +401,9 @@ class ViewerApp {
   private readonly cubeProjectedNormal = new THREE.Vector3();
   private readonly cubeLocalDirection = new THREE.Vector3();
   private shaderWarningFilterInstalled = false;
+  // A5: keep the original console.warn so the filter can be uninstalled in
+  // destroy() rather than leaving console.warn permanently monkey-patched.
+  private originalConsoleWarn: typeof console.warn | null = null;
 
   constructor() {
     this.patchEventListenersWithAbort();
@@ -580,6 +487,9 @@ class ViewerApp {
     if (this.components) {
       this.components.dispose();
     }
+
+    // 6. Restore the patched console.warn (A5).
+    this.uninstallShaderWarningFilter();
   }
 
   async init(): Promise<void> {
@@ -609,6 +519,7 @@ class ViewerApp {
   private installShaderWarningFilter(): void {
     if (this.shaderWarningFilterInstalled) return;
     const originalWarn = console.warn.bind(console);
+    this.originalConsoleWarn = originalWarn;
     console.warn = (...args: unknown[]) => {
       const header = typeof args[0] === 'string' ? args[0] : '';
       const payload = args
@@ -620,6 +531,14 @@ class ViewerApp {
       originalWarn(...args);
     };
     this.shaderWarningFilterInstalled = true;
+  }
+
+  /** A5: restore the un-patched console.warn (paired with install, for destroy). */
+  private uninstallShaderWarningFilter(): void {
+    if (!this.shaderWarningFilterInstalled || !this.originalConsoleWarn) return;
+    console.warn = this.originalConsoleWarn;
+    this.originalConsoleWarn = null;
+    this.shaderWarningFilterInstalled = false;
   }
 
   private setupViewCube(): void {
@@ -679,6 +598,8 @@ class ViewerApp {
     this.bindDockEvents();
     this.bindModelBrowserEvents();
     this.bindFederationTreeEvents();
+    this.bindViewpointListEvents();
+    this.bindIssueListEvents();
 
     this.dom.btnModeOrbit.addEventListener('click', () => this.applyNavigationMode('Orbit'));
     this.dom.btnModePlan.addEventListener('click', () => this.applyNavigationMode('Plan'));
@@ -746,33 +667,10 @@ class ViewerApp {
       })(), 'Reset visibility');
     });
 
-    this.dom.btnSectionX.addEventListener('click', () => {
-      if (this.dom.btnSectionX.classList.contains('active')) {
-        this.clearSections();
-      } else {
-        this.clearSections(false);
-        this.addSectionPlane(new THREE.Vector3(-1, 0, 0));
-        this.dom.btnSectionX.classList.add('active');
-      }
-    });
-    this.dom.btnSectionY.addEventListener('click', () => {
-      if (this.dom.btnSectionY.classList.contains('active')) {
-        this.clearSections();
-      } else {
-        this.clearSections(false);
-        this.addSectionPlane(new THREE.Vector3(0, 0, -1));
-        this.dom.btnSectionY.classList.add('active');
-      }
-    });
-    this.dom.btnSectionZ.addEventListener('click', () => {
-      if (this.dom.btnSectionZ.classList.contains('active')) {
-        this.clearSections();
-      } else {
-        this.clearSections(false);
-        this.addSectionPlane(new THREE.Vector3(0, -1, 0));
-        this.dom.btnSectionZ.classList.add('active');
-      }
-    });
+    // A12: the three axis section handlers were byte-identical bar button+normal.
+    this.dom.btnSectionX.addEventListener('click', () => this.toggleSectionPlane(this.dom.btnSectionX, new THREE.Vector3(-1, 0, 0)));
+    this.dom.btnSectionY.addEventListener('click', () => this.toggleSectionPlane(this.dom.btnSectionY, new THREE.Vector3(0, 0, -1)));
+    this.dom.btnSectionZ.addEventListener('click', () => this.toggleSectionPlane(this.dom.btnSectionZ, new THREE.Vector3(0, -1, 0)));
     this.dom.btnSectionBox.addEventListener('click', () => {
       if (this.dom.btnSectionBox.classList.contains('active')) {
         this.clearSections();
@@ -1099,6 +997,42 @@ class ViewerApp {
     });
   }
 
+  /** A11: delegated viewpoint-row selection (bound once; survives re-renders). */
+  private bindViewpointListEvents(): void {
+    const rowId = (event: Event): string | null => {
+      const row = (event.target as HTMLElement).closest<HTMLElement>('[data-viewpoint-id]');
+      return row?.dataset.viewpointId || null;
+    };
+    this.dom.viewpointList.addEventListener('click', (event) => {
+      const id = rowId(event);
+      if (id === null) return;
+      this.selectedViewpointId = id;
+      this.updateViewpointList();
+    });
+    this.dom.viewpointList.addEventListener('dblclick', (event) => {
+      const id = rowId(event);
+      if (id === null) return;
+      this.selectedViewpointId = id;
+      this.fireAndForget(this.applySelectedViewpoint(), 'Apply viewpoint');
+    });
+  }
+
+  /** A11: delegated issue-row selection (bound once; survives re-renders). */
+  private bindIssueListEvents(): void {
+    const rowId = (event: Event): string | null => {
+      const row = (event.target as HTMLElement).closest<HTMLElement>('[data-issue-id]');
+      return row?.dataset.issueId || null;
+    };
+    this.dom.issuesList.addEventListener('click', (event) => {
+      const id = rowId(event);
+      if (id !== null) this.selectIssue(id, false);
+    });
+    this.dom.issuesList.addEventListener('dblclick', (event) => {
+      const id = rowId(event);
+      if (id !== null) this.selectIssue(id, true);
+    });
+  }
+
   private async initEngine(): Promise<void> {
     this.components = new OBC.Components();
     const worlds = this.components.get(OBC.Worlds);
@@ -1138,11 +1072,10 @@ class ViewerApp {
     // Expose test/debug handles only in builds made with the explicit VITE_E2E
     // define (vite.e2e.config.ts) so e2e can exercise the real production
     // artifact (AUDIT T4). Plain dev/prod builds ship without these hooks.
+    // T6 (W2.5): expose ONLY the frozen, explicit test contract — not the whole
+    // instance or its private fields — and only in VITE_E2E builds.
     if (import.meta.env.VITE_E2E === 'true') {
-      (window as any).__viewer = this;
-      (window as any).__components = this.components;
-      (window as any).__world = this.world;
-      (window as any).__THREE = THREE;
+      window.__viewerTestApi = this.buildTestApi();
     }
 
     const grids = this.components.get(OBC.Grids);
@@ -1253,7 +1186,7 @@ class ViewerApp {
    * onModelLoaded event and the awaited load path via one promise per model
    * id, and diverts late arrivals of timed-out loads to disposal.
    */
-  private registerModel(modelId: string, model: any): Promise<void> {
+  private registerModel(modelId: string, model: FragmentsModelLike): Promise<void> {
     if (this.modelRegistry.isStale(modelId)) {
       return this.disposeStaleModel(modelId);
     }
@@ -1322,14 +1255,14 @@ class ViewerApp {
     this.setStatus(`Model unloaded: ${record.fileName}`);
   }
 
-  private async onModelAdded(modelId: string, model: any): Promise<void> {
+  private async onModelAdded(modelId: string, model: FragmentsModelLike): Promise<void> {
     if (!modelId || this.federatedModels.has(modelId)) return;
 
     model.useCamera(this.world.camera.three);
     if (typeof model?.graphicsQuality === 'number') model.graphicsQuality = 1;
     this.world.scene.three.add(model.object);
 
-    const modelObject = model.object as THREE.Object3D;
+    const modelObject = model.object;
     if (!this.modelObjects.includes(modelObject)) this.modelObjects.push(modelObject);
 
     const ids = await model.getItemsIdsWithGeometry();
@@ -1388,13 +1321,13 @@ class ViewerApp {
     this.setStatus(`Model loaded: ${fileName}`);
   }
 
-  private async indexModel(modelId: string, model: any): Promise<void> {
-    const itemIds = await model.getItemsIdsWithGeometry() as number[];
+  private async indexModel(modelId: string, model: FragmentsModelLike): Promise<void> {
+    const itemIds = await model.getItemsIdsWithGeometry();
     const idsSet = new Set(itemIds);
 
     const classes = new Map<string, Set<number>>();
     const itemClassById = new Map<number, string>();
-    const categories = await model.getItemsWithGeometryCategories() as Array<string | null>;
+    const categories = await model.getItemsWithGeometryCategories();
     for (let i = 0; i < categories.length; i += 1) {
       const category = categories[i] ?? 'Unknown';
       const id = itemIds[i];
@@ -1407,7 +1340,7 @@ class ViewerApp {
     const itemNames = new Map<number, string>();
     const itemToLevel = new Map<number, string>();
     const levels = new Map<string, Set<number>>();
-    const spatial = await model.getSpatialStructure() as SpatialTreeItem;
+    const spatial = await model.getSpatialStructure();
 
     // Read element names + level assignment from ContainedInStructure relation.
     const chunkSize = 360;
@@ -1425,8 +1358,8 @@ class ViewerApp {
         const localId = chunk[i];
         const data = (itemsData[i] || {}) as Record<string, unknown>;
         const category = itemClassById.get(localId) ?? 'Element';
-        itemNames.set(localId, this.getModelTreeItemLabel(data, localId, category));
-        const levelName = this.extractStoreyNameFromItemData(data);
+        itemNames.set(localId, getModelTreeItemLabel(data, localId, category));
+        const levelName = extractStoreyNameFromItemData(data);
         if (!levelName) continue;
         itemToLevel.set(localId, levelName);
         if (!levels.has(levelName)) levels.set(levelName, new Set<number>());
@@ -1453,7 +1386,7 @@ class ViewerApp {
       for (let i = 0; i < chunk.length; i += 1) {
         const localId = chunk[i];
         const data = (rows[i] || {}) as Record<string, unknown>;
-        itemNames.set(localId, this.getModelTreeItemLabel(data, localId, 'Storey'));
+        itemNames.set(localId, getModelTreeItemLabel(data, localId, 'Storey'));
       }
     }
 
@@ -1485,7 +1418,7 @@ class ViewerApp {
       for (let i = 0; i < chunk.length; i += 1) {
         const localId = chunk[i];
         const data = (rows[i] || {}) as Record<string, unknown>;
-        itemNames.set(localId, this.getModelTreeItemLabel(data, localId, 'Item'));
+        itemNames.set(localId, getModelTreeItemLabel(data, localId, 'Item'));
       }
     }
 
@@ -1595,125 +1528,6 @@ class ViewerApp {
     return entries;
   }
 
-  private readPrimitiveValue(value: unknown): string {
-    const normalized = this.unwrapIfcValue(value);
-    if (normalized === null || normalized === undefined) return '';
-    if (typeof normalized === 'string') return normalized.trim();
-    if (typeof normalized === 'number' || typeof normalized === 'boolean' || typeof normalized === 'bigint') return String(normalized);
-    return '';
-  }
-
-  private getRecordValueCaseInsensitive(record: Record<string, unknown>, preferredKey: string): unknown {
-    if (Object.prototype.hasOwnProperty.call(record, preferredKey)) return record[preferredKey];
-    const lowerPreferred = preferredKey.toLowerCase();
-    const matched = Object.keys(record).find((key) => key.toLowerCase() === lowerPreferred);
-    return matched ? record[matched] : undefined;
-  }
-
-  private findNameLikeValue(value: unknown, visited: WeakSet<object>, depth: number): string {
-    if (depth > 5) return '';
-    const normalized = this.unwrapIfcValue(value);
-    if (normalized === null || normalized === undefined) return '';
-    if (typeof normalized === 'string') return normalized.trim();
-    if (typeof normalized === 'number' || typeof normalized === 'boolean' || typeof normalized === 'bigint') {
-      return String(normalized);
-    }
-    if (Array.isArray(normalized)) {
-      for (const entry of normalized) {
-        const found = this.findNameLikeValue(entry, visited, depth + 1);
-        if (found) return found;
-      }
-      return '';
-    }
-    if (typeof normalized !== 'object') return '';
-
-    const record = normalized as Record<string, unknown>;
-    if (visited.has(record)) return '';
-    visited.add(record);
-
-    const preferredKeys = ['Name', 'LongName', 'ObjectType', 'PredefinedType', 'Tag'];
-    for (const key of preferredKeys) {
-      const primitive = this.readPrimitiveValue(this.getRecordValueCaseInsensitive(record, key));
-      if (primitive) return primitive;
-    }
-
-    for (const [key, entry] of Object.entries(record)) {
-      const lower = key.toLowerCase();
-      if (lower === 'name' || lower.endsWith('name') || lower.endsWith('objecttype')) {
-        const primitive = this.readPrimitiveValue(entry);
-        if (primitive) return primitive;
-      }
-    }
-
-    for (const nested of Object.values(record)) {
-      const found = this.findNameLikeValue(nested, visited, depth + 1);
-      if (found) return found;
-    }
-    return '';
-  }
-
-  private getModelTreeItemLabel(data: Record<string, unknown>, localId: number, defaultCategory: string): string {
-    const label = this.readPrimitiveValue(this.getRecordValueCaseInsensitive(data, 'Name'))
-      || this.readPrimitiveValue(this.getRecordValueCaseInsensitive(data, 'LongName'))
-      || this.readPrimitiveValue(this.getRecordValueCaseInsensitive(data, 'ObjectType'))
-      || this.readPrimitiveValue(this.getRecordValueCaseInsensitive(data, 'PredefinedType'))
-      || this.findNameLikeValue(data, new WeakSet<object>(), 0);
-    if (label) return label;
-    const category = this.toPropertyString(data._category, defaultCategory) || defaultCategory;
-    return `${category} ${localId}`;
-  }
-
-  private extractStoreyNameFromItemData(data: Record<string, unknown>): string | null {
-    const visited = new WeakSet<object>();
-    const fromContained = this.findStoreyNameInValue(data.ContainedInStructure, visited, 0);
-    if (fromContained) return fromContained;
-    const fromDecomposes = this.findStoreyNameInValue(data.Decomposes, visited, 0);
-    if (fromDecomposes) return fromDecomposes;
-    return null;
-  }
-
-  private findStoreyNameInValue(value: unknown, visited: WeakSet<object>, depth: number): string | null {
-    if (depth > 8) return null;
-    const unwrapped = this.unwrapIfcValue(value);
-    if (unwrapped === null || unwrapped === undefined) return null;
-
-    if (Array.isArray(unwrapped)) {
-      for (const entry of unwrapped) {
-        const name = this.findStoreyNameInValue(entry, visited, depth + 1);
-        if (name) return name;
-      }
-      return null;
-    }
-
-    if (typeof unwrapped !== 'object') return null;
-    const record = unwrapped as Record<string, unknown>;
-    if (visited.has(record)) return null;
-    visited.add(record);
-
-    const category = this.toPropertyString(record._category, '').toUpperCase();
-    if (category.includes('IFCBUILDINGSTOREY')) {
-      let storeyName = this.readPrimitiveValue(this.getRecordValueCaseInsensitive(record, 'Name'))
-        || this.readPrimitiveValue(this.getRecordValueCaseInsensitive(record, 'LongName'));
-      if (!storeyName) {
-        for (const nested of Object.values(record)) {
-          const nestedName = this.findNameLikeValue(nested, visited, depth + 1);
-          if (nestedName) {
-            storeyName = nestedName;
-            break;
-          }
-        }
-      }
-      if (storeyName) return storeyName;
-      return null;
-    }
-
-    for (const nested of Object.values(record)) {
-      const name = this.findStoreyNameInValue(nested, visited, depth + 1);
-      if (name) return name;
-    }
-    return null;
-  }
-
   private collectSpatialTreeIds(node: SpatialTreeItem, target: Set<number>): void {
     if (node.localId !== null) target.add(node.localId);
     for (const child of node.children ?? []) this.collectSpatialTreeIds(child, target);
@@ -1800,8 +1614,11 @@ class ViewerApp {
       `
       : `<span>${escapeHtml(node.label)}</span>`;
 
+    const spatialKey = node.localId !== null
+      ? `spatial:${escapedModelId}:id:${node.localId}`
+      : `spatial:${escapedModelId}:${depth}:${escapeHtml(node.category)}:${escapeHtml(node.label)}`;
     return `
-      <details class="browser-node">
+      <details class="browser-node" data-node-key="${spatialKey}">
         <summary class="browser-summary">
           <span class="browser-twist material-icons-round">chevron_right</span>
           ${labelMarkup}
@@ -1830,7 +1647,7 @@ class ViewerApp {
 
         if (!index) {
           return `
-            <details class="browser-node is-model" open>
+            <details class="browser-node is-model" data-node-key="model:${escapedModelId}" open>
               <summary class="browser-summary">
                 <span class="browser-twist material-icons-round">chevron_right</span>
                 <button
@@ -1891,7 +1708,7 @@ class ViewerApp {
               : '';
 
             return `
-              <details class="browser-node">
+              <details class="browser-node" data-node-key="class:${escapedModelId}:${escapeHtml(levelName)}:${escapeHtml(className)}">
                 <summary class="browser-summary">
                   <span class="browser-twist material-icons-round">chevron_right</span>
                   <button
@@ -1916,7 +1733,7 @@ class ViewerApp {
           }).join('');
 
           return `
-            <details class="browser-node">
+            <details class="browser-node" data-node-key="level:${escapedModelId}:${escapeHtml(levelName)}">
               <summary class="browser-summary">
                 <span class="browser-twist material-icons-round">chevron_right</span>
                 <button
@@ -1952,7 +1769,7 @@ class ViewerApp {
           : '';
 
         return `
-          <details class="browser-node is-model" open>
+          <details class="browser-node is-model" data-node-key="model:${escapedModelId}" open>
             <summary class="browser-summary">
               <span class="browser-twist material-icons-round">chevron_right</span>
               <button
@@ -1981,7 +1798,7 @@ class ViewerApp {
                 <span class="browser-count">${levelEntries.length} lvls</span>
               </div>
 
-              <details class="browser-node" ${levelEntries.length > 0 ? 'open' : ''}>
+              <details class="browser-node" data-node-key="group:${escapedModelId}:levels" ${levelEntries.length > 0 ? 'open' : ''}>
                 <summary class="browser-summary">
                   <span class="browser-twist material-icons-round">chevron_right</span>
                   <span>Levels</span>
@@ -1993,7 +1810,7 @@ class ViewerApp {
                 </div>
               </details>
 
-              <details class="browser-node">
+              <details class="browser-node" data-node-key="group:${escapedModelId}:spatial">
                 <summary class="browser-summary">
                   <span class="browser-twist material-icons-round">chevron_right</span>
                   <span>Spatial Structure</span>
@@ -2010,7 +1827,29 @@ class ViewerApp {
       })
       .join('');
 
-    this.dom.modelBrowserTree.innerHTML = modelMarkup;
+    this.renderPreservingDetails(this.dom.modelBrowserTree, modelMarkup);
+  }
+
+  /**
+   * A11: replaces a container's innerHTML while preserving the open/closed
+   * state of any `<details data-node-key>` the user toggled. Without this a
+   * full re-render (e.g. after a model loads) would collapse every expanded
+   * tree node back to its markup default. Nodes present after the render but
+   * absent from the snapshot keep their markup default (fresh nodes).
+   */
+  private renderPreservingDetails(container: HTMLElement, markup: string): void {
+    const openState = new Map<string, boolean>();
+    container.querySelectorAll<HTMLDetailsElement>('details[data-node-key]').forEach((node) => {
+      const key = node.dataset.nodeKey;
+      if (key) openState.set(key, node.open);
+    });
+
+    container.innerHTML = markup;
+
+    container.querySelectorAll<HTMLDetailsElement>('details[data-node-key]').forEach((node) => {
+      const key = node.dataset.nodeKey;
+      if (key && openState.has(key)) node.open = openState.get(key)!;
+    });
   }
 
   private renderFederatedTree(): void {
@@ -2272,37 +2111,14 @@ class ViewerApp {
     }
   }
 
-  private async resetModelColors(): Promise<void> {
-    if (!this.hiddenLineColorOverride) return;
-    const tasks: Promise<unknown>[] = [];
-    for (const model of this.federatedModels.values()) {
-      const fragmentsModel = this.getFragmentsModel(model.modelId);
-      if (!fragmentsModel || typeof fragmentsModel?.resetColor !== 'function') continue;
-      tasks.push(fragmentsModel.resetColor(undefined));
-    }
-    if (tasks.length > 0) await Promise.allSettled(tasks);
-    this.hiddenLineColorOverride = false;
-  }
-
-  private restoreOriginalLighting(): void {
-    if (!this.consistentLightOverride) return;
-
-    // Restore all lights to their original intensities
-    for (const state of this.savedLightStates) {
-      state.light.visible = state.visible;
-      state.light.intensity = state.intensity;
-    }
-    this.savedLightStates = [];
-    this.consistentLightOverride = false;
-  }
-
   private async setVisualStyle(style: VisualStyle, updateStatus: boolean, persist: boolean, resetToggles = false): Promise<void> {
     const resolvedStyle = this.parseVisualStyle(style);
     this.visualStyle = resolvedStyle;
     this.dom.visualStyleSelect.value = resolvedStyle;
 
-    await this.resetModelColors();
-    this.restoreOriginalLighting();
+    // A16: resetModelColors()/restoreOriginalLighting() were permanent no-ops —
+    // their guard flags could never be set true after the W0.4 deletion of
+    // applyHiddenLineColors()/applyConsistentLighting(). Removed with the flags.
     this.configurePostproduction(resolvedStyle);
 
     // F3: X-ray/edges are reset only on an explicit user style change —
@@ -2336,8 +2152,8 @@ class ViewerApp {
 
   // The model id passed to ifcLoader.load IS the fragments.list key and the
   // model.modelId (A6) — lookups are direct, no alias resolution needed.
-  private getFragmentsModel(modelId: string): any {
-    return this.fragments?.list?.get(modelId) ?? null;
+  private getFragmentsModel(modelId: string): FragmentsModelLike | null {
+    return (this.fragments?.list?.get(modelId) as FragmentsModelLike | undefined) ?? null;
   }
 
   private fireAndForget(task: Promise<unknown>, context: string): void {
@@ -2687,9 +2503,9 @@ class ViewerApp {
         const data = (itemsData[i] || {}) as Record<string, unknown>;
         // F1: fragments v3.3 returns {value,type} ItemAttribute objects —
         // unwrap to primitives before they reach escapeHtml/rendering.
-        const name = this.readPrimitiveValue(data.Name) || `Element ${localId}`;
-        const type = this.readPrimitiveValue(data.ObjectType) || this.readPrimitiveValue(data.PredefinedType) || 'Item';
-        const globalId = this.readPrimitiveValue(data.GlobalId) || '-';
+        const name = readPrimitiveValue(data.Name) || `Element ${localId}`;
+        const type = readPrimitiveValue(data.ObjectType) || readPrimitiveValue(data.PredefinedType) || 'Item';
+        const globalId = readPrimitiveValue(data.GlobalId) || '-';
         results.push({ modelId, localId, name, type, globalId });
       }
     }
@@ -2855,7 +2671,7 @@ class ViewerApp {
         }, 120000);
       });
 
-      let loadedModel: any;
+      let loadedModel: FragmentsModelLike;
       try {
         loadedModel = await Promise.race([loadPromise, timeoutPromise]);
       } catch (error) {
@@ -2944,51 +2760,6 @@ class ViewerApp {
     return target.normalize();
   }
 
-  private getViewCubeAxes(basis: THREE.Quaternion): { right: THREE.Vector3; up: THREE.Vector3; front: THREE.Vector3 } {
-    return {
-      right: new THREE.Vector3(1, 0, 0).applyQuaternion(basis).normalize(),
-      up: new THREE.Vector3(0, 1, 0).applyQuaternion(basis).normalize(),
-      front: new THREE.Vector3(0, 0, 1).applyQuaternion(basis).normalize(),
-    };
-  }
-
-  private getViewCubeNavigationDistance(maxDim: number, localDirection: THREE.Vector3): number {
-    const components =
-      Number(Math.abs(localDirection.x) > 0.01)
-      + Number(Math.abs(localDirection.y) > 0.01)
-      + Number(Math.abs(localDirection.z) > 0.01);
-    if (components >= 3) return maxDim * 2.45;
-    if (components === 2) return maxDim * 2.25;
-    return maxDim * 2;
-  }
-
-  private resolveViewCubeCameraUp(
-    localDirection: THREE.Vector3,
-    worldDirection: THREE.Vector3,
-    axes: { right: THREE.Vector3; up: THREE.Vector3; front: THREE.Vector3 },
-  ): THREE.Vector3 {
-    const candidates: THREE.Vector3[] = [];
-    const axialX = Math.abs(localDirection.x) > 0.999 && Math.abs(localDirection.y) < 0.001 && Math.abs(localDirection.z) < 0.001;
-    const axialY = Math.abs(localDirection.y) > 0.999 && Math.abs(localDirection.x) < 0.001 && Math.abs(localDirection.z) < 0.001;
-    const axialZ = Math.abs(localDirection.z) > 0.999 && Math.abs(localDirection.x) < 0.001 && Math.abs(localDirection.y) < 0.001;
-
-    if (axialY) {
-      candidates.push(localDirection.y >= 0 ? axes.front.clone() : axes.front.clone().negate(), axes.right.clone());
-    } else if (axialX) {
-      candidates.push(axes.up.clone(), localDirection.x >= 0 ? axes.front.clone() : axes.front.clone().negate());
-    } else if (axialZ) {
-      candidates.push(axes.up.clone(), localDirection.z >= 0 ? axes.right.clone() : axes.right.clone().negate());
-    } else {
-      candidates.push(axes.up.clone(), axes.front.clone(), axes.right.clone());
-    }
-
-    for (const candidate of candidates) {
-      candidate.addScaledVector(worldDirection, -candidate.dot(worldDirection));
-      if (candidate.lengthSq() > 0.0001) return candidate.normalize();
-    }
-    return new THREE.Vector3(0, 1, 0);
-  }
-
   private navigateToDirection(
     center: THREE.Vector3,
     maxDim: number,
@@ -2998,9 +2769,9 @@ class ViewerApp {
     if (!this.world?.camera) return;
     const localDirection = new THREE.Vector3(directionTuple[0], directionTuple[1], directionTuple[2]).normalize();
     const worldDirection = localDirection.clone().applyQuaternion(basis).normalize();
-    const distance = this.getViewCubeNavigationDistance(maxDim, localDirection);
-    const axes = this.getViewCubeAxes(basis);
-    const up = this.resolveViewCubeCameraUp(localDirection, worldDirection, axes);
+    const distance = getViewCubeNavigationDistance(maxDim, localDirection);
+    const axes = getViewCubeAxes(basis);
+    const up = resolveViewCubeCameraUp(localDirection, worldDirection, axes);
     const eye = center.clone().addScaledVector(worldDirection, distance);
     this.world.camera.three.up.copy(up);
     this.world.camera.three.updateMatrixWorld();
@@ -3025,12 +2796,8 @@ class ViewerApp {
   }
 
   private setHomeView(): void {
-    const bbox = this.getModelBoundingBox();
-    if (!bbox || bbox.isEmpty()) return;
-    const center = bbox.getCenter(new THREE.Vector3());
-    const size = bbox.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    this.navigateToDirection(center, maxDim, this.getViewCubeBasisQuaternion(new THREE.Quaternion()), VIEW_CUBE_HOME_VECTOR);
+    // A12: home view == fit-all (both frame the model along the home vector).
+    this.fitToModel();
   }
 
   private navigateToCubeTarget(key: CubeTargetKey): void {
@@ -3170,8 +2937,8 @@ class ViewerApp {
     if (plane) {
       const renderer = this.world.renderer!.three;
       renderer.localClippingEnabled = true;
-      const gizmoHelper = (plane as any)._controls.getHelper();
-      gizmoHelper.traverse((child: THREE.Object3D) => {
+      const gizmoHelper = getClipperPlaneGizmoHelper(plane);
+      gizmoHelper?.traverse((child: THREE.Object3D) => {
         const mesh = child as THREE.Mesh;
         if (mesh.material) {
           const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
@@ -3194,6 +2961,17 @@ class ViewerApp {
     const center = bbox.getCenter(new THREE.Vector3());
     this.createClipPlane(normal, center);
     this.setStatus('Section plane added');
+  }
+
+  /** A12: shared toggle for the X/Y/Z axis section buttons. */
+  private toggleSectionPlane(button: HTMLButtonElement, normal: THREE.Vector3): void {
+    if (button.classList.contains('active')) {
+      this.clearSections();
+      return;
+    }
+    this.clearSections(false);
+    this.addSectionPlane(normal);
+    button.classList.add('active');
   }
 
   private createSectionBox(): void {
@@ -3283,22 +3061,33 @@ class ViewerApp {
   }
 
   private async onViewerClick(_event: MouseEvent): Promise<void> {
-    if (this.pointerDragged || this.gizmoDragging || !!this.activeGizmoModelId) return;
+    await this.pickAndSelect();
+  }
+
+  /**
+   * The canvas selection path: raycast (at `position` if given, else the last
+   * pointer position), then apply measure/issue/single/multi selection exactly
+   * as a real click would. Returns the hit item, or null. `position` is used by
+   * the e2e test API (T6) to pick at explicit coordinates; production clicks
+   * pass nothing and behave exactly as before.
+   */
+  private async pickAndSelect(position?: THREE.Vector2): Promise<{ modelId: string; localId: number } | null> {
+    if (this.pointerDragged || this.gizmoDragging || !!this.activeGizmoModelId) return null;
 
     if (this.measureMode !== 'none') {
       if (this.measureMode === 'length') await this.lengthMeasurement.create();
       if (this.measureMode === 'area') await this.areaMeasurement.create();
-      return;
+      return null;
     }
 
-    const result = await this.raycaster.castRay() as any;
+    const result = await this.raycaster.castRay(position ? { position } : undefined) as any;
     if (!result || !result.fragments || result.localId === undefined) {
       if (this.selectionMode === 'single' && !this.issuePinMode) await this.clearSelection();
-      return;
+      return null;
     }
 
     const modelId = String(result.fragments.modelId);
-    if (!this.isLoadedModelId(modelId)) return;
+    if (!this.isLoadedModelId(modelId)) return null;
     const localId = result.localId as number;
     if (result.point) this.lastHitPoint = result.point.clone();
 
@@ -3307,16 +3096,17 @@ class ViewerApp {
       if (this.selectionMode === 'single') await this.selectSingleItem(modelId, localId, false);
       this.activateTab('issues');
       this.setStatus('Issue point captured. Fill issue form and create issue');
-      return;
+      return { modelId, localId };
     }
 
     if (this.selectionMode === 'single') {
       await this.selectSingleItem(modelId, localId, false);
-      return;
+      return { modelId, localId };
     }
 
     this.toggleSelectionItem(modelId, localId);
     await this.refreshSelectionVisuals();
+    return { modelId, localId };
   }
 
   private async selectSingleItem(modelId: string, localId: number, zoomToItem: boolean): Promise<void> {
@@ -3366,584 +3156,15 @@ class ViewerApp {
     return null;
   }
 
-  private unwrapIfcValue(value: unknown): unknown {
-    let current = value;
-    for (let i = 0; i < 8; i += 1) {
-      if (!current || typeof current !== 'object' || Array.isArray(current)) break;
-      const record = current as Record<string, unknown>;
-      if (!Object.prototype.hasOwnProperty.call(record, 'value')) break;
-      const next = record.value;
-      if (next === undefined || next === current) break;
-      current = next;
-    }
-    return current;
-  }
-
-  private truncatePropertyValue(value: string, maxLength = MAX_PROPERTY_VALUE_LENGTH): string {
-    if (value.length <= maxLength) return value;
-    return `${value.slice(0, maxLength - 1)}…`;
-  }
-
-  private summarizeObject(record: Record<string, unknown>): string {
-    const preferredKeys = [
-      'Name',
-      'LongName',
-      'ObjectType',
-      'PredefinedType',
-      'Description',
-      'type',
-      '_category',
-      '_localId',
-      'localId',
-      'GlobalId',
-      '_guid',
-      'Tag',
-    ];
-    const parts: string[] = [];
-
-    for (const key of preferredKeys) {
-      if (!Object.prototype.hasOwnProperty.call(record, key)) continue;
-      const value = this.unwrapIfcValue(record[key]);
-      if (value === null || value === undefined || typeof value === 'object') continue;
-      const text = this.toPropertyString(value, '');
-      if (!text) continue;
-      parts.push(`${key}: ${text}`);
-      if (parts.length >= 4) break;
-    }
-
-    if (parts.length > 0) return this.truncatePropertyValue(parts.join(' | '));
-
-    const keys = Object.keys(record);
-    if (keys.length === 0) return '{}';
-    return `[Object: ${keys.length} properties]`;
-  }
-
-  private formatNumber(value: number, contextHint = ''): string {
-    if (Number.isNaN(value)) return 'NaN';
-    if (!Number.isFinite(value)) return String(value);
-    if (Number.isInteger(value) || Math.abs(value - Math.round(value)) < 1e-9) {
-      return String(Math.round(value));
-    }
-    const hint = contextHint.toLowerCase();
-    if (hint.includes('angle') || hint.includes('slope') || hint.includes('rotation') || hint.includes('tilt')) {
-      return value.toFixed(1);
-    }
-    if (hint.includes('count') || hint.includes('number')) {
-      return String(Math.round(value));
-    }
-    if (Math.abs(value) >= 1000) return value.toFixed(2);
-    if (Math.abs(value) >= 1) return value.toFixed(3);
-    return value.toFixed(4);
-  }
-
-  // F5: units come from the model's IfcUnitAssignment members; the keyword
-  // mapping in core/units.ts only classifies the quantity kind and falls
-  // back to the legacy metric suffixes when the model has no unit data.
-  private inferUnitSuffix(label: string): string {
-    return unitSuffixForLabel(label, this.activePropertyUnits);
-  }
-
   /** Rows of the model's unit entities (IfcSIUnit/IfcConversionBasedUnit). */
-  private async fetchUnitRows(model: any): Promise<unknown[]> {
-    const categories = await model.getItemsOfCategories([/IFCSIUNIT/, /IFCCONVERSIONBASEDUNIT/]) as Record<string, number[]>;
+  private async fetchUnitRows(model: FragmentsModelLike): Promise<unknown[]> {
+    const categories = await model.getItemsOfCategories([/IFCSIUNIT/, /IFCCONVERSIONBASEDUNIT/]);
     const ids = Object.values(categories).flat();
     if (ids.length === 0) return [];
     return await model.getItemsData(ids, {
       attributesDefault: true,
       relationsDefault: { attributes: false, relations: false },
-    }) as unknown[];
-  }
-
-  private toPropertyString(value: unknown, fallback = '-', contextHint = ''): string {
-    const normalized = this.unwrapIfcValue(value);
-    if (normalized === null || normalized === undefined) return fallback;
-    if (typeof normalized === 'string') return normalized.trim().length > 0 ? normalized : fallback;
-    if (typeof normalized === 'number') return this.formatNumber(normalized, contextHint);
-    if (typeof normalized === 'boolean' || typeof normalized === 'bigint') return String(normalized);
-    if (normalized instanceof Date) return normalized.toISOString();
-    if (Array.isArray(normalized)) {
-      if (normalized.length === 0) return '[]';
-      const values = normalized
-        .map((entry) => this.toPropertyString(entry, ''))
-        .filter((entry) => entry.length > 0);
-      if (values.length === 0) return fallback;
-      return this.truncatePropertyValue(values.join(', '));
-    }
-    if (typeof normalized === 'object') {
-      return this.summarizeObject(normalized as Record<string, unknown>);
-    }
-    // `unknown` cannot be subtract-narrowed: every object/array/date shape has
-    // already returned above, so only stringifiable primitives remain here.
-    const primitive = normalized as string | number | boolean | bigint | symbol;
-    return String(primitive);
-  }
-
-  private flattenPropertyEntries(
-    value: unknown,
-    prefix: string,
-    output: Array<[string, string]>,
-    visited: WeakSet<object>,
-    state: { truncated: boolean },
-    depth = 0,
-  ): void {
-    if (output.length >= MAX_PROPERTY_ROWS) {
-      state.truncated = true;
-      return;
-    }
-
-    const normalized = this.unwrapIfcValue(value);
-    if (normalized === null || normalized === undefined) return;
-    if (depth > MAX_PROPERTY_DEPTH) {
-      output.push([prefix, '...']);
-      return;
-    }
-
-    if (typeof normalized === 'number') {
-      output.push([prefix, this.formatNumber(normalized, prefix)]);
-      return;
-    }
-    if (
-      typeof normalized === 'string'
-      || typeof normalized === 'boolean'
-      || typeof normalized === 'bigint'
-    ) {
-      output.push([prefix, String(normalized)]);
-      return;
-    }
-
-    if (normalized instanceof Date) {
-      output.push([prefix, normalized.toISOString()]);
-      return;
-    }
-
-    if (Array.isArray(normalized)) {
-      if (normalized.length === 0) {
-        output.push([prefix, '[]']);
-        return;
-      }
-
-      const scalarOnly = normalized.every((entry) => {
-        const item = this.unwrapIfcValue(entry);
-        return (
-          item === null
-          || item === undefined
-          || typeof item === 'string'
-          || typeof item === 'number'
-          || typeof item === 'boolean'
-          || typeof item === 'bigint'
-        );
-      });
-
-      if (scalarOnly) {
-        const joined = normalized
-          .map((entry) => this.toPropertyString(entry, ''))
-          .filter((entry) => entry.length > 0)
-          .join(', ');
-        output.push([prefix, this.truncatePropertyValue(joined || `${normalized.length} entries`)]);
-        return;
-      }
-
-      const preview = normalized
-        .slice(0, MAX_PROPERTY_ARRAY_PREVIEW)
-        .map((entry) => this.toPropertyString(entry, ''))
-        .filter((entry) => entry.length > 0)
-        .join(' || ');
-      const suffix = normalized.length > MAX_PROPERTY_ARRAY_PREVIEW
-        ? ` (+${normalized.length - MAX_PROPERTY_ARRAY_PREVIEW} more)`
-        : '';
-      const summary = preview
-        ? `${normalized.length} entries: ${preview}${suffix}`
-        : `${normalized.length} entries${suffix}`;
-      output.push([prefix, this.truncatePropertyValue(summary)]);
-      return;
-    }
-
-    if (typeof normalized === 'object') {
-      const record = normalized as Record<string, unknown>;
-      if (visited.has(record)) {
-        output.push([prefix, '[Circular]']);
-        return;
-      }
-      visited.add(record);
-
-      const entries = Object.entries(record);
-      if (entries.length === 0) {
-        output.push([prefix, '{}']);
-        return;
-      }
-
-      if (depth >= 2) {
-        output.push([prefix, this.summarizeObject(record)]);
-        return;
-      }
-
-      for (const [key, entryValue] of entries) {
-        const nextPrefix = prefix ? `${prefix}.${key}` : key;
-        const unwrapped = this.unwrapIfcValue(entryValue);
-        if (depth >= 1 && unwrapped && typeof unwrapped === 'object') {
-          if (Array.isArray(unwrapped)) {
-            const preview = unwrapped
-              .slice(0, MAX_PROPERTY_ARRAY_PREVIEW)
-              .map((entry) => this.toPropertyString(entry, ''))
-              .filter((entry) => entry.length > 0)
-              .join(' || ');
-            const suffix = unwrapped.length > MAX_PROPERTY_ARRAY_PREVIEW
-              ? ` (+${unwrapped.length - MAX_PROPERTY_ARRAY_PREVIEW} more)`
-              : '';
-            output.push([nextPrefix, this.truncatePropertyValue(`${unwrapped.length} entries${preview ? `: ${preview}` : ''}${suffix}`)]);
-          } else {
-            output.push([nextPrefix, this.summarizeObject(unwrapped as Record<string, unknown>)]);
-          }
-          if (output.length >= MAX_PROPERTY_ROWS) {
-            state.truncated = true;
-            return;
-          }
-          continue;
-        }
-        this.flattenPropertyEntries(entryValue, nextPrefix, output, visited, state, depth + 1);
-        if (state.truncated) return;
-      }
-      return;
-    }
-
-    // `unknown` cannot be subtract-narrowed: every object/array/date shape has
-    // already returned above, so only stringifiable primitives remain here.
-    const primitive = normalized as string | number | boolean | bigint | symbol;
-    output.push([prefix, String(primitive)]);
-  }
-
-  private prettifyPropertyLabel(label: string): string {
-    const compact = label
-      .replace(/\[\d+\]/g, ' ')
-      .split('.')
-      .filter((part) => part.length > 0)
-      .slice(-1)
-      .join(' ');
-    const spaced = compact
-      .replace(/^_+/, '')
-      .replace(/[_-]+/g, ' ')
-      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!spaced) return label;
-    return spaced.replace(/\b\w/g, (char) => char.toUpperCase());
-  }
-
-  private createPropertySections(): Record<PropertySectionId, PropertySectionData> {
-    const sections = {} as Record<PropertySectionId, PropertySectionData>;
-    for (const definition of PROPERTY_SECTION_DEFINITIONS) {
-      sections[definition.id] = { ...definition, rows: [] };
-    }
-    return sections;
-  }
-
-  private addPropertySectionRow(
-    sections: Record<PropertySectionId, PropertySectionData>,
-    sectionId: PropertySectionId,
-    key: string,
-    value: string,
-    extraSearch = '',
-  ): void {
-    const normalizedKey = this.prettifyPropertyLabel(key);
-    const normalizedValue = value.trim();
-    if (!normalizedKey || !normalizedValue || normalizedValue === '-' || normalizedValue === '{}' || normalizedValue === '[]') return;
-
-    const section = sections[sectionId];
-    const duplicate = section.rows.some((row) => (
-      row.key.toLowerCase() === normalizedKey.toLowerCase()
-      && row.value.toLowerCase() === normalizedValue.toLowerCase()
-    ));
-    if (duplicate) return;
-
-    section.rows.push({
-      key: normalizedKey,
-      value: normalizedValue,
-      searchText: `${section.title} ${normalizedKey} ${normalizedValue} ${extraSearch}`.toLowerCase(),
     });
-  }
-
-  private collectRawPropertyEntries(data: Record<string, unknown>): { rows: Array<[string, string]>; truncated: boolean } {
-    const rows: Array<[string, string]> = [];
-    const visited = new WeakSet<object>();
-    const flattenState = { truncated: false };
-
-    for (const [key, value] of Object.entries(data)) {
-      this.flattenPropertyEntries(value, key, rows, visited, flattenState, 0);
-      if (flattenState.truncated) break;
-    }
-
-    return { rows, truncated: flattenState.truncated };
-  }
-
-  private collectPropertyFacts(
-    value: unknown,
-    output: ExtractedPropertyFact[],
-    visited: WeakSet<object>,
-    path = '',
-    setName = '',
-    depth = 0,
-  ): void {
-    if (depth > MAX_PROPERTY_DEPTH + 6) return;
-
-    const normalized = this.unwrapIfcValue(value);
-    if (normalized === null || normalized === undefined) return;
-
-    if (Array.isArray(normalized)) {
-      normalized.forEach((entry, index) => {
-        this.collectPropertyFacts(entry, output, visited, `${path}[${index}]`, setName, depth + 1);
-      });
-      return;
-    }
-
-    if (typeof normalized !== 'object') return;
-    const record = normalized as Record<string, unknown>;
-    if (visited.has(record)) return;
-    visited.add(record);
-
-    const category = this.toPropertyString(record._category, '');
-    const categoryUpper = category.toUpperCase();
-    let nextSetName = setName;
-    if (
-      categoryUpper.includes('IFCPROPERTYSET')
-      || categoryUpper.includes('IFCELEMENTQUANTITY')
-      || categoryUpper.includes('IFCMATERIALPROPERTIES')
-      || categoryUpper.includes('IFCPROFILEPROPERTIES')
-      || categoryUpper.includes('IFCMATERIALPROFILESET')
-      || categoryUpper.includes('IFCMATERIALLAYERSET')
-    ) {
-      nextSetName = this.readPrimitiveValue(this.getRecordValueCaseInsensitive(record, 'Name')) || setName;
-    }
-
-    output.push(...this.extractFactsFromRecord(record, category, nextSetName, path));
-
-    for (const [key, entry] of Object.entries(record)) {
-      const nextPath = path ? `${path}.${key}` : key;
-      this.collectPropertyFacts(entry, output, visited, nextPath, nextSetName, depth + 1);
-    }
-  }
-
-  private extractFactsFromRecord(
-    record: Record<string, unknown>,
-    category: string,
-    setName: string,
-    path: string,
-  ): ExtractedPropertyFact[] {
-    const facts: ExtractedPropertyFact[] = [];
-    const categoryUpper = category.toUpperCase();
-    const name = this.readPrimitiveValue(this.getRecordValueCaseInsensitive(record, 'Name'))
-      || this.readPrimitiveValue(this.getRecordValueCaseInsensitive(record, 'LongName'));
-
-    const pushFact = (label: string, value: string): void => {
-      const trimmedLabel = label.trim();
-      const trimmedValue = value.trim();
-      if (!trimmedLabel || !trimmedValue || trimmedValue === '-' || trimmedValue === '{}' || trimmedValue === '[]') return;
-      facts.push({ label: trimmedLabel, value: trimmedValue, category, setName, path });
-    };
-
-    if (categoryUpper.includes('IFCPROPERTYSINGLEVALUE')) {
-      pushFact(name, this.toPropertyString(this.getRecordValueCaseInsensitive(record, 'NominalValue'), ''));
-      return facts;
-    }
-
-    if (categoryUpper.includes('IFCPROPERTYLISTVALUE')) {
-      pushFact(name, this.toPropertyString(this.getRecordValueCaseInsensitive(record, 'ListValues'), ''));
-      return facts;
-    }
-
-    if (categoryUpper.includes('IFCPROPERTYENUMERATEDVALUE')) {
-      pushFact(name, this.toPropertyString(this.getRecordValueCaseInsensitive(record, 'EnumerationValues'), ''));
-      return facts;
-    }
-
-    if (categoryUpper.includes('IFCPROPERTYBOUNDEDVALUE')) {
-      const lower = this.toPropertyString(this.getRecordValueCaseInsensitive(record, 'LowerBoundValue'), '');
-      const upper = this.toPropertyString(this.getRecordValueCaseInsensitive(record, 'UpperBoundValue'), '');
-      const boundedValue = [lower && `Lower: ${lower}`, upper && `Upper: ${upper}`].filter(Boolean).join(' | ');
-      pushFact(name, boundedValue);
-      return facts;
-    }
-
-    if (categoryUpper.includes('IFCQUANTITY')) {
-      const valueKey = IFC_FACT_VALUE_KEYS.find((key) => this.toPropertyString(this.getRecordValueCaseInsensitive(record, key), '').length > 0);
-      if (valueKey) {
-        const rawValue = this.toPropertyString(this.getRecordValueCaseInsensitive(record, valueKey), '', valueKey);
-        const unit = this.inferUnitSuffix(valueKey);
-        pushFact(name || this.prettifyPropertyLabel(valueKey), rawValue + unit);
-      }
-      return facts;
-    }
-
-    if (categoryUpper.includes('IFCMATERIALLAYER')) {
-      const materialName = this.findNameLikeValue(this.getRecordValueCaseInsensitive(record, 'Material'), new WeakSet<object>(), 0)
-        || name;
-      if (materialName) pushFact('Material', materialName);
-      pushFact('Layer Thickness', this.toPropertyString(this.getRecordValueCaseInsensitive(record, 'LayerThickness'), ''));
-      return facts;
-    }
-
-    if (categoryUpper === 'IFCMATERIAL') {
-      if (name) pushFact('Material', name);
-      return facts;
-    }
-
-    if (categoryUpper.includes('IFCMATERIALPROFILE')) {
-      if (name) pushFact('Material Profile', name);
-      const materialName = this.findNameLikeValue(this.getRecordValueCaseInsensitive(record, 'Material'), new WeakSet<object>(), 0);
-      if (materialName) pushFact('Material', materialName);
-      return facts;
-    }
-
-    if (categoryUpper.includes('IFCMATERIALCONSTITUENT')) {
-      if (name) pushFact('Material Constituent', name);
-      const materialName = this.findNameLikeValue(this.getRecordValueCaseInsensitive(record, 'Material'), new WeakSet<object>(), 0);
-      if (materialName) pushFact('Material', materialName);
-      return facts;
-    }
-
-    return facts;
-  }
-
-  private classifyPropertyFact(fact: ExtractedPropertyFact): PropertySectionId {
-    const haystack = `${fact.setName} ${fact.label} ${fact.category} ${fact.path}`.toLowerCase();
-    if (MATERIAL_KEYWORDS.some((keyword) => haystack.includes(keyword)) || fact.category.toUpperCase().includes('IFCMATERIAL')) {
-      return 'materials';
-    }
-    if (DIMENSION_KEYWORDS.some((keyword) => haystack.includes(keyword))) return 'dimensions';
-    if (QUANTITY_KEYWORDS.some((keyword) => haystack.includes(keyword)) || fact.category.toUpperCase().includes('QUANTITY')) {
-      return 'quantities';
-    }
-    if (LEVEL_KEYWORDS.some((keyword) => haystack.includes(keyword))) return 'levels';
-    if (LOCATION_KEYWORDS.some((keyword) => haystack.includes(keyword))) return 'location';
-    if (TYPE_KEYWORDS.some((keyword) => haystack.includes(keyword))) return 'type';
-    if (RELATION_KEYWORDS.some((keyword) => haystack.includes(keyword))) return 'relations';
-    return 'identity';
-  }
-
-  private summarizeRelationValue(value: unknown): string {
-    const normalized = this.unwrapIfcValue(value);
-    if (normalized === null || normalized === undefined) return '';
-
-    const summarizeOne = (entry: unknown): string => {
-      const objectValue = this.unwrapIfcValue(entry);
-      if (objectValue && typeof objectValue === 'object' && !Array.isArray(objectValue)) {
-        const record = objectValue as Record<string, unknown>;
-        const name = this.findNameLikeValue(record, new WeakSet<object>(), 0);
-        return name || '';
-      }
-      return this.toPropertyString(objectValue, '');
-    };
-
-    if (Array.isArray(normalized)) {
-      const entries = normalized.map((entry) => summarizeOne(entry)).filter((entry) => entry.length > 0);
-      if (entries.length === 0) return '';
-      if (entries.length === 1) return entries[0];
-      const preview = entries.slice(0, 3).join(', ');
-      const suffix = entries.length > 3 ? ` (+${entries.length - 3} more)` : '';
-      return this.truncatePropertyValue(`${preview}${suffix}`);
-    }
-
-    return summarizeOne(normalized);
-  }
-
-  private addKeywordMatchedRows(
-    sections: Record<PropertySectionId, PropertySectionData>,
-    sectionId: PropertySectionId,
-    rows: Array<[string, string]>,
-    keywords: string[],
-    pathPrefix = '',
-  ): void {
-    for (const [path, value] of rows) {
-      const haystack = `${pathPrefix} ${path}`.toLowerCase();
-      if (!keywords.some((keyword) => haystack.includes(keyword))) continue;
-      const unit = this.inferUnitSuffix(path);
-      const displayValue = (unit && /^-?\d+(\.\d+)?$/.test(value.trim())) ? value + unit : value;
-      this.addPropertySectionRow(sections, sectionId, path, displayValue, path);
-    }
-  }
-
-  private buildPropertySections(
-    data: Record<string, unknown>,
-    firstSelection: { modelId: string; localId: number },
-    modelVolume: string,
-    geometryProbe: GeometryProbe | null,
-  ): PropertySectionData[] {
-    const sections = this.createPropertySections();
-    const itemName = this.toPropertyString(data.Name, '') || `Element ${firstSelection.localId}`;
-    const typeValue = [
-      this.toPropertyString(data.ObjectType, ''),
-      this.toPropertyString(data.PredefinedType, ''),
-      this.toPropertyString(data.type, ''),
-      this.toPropertyString(data._category, ''),
-    ].find((entry) => entry.length > 0) || '-';
-
-    this.addPropertySectionRow(sections, 'identity', 'Name', itemName);
-    this.addPropertySectionRow(sections, 'identity', 'Global Id', this.toPropertyString(data.GlobalId, '-'));
-    this.addPropertySectionRow(sections, 'identity', 'Description', this.toPropertyString(data.Description, '-'));
-    this.addPropertySectionRow(sections, 'identity', 'Tag', this.toPropertyString(data.Tag, ''));
-    this.addPropertySectionRow(sections, 'identity', 'Category', this.toPropertyString(data._category, ''));
-
-    this.addPropertySectionRow(sections, 'type', 'Type', typeValue);
-    this.addPropertySectionRow(sections, 'type', 'Object Type', this.toPropertyString(data.ObjectType, ''));
-    this.addPropertySectionRow(sections, 'type', 'Predefined Type', this.toPropertyString(data.PredefinedType, ''));
-    this.addPropertySectionRow(sections, 'type', 'Type Relation', this.summarizeRelationValue(data.IsTypedBy));
-
-    const storey = this.modelIndices.get(firstSelection.modelId)?.itemToLevel.get(firstSelection.localId) || this.extractStoreyNameFromItemData(data) || '-';
-    this.addPropertySectionRow(sections, 'levels', 'Storey', storey);
-    this.addPropertySectionRow(sections, 'levels', 'Contained In Structure', this.summarizeRelationValue(data.ContainedInStructure));
-    this.addPropertySectionRow(sections, 'levels', 'Decomposes', this.summarizeRelationValue(data.Decomposes));
-
-    this.addPropertySectionRow(sections, 'location', 'Object Placement', this.summarizeRelationValue(data.ObjectPlacement));
-    if (geometryProbe) {
-      this.addPropertySectionRow(sections, 'location', 'Center X', `${geometryProbe.center.x.toFixed(3)} m`);
-      this.addPropertySectionRow(sections, 'location', 'Center Y', `${geometryProbe.center.y.toFixed(3)} m`);
-      this.addPropertySectionRow(sections, 'location', 'Center Z', `${geometryProbe.center.z.toFixed(3)} m`);
-      this.addPropertySectionRow(sections, 'dimensions', 'Extent X', `${geometryProbe.size.x.toFixed(3)} m`);
-      this.addPropertySectionRow(sections, 'dimensions', 'Extent Y', `${geometryProbe.size.y.toFixed(3)} m`);
-      this.addPropertySectionRow(sections, 'dimensions', 'Extent Z', `${geometryProbe.size.z.toFixed(3)} m`);
-
-      const slabLikeText = `${itemName} ${typeValue} ${this.toPropertyString(data._category, '')}`.toLowerCase();
-      if (/(slab|floor|deck|roof|ceiling|covering)/.test(slabLikeText)) {
-        const inferredThickness = Math.min(geometryProbe.size.x, geometryProbe.size.y, geometryProbe.size.z);
-        this.addPropertySectionRow(sections, 'dimensions', 'Thickness (Approx)', `${inferredThickness.toFixed(3)} m`, 'geometry thickness');
-      }
-    }
-
-    this.addPropertySectionRow(sections, 'relations', 'Property Definitions', this.summarizeRelationValue(data.IsDefinedBy));
-    this.addPropertySectionRow(sections, 'relations', 'Associations', this.summarizeRelationValue(data.HasAssociations));
-    this.addPropertySectionRow(sections, 'relations', 'Openings', this.summarizeRelationValue(data.HasOpenings));
-    this.addPropertySectionRow(sections, 'relations', 'Voids Elements', this.summarizeRelationValue(data.VoidsElements));
-    this.addPropertySectionRow(sections, 'relations', 'Fills Voids', this.summarizeRelationValue(data.FillsVoids));
-
-    if (modelVolume) this.addPropertySectionRow(sections, 'quantities', 'Volume', modelVolume);
-
-    const factRows: ExtractedPropertyFact[] = [];
-    this.collectPropertyFacts(data, factRows, new WeakSet<object>());
-    for (const fact of factRows) {
-      const sectionId = this.classifyPropertyFact(fact);
-      this.addPropertySectionRow(sections, sectionId, fact.label, fact.value, `${fact.setName} ${fact.category} ${fact.path}`);
-    }
-
-    const { rows: rawRows, truncated } = this.collectRawPropertyEntries(data);
-    this.addKeywordMatchedRows(sections, 'dimensions', rawRows, DIMENSION_KEYWORDS);
-    this.addKeywordMatchedRows(sections, 'location', rawRows, LOCATION_KEYWORDS);
-    this.addKeywordMatchedRows(sections, 'levels', rawRows, LEVEL_KEYWORDS);
-    this.addKeywordMatchedRows(sections, 'materials', rawRows, MATERIAL_KEYWORDS);
-    this.addKeywordMatchedRows(sections, 'relations', rawRows, RELATION_KEYWORDS);
-
-    for (const [key, value] of rawRows) {
-      const unit = this.inferUnitSuffix(key);
-      const displayValue = (unit && /^-?\d+(\.\d+)?$/.test(value.trim())) ? value + unit : value;
-      this.addPropertySectionRow(sections, 'raw', key, displayValue, key);
-    }
-    if (truncated) this.addPropertySectionRow(sections, 'raw', 'Info', `Properties truncated to ${MAX_PROPERTY_ROWS} rows for readability`);
-
-    for (const section of Object.values(sections)) {
-      section.rows.sort((a, b) => a.key.localeCompare(b.key, undefined, { numeric: true }));
-    }
-
-    return PROPERTY_SECTION_DEFINITIONS
-      .map((definition) => sections[definition.id])
-      .filter((section) => section.rows.length > 0);
   }
 
   private renderPropertySections(sections: PropertySectionData[]): void {
@@ -4013,17 +3234,17 @@ class ViewerApp {
     const data = (itemData[0] || {}) as Record<string, unknown>;
 
     const typeValue = [
-      this.toPropertyString(data.ObjectType, ''),
-      this.toPropertyString(data.PredefinedType, ''),
-      this.toPropertyString(data.type, ''),
-      this.toPropertyString(data._category, ''),
+      toPropertyString(data.ObjectType, ''),
+      toPropertyString(data.PredefinedType, ''),
+      toPropertyString(data.type, ''),
+      toPropertyString(data._category, ''),
     ].find((entry) => entry.length > 0) || '-';
 
-    const nameValue = this.toPropertyString(data.Name, '');
+    const nameValue = toPropertyString(data.Name, '');
     this.dom.propType.textContent = typeValue;
     this.dom.propName.textContent = nameValue || `Element ${firstSelection.localId}`;
-    this.dom.propGlobalId.textContent = this.toPropertyString(data.GlobalId, '-');
-    this.dom.propDescription.textContent = this.toPropertyString(data.Description, '-');
+    this.dom.propGlobalId.textContent = toPropertyString(data.GlobalId, '-');
+    this.dom.propDescription.textContent = toPropertyString(data.Description, '-');
     this.dom.propStory.textContent = this.modelIndices.get(firstSelection.modelId)?.itemToLevel.get(firstSelection.localId) || '-';
 
     let volumeText = '';
@@ -4051,7 +3272,15 @@ class ViewerApp {
       // optional
     }
 
-    const sections = this.buildPropertySections(data, firstSelection, volumeText, geometryProbe);
+    const indexStorey = this.modelIndices.get(firstSelection.modelId)?.itemToLevel.get(firstSelection.localId);
+    const sections = buildPropertySections(
+      data,
+      firstSelection.localId,
+      this.activePropertyUnits,
+      indexStorey,
+      volumeText,
+      geometryProbe,
+    );
     this.renderPropertySections(sections);
     this.applyPropertiesFilter();
 
@@ -4223,17 +3452,8 @@ class ViewerApp {
         `;
       })
       .join('');
-
-    this.dom.viewpointList.querySelectorAll<HTMLElement>('[data-viewpoint-id]').forEach((element) => {
-      element.addEventListener('click', () => {
-        this.selectedViewpointId = element.dataset.viewpointId || null;
-        this.updateViewpointList();
-      });
-      element.addEventListener('dblclick', () => {
-        this.selectedViewpointId = element.dataset.viewpointId || null;
-        this.fireAndForget(this.applySelectedViewpoint(), 'Apply viewpoint');
-      });
-    });
+    // A11: row click/dblclick handled by delegation bound once in
+    // bindViewpointListEvents() — no per-item listeners to leak on re-render.
   }
 
   private createIssueFromCurrentContext(): void {
@@ -4371,19 +3591,8 @@ class ViewerApp {
         `;
       })
       .join('');
-
-    this.dom.issuesList.querySelectorAll<HTMLElement>('[data-issue-id]').forEach((element) => {
-      element.addEventListener('click', () => {
-        const id = element.dataset.issueId;
-        if (!id) return;
-        this.selectIssue(id, false);
-      });
-      element.addEventListener('dblclick', () => {
-        const id = element.dataset.issueId;
-        if (!id) return;
-        this.selectIssue(id, true);
-      });
-    });
+    // A11: row click/dblclick handled by delegation bound once in
+    // bindIssueListEvents() — no per-item listeners to leak on re-render.
   }
 
   private selectIssue(issueId: string, focusView: boolean): void {
@@ -4877,6 +4086,122 @@ class ViewerApp {
     });
   }
 
+  /**
+   * Builds the frozen e2e contract (T6). Only reached in VITE_E2E builds.
+   * Every member is a stable, documented accessor over viewer state/behavior;
+   * e2e must not reach past this object into private fields.
+   */
+  private buildTestApi(): ViewerTestApi {
+    const api: ViewerTestApi = {
+      version: 1,
+      modelCount: () => this.federatedModels.size,
+      indexedModelCount: () => this.modelIndices.size,
+      findItemByName: (keyword: string): TestItemRef | null => {
+        const needle = keyword.toLowerCase();
+        for (const [modelId, index] of this.modelIndices.entries()) {
+          for (const [localId, name] of index.itemNames.entries()) {
+            if (!index.allIds.has(localId) || !name) continue;
+            if (name.toLowerCase().includes(needle)) return { modelId, localId };
+          }
+        }
+        return null;
+      },
+      firstModelId: (): string | null => {
+        for (const modelId of this.federatedModels.keys()) return modelId;
+        return null;
+      },
+      findDisjointClassLevel: () => {
+        const index = this.modelIndices.values().next().value;
+        if (!index) return null;
+        for (const [className, classIds] of index.classes.entries()) {
+          for (const [levelName, levelIds] of index.levels.entries()) {
+            let overlaps = false;
+            for (const id of classIds) {
+              if (levelIds.has(id)) { overlaps = true; break; }
+            }
+            if (!overlaps) return { className, levelName };
+          }
+        }
+        return null;
+      },
+      firstModelContext: () => {
+        const firstEntry = this.modelIndices.entries().next().value;
+        if (!firstEntry) return null;
+        const [modelId, index] = firstEntry;
+        let firstNamed: { id: number; name: string } | null = null;
+        for (const [id, name] of index.itemNames.entries()) {
+          if (!index.allIds.has(id) || !name) continue;
+          firstNamed = { id, name };
+          break;
+        }
+        return {
+          modelId,
+          searchTerm: firstNamed?.name || index.classes.keys().next().value || '',
+          firstItemId: firstNamed?.id ?? index.allIds.values().next().value ?? 0,
+        };
+      },
+      selectionCount: () => countMapItems(this.selectedItems),
+      isXrayEnabled: () => this.xrayEnabled,
+      isEdgesEnabled: () => this.edgesEnabled,
+      activeGizmoModelId: () => this.activeGizmoModelId,
+      viewpointCount: () => this.viewpoints.length,
+      issueCount: () => this.issues.length,
+      firstViewpointSnapshot: () => this.viewpoints[0]?.snapshot ?? null,
+      firstIssueLinkedCount: () => this.issues[0]?.localIds.length ?? 0,
+      firstIssueModelCount: () => Object.keys(this.issues[0]?.elementsByModel ?? {}).length,
+      firstIssueHasLegacyModelId: () => typeof this.issues[0]?.modelId === 'string',
+      engineModelState: () => ({
+        fragmentsCount: this.fragments.list.size,
+        federatedCount: this.federatedModels.size,
+        indexCount: this.modelIndices.size,
+        objectCount: this.modelObjects.length,
+      }),
+      cameraState: () => {
+        const camera = this.world.camera.three;
+        const target = new THREE.Vector3();
+        this.world.camera.controls.getTarget(target);
+        return {
+          position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+          target: { x: target.x, y: target.y, z: target.z },
+        };
+      },
+      anchorDirectionForCube: (localVector) => {
+        const anchor = this.getViewCubeAnchorModel();
+        if (!anchor) return null;
+        const basis = this.getViewCubeBasisQuaternion(new THREE.Quaternion());
+        const direction = new THREE.Vector3(localVector[0], localVector[1], localVector[2])
+          .normalize()
+          .applyQuaternion(basis)
+          .normalize();
+        return { x: direction.x, y: direction.y, z: direction.z };
+      },
+      selectItem: (modelId: string, localId: number, zoom = false): Promise<void> =>
+        this.selectSingleItem(modelId, localId, zoom),
+      selectFirstItemPerModel: async (): Promise<void> => {
+        clearMap(this.selectedItems);
+        for (const [modelId, index] of this.modelIndices.entries()) {
+          const firstId = index.allIds.values().next().value;
+          if (typeof firstId === 'number') this.selectedItems[modelId] = new Set([firstId]);
+        }
+        await this.refreshSelectionVisuals();
+      },
+      setVisualStyle: (style: string): Promise<void> =>
+        this.setVisualStyle(this.parseVisualStyle(style), false, false),
+      clickCanvasAt: async (clientX: number, clientY: number): Promise<TestItemRef | null> => {
+        // ThatOpen's raycaster expects the pick position in normalized device
+        // coordinates ([-1,1], y-up) — the same shape SimpleMouse.position
+        // returns — NOT CSS pixels. Convert here.
+        const rect = this.dom.viewerContainer.getBoundingClientRect();
+        const ndc = new THREE.Vector2(
+          ((clientX - rect.left) / rect.width) * 2 - 1,
+          -((clientY - rect.top) / rect.height) * 2 + 1,
+        );
+        return this.pickAndSelect(ndc);
+      },
+    };
+    return Object.freeze(api);
+  }
+
   private startFpsMonitor(): void {
     const tick = (): void => {
       this.frameCount += 1;
@@ -4893,4 +4218,12 @@ class ViewerApp {
   }
 }
 
-void new ViewerApp().init();
+const viewerApp = new ViewerApp();
+void viewerApp.init();
+
+// A5: on HMR reload, tear the previous instance down (aborts listeners, cancels
+// rAF, disposes THREE/engine resources, restores console.warn) so dev reloads
+// don't leak a second viewer/render loop. No-op in production builds.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => viewerApp.destroy());
+}

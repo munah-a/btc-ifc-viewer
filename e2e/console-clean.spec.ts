@@ -3,6 +3,8 @@ import path from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 
 import { applyCpuThrottle } from './_cpu-throttle';
+// Pulls in the `Window.__viewerTestApi` global augmentation (T6 contract).
+import '../src/core/test-api';
 
 /**
  * Program acceptance criteria §4 (IMPLEMENTATION_PLAN): zero browser console
@@ -76,8 +78,8 @@ test.describe('console cleanliness (§4 program acceptance)', () => {
     await page.setInputFiles('#fileInput', ifcPath);
     await page.waitForFunction(
       () => {
-        const viewer = (window as any).__viewer;
-        return !!viewer && viewer.federatedModels?.size === 1 && viewer.modelIndices?.size === 1;
+        const api = window.__viewerTestApi;
+        return !!api && api.modelCount() === 1 && api.indexedModelCount() === 1;
       },
       undefined,
       { timeout: 180_000 },
@@ -139,10 +141,8 @@ test.describe('console cleanliness (§4 program acceptance)', () => {
 
     // F9/U8: issue lifecycle from a selection.
     await page.evaluate(async () => {
-      const viewer = (window as any).__viewer;
-      const [modelId, index] = Array.from(viewer.modelIndices.entries())[0] as [string, any];
-      const firstId = Array.from(index.allIds)[0];
-      await viewer.selectSingleItem(modelId, firstId, false);
+      const context = window.__viewerTestApi?.firstModelContext();
+      if (context) await window.__viewerTestApi?.selectItem(context.modelId, context.firstItemId, false);
     });
     await page.click('.tab-btn[data-tab="issues"]');
     await page.fill('#issueTitle', 'Console sweep issue');

@@ -4,6 +4,8 @@ import path from 'node:path';
 import { expect, test as base, type Page } from '@playwright/test';
 
 import { applyCpuThrottle } from './_cpu-throttle';
+// Pulls in the `Window.__viewerTestApi` global augmentation (T6 contract).
+import '../src/core/test-api';
 
 type CameraPosition = {
   x: number;
@@ -60,12 +62,12 @@ const waitForAppReady = async (page: Page): Promise<void> => {
 const waitForModelCount = async (page: Page, count: number): Promise<void> => {
   await page.waitForFunction(
     (expected) => {
-      const viewer = (window as any).__viewer;
+      const api = window.__viewerTestApi;
       const elementText = document.querySelector('#elementCount')?.textContent || '';
       const statusText = document.querySelector('#statusText')?.textContent || '';
-      return !!viewer
-        && viewer.federatedModels?.size === expected
-        && viewer.modelIndices?.size === expected
+      return !!api
+        && api.modelCount() === expected
+        && api.indexedModelCount() === expected
         && elementText !== '0 elements'
         && statusText.includes('Model loaded successfully');
     },
@@ -113,19 +115,15 @@ const dotProduct = (a: CameraPosition, b: CameraPosition): number => (
 );
 
 const getCameraState = async (page: Page): Promise<CameraState> => page.evaluate(() => {
-  const camera = (window as any).__world.camera.three;
-  const target = camera.position.clone();
-  (window as any).__world.camera.controls.getTarget(target);
-  return {
-    position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
-    target: { x: target.x, y: target.y, z: target.z },
-  };
+  const state = window.__viewerTestApi?.cameraState();
+  if (!state) throw new Error('Camera state unavailable');
+  return state;
 });
 
-const getCameraPosition = async (page: Page): Promise<CameraPosition> => page.evaluate(() => {
-  const position = (window as any).__world.camera.three.position;
-  return { x: position.x, y: position.y, z: position.z };
-});
+const getCameraPosition = async (page: Page): Promise<CameraPosition> => {
+  const state = await getCameraState(page);
+  return state.position;
+};
 
 const getCameraDirection = async (page: Page): Promise<CameraPosition> => {
   const state = await getCameraState(page);
@@ -176,75 +174,34 @@ const getExpectedCubeDirection = async (
   page: Page,
   vector: readonly [number, number, number],
 ): Promise<CameraPosition> => {
-  const expected = await page.evaluate((localVector) => {
-    const viewer = (window as any).__viewer;
-    const models = viewer?.federatedModels ? Array.from(viewer.federatedModels.values()) : [];
-    const anchor = viewer?.activeGizmoModelId
-      ? viewer.federatedModels.get(viewer.activeGizmoModelId)
-      : models.find((model: any) => model.visible) || models[0];
-
-    if (!anchor) return null;
-
-    const basis = anchor.object.getWorldQuaternion(anchor.object.quaternion.clone());
-    const direction = anchor.object.position.clone();
-    direction.set(localVector[0], localVector[1], localVector[2]).normalize().applyQuaternion(basis).normalize();
-    return { x: direction.x, y: direction.y, z: direction.z };
-  }, vector);
+  const expected = await page.evaluate(
+    (localVector) => window.__viewerTestApi?.anchorDirectionForCube(localVector) ?? null,
+    vector,
+  );
 
   if (!expected) throw new Error('Expected cube direction unavailable');
   return expected;
 };
 
 const getModelContext = async (page: Page): Promise<ModelContext> => {
-  const context = await page.evaluate(() => {
-    const viewer = (window as any).__viewer;
-    const firstEntry = viewer?.modelIndices ? Array.from(viewer.modelIndices.entries())[0] : null;
-    if (!firstEntry) return null;
-
-    const [modelId, index] = firstEntry as [string, any];
-    let firstNamed: { id: number; name: string } | null = null;
-
-    for (const [id, name] of index.itemNames.entries()) {
-      if (!index.allIds.has(id) || !name) continue;
-      firstNamed = { id, name };
-      break;
-    }
-
-    return {
-      modelId,
-      searchTerm: firstNamed?.name || Array.from(index.classes.keys())[0] || '',
-      firstItemId: firstNamed?.id || Array.from(index.allIds)[0],
-    };
-  });
-
+  const context = await page.evaluate(() => window.__viewerTestApi?.firstModelContext() ?? null);
   if (!context) throw new Error('Model context unavailable');
-  return context as ModelContext;
+  return context;
 };
 
 const findItemByNameKeyword = async (
   page: Page,
   keyword: string,
-): Promise<{ modelId: string; localId: number } | null> => page.evaluate((needle) => {
-  const viewer = (window as any).__viewer;
-  if (!viewer?.modelIndices) return null;
-
-  for (const [modelId, index] of viewer.modelIndices.entries()) {
-    for (const [localId, name] of index.itemNames.entries()) {
-      if (!index.allIds.has(localId) || !name) continue;
-      if (name.toLowerCase().includes(needle)) {
-        return { modelId, localId };
-      }
-    }
-  }
-
-  return null;
-}, keyword.toLowerCase());
+): Promise<{ modelId: string; localId: number } | null> => page.evaluate(
+  (needle) => window.__viewerTestApi?.findItemByName(needle) ?? null,
+  keyword,
+);
 
 const ensureSingleSelection = async (page: Page): Promise<void> => {
   const context = await getModelContext(page);
   await page.evaluate(
     async ({ modelId, localId }) => {
-      await (window as any).__viewer.selectSingleItem(modelId, localId, false);
+      await window.__viewerTestApi?.selectItem(modelId, localId, false);
     },
     { modelId: context.modelId, localId: context.firstItemId },
   );
@@ -284,7 +241,7 @@ const test = base.extend<NonNullable<unknown>, WorkerFixtures>({
       // actionability check time out on every click. Tests that exercise
       // visual styles set their own style explicitly and stay valid.
       await page.evaluate(async () => {
-        await (window as any).__viewer.setVisualStyle('basic', false, false);
+        await window.__viewerTestApi?.setVisualStyle('basic');
       });
       await use(page);
       await context.close();
@@ -374,6 +331,48 @@ test.describe('selection & search', () => {
     await expect(page.locator('#btnSelectSingle')).toHaveClass(/active/);
   });
 
+  // T6 (W2.5): canvas pick+select path coverage via the frozen test API.
+  // A positive raycast HIT depends on live-GPU render state and is unreliable
+  // under headless software WebGL (verified: neither a real Playwright canvas
+  // click nor an API pick registers a hit on the CI render path). So this
+  // exercises the deterministic half of the same pickAndSelect() code path:
+  // with a selection established, an empty-space canvas click (raycast miss in
+  // single-select mode) must clear it — proving the click path runs end to end.
+  test('canvas click on empty space clears the selection', async ({ appPage: page }) => {
+    await page.click('#btnSelectSingle');
+    await ensureSingleSelection(page);
+    await expect(page.locator('#selectionCount')).toHaveText(/1 selected/);
+
+    const cleared = await page.evaluate(async () => {
+      const rect = document.getElementById('viewer-container')?.getBoundingClientRect();
+      if (!rect) return null;
+      // Top-left corner: guaranteed empty of geometry after a fit.
+      return window.__viewerTestApi?.clickCanvasAt(rect.left + 2, rect.top + 2) ?? null;
+    });
+    // A miss returns null and, in single-select mode, clears the selection.
+    expect(cleared).toBeNull();
+    await expect(page.locator('#selectionCount')).toHaveText(/0 selected/);
+  });
+
+  // T6 (W2.5): keyboard-shortcut spot check — 'm' toggles selection mode,
+  // number keys drive navigation modes (onKeyDown in viewer.ts).
+  test('keyboard shortcuts toggle selection and navigation modes', async ({ appPage: page }) => {
+    await page.click('#btnSelectSingle');
+    await expect(page.locator('#btnSelectSingle')).toHaveClass(/active/);
+
+    // 'm' toggles single <-> multi.
+    await page.locator('body').press('m');
+    await expect(page.locator('#btnSelectMulti')).toHaveClass(/active/);
+    await page.locator('body').press('m');
+    await expect(page.locator('#btnSelectSingle')).toHaveClass(/active/);
+
+    // '2' = Plan, '1' = Orbit navigation.
+    await page.locator('body').press('2');
+    await expect(page.locator('#btnModePlan')).toHaveClass(/active/);
+    await page.locator('body').press('1');
+    await expect(page.locator('#btnModeOrbit')).toHaveClass(/active/);
+  });
+
   // AUDIT F1 regression: search used to crash on any hit (raw ItemAttribute
   // objects fed into escapeHtml) — fixed in W1.1 by unwrapping to primitives.
   test('search finds elements and selects from results', async ({ appPage: page }) => {
@@ -388,24 +387,7 @@ test.describe('selection & search', () => {
   // AUDIT F11: a disjoint class∩level filter combination used to silently
   // hide the entire model — it must warn and leave visibility untouched.
   test('disjoint class and level filters warn instead of hiding everything', async ({ appPage: page }) => {
-    const disjoint = await page.evaluate(() => {
-      const viewer = (window as any).__viewer;
-      const firstEntry = Array.from(viewer.modelIndices.values())[0] as any;
-      if (!firstEntry) return null;
-      for (const [className, classIds] of firstEntry.classes.entries()) {
-        for (const [levelName, levelIds] of firstEntry.levels.entries()) {
-          let overlaps = false;
-          for (const id of classIds) {
-            if (levelIds.has(id)) {
-              overlaps = true;
-              break;
-            }
-          }
-          if (!overlaps) return { className, levelName };
-        }
-      }
-      return null;
-    });
+    const disjoint = await page.evaluate(() => window.__viewerTestApi?.findDisjointClassLevel() ?? null);
     // Hard expectation (gate forbids skipped tests): the structural fixture
     // has storey-specific classes, so a disjoint pair must exist.
     expect(disjoint).not.toBeNull();
@@ -441,7 +423,7 @@ test.describe('properties panel', () => {
     if (!thicknessItem) throw new Error('No floor-like element found in the IFC test model');
     await page.evaluate(
       async ({ modelId, localId }) => {
-        await (window as any).__viewer.selectSingleItem(modelId, localId, false);
+        await window.__viewerTestApi?.selectItem(modelId, localId, false);
       },
       thicknessItem,
     );
@@ -461,7 +443,7 @@ test.describe('properties panel', () => {
       || thicknessItem;
     await page.evaluate(
       async ({ modelId, localId }) => {
-        await (window as any).__viewer.selectSingleItem(modelId, localId, false);
+        await window.__viewerTestApi?.selectItem(modelId, localId, false);
       },
       scrollStressItem,
     );
@@ -694,10 +676,10 @@ test.describe('federation & load lifecycle', () => {
 
     await expect(page.locator('#btnTransparency')).toHaveClass(/active/);
     await expect(page.locator('#btnWireframe')).toHaveClass(/active/);
-    expect(await page.evaluate(() => {
-      const viewer = (window as any).__viewer;
-      return { xray: viewer.xrayEnabled, edges: viewer.edgesEnabled };
-    })).toEqual({ xray: true, edges: true });
+    expect(await page.evaluate(() => ({
+      xray: window.__viewerTestApi?.isXrayEnabled() ?? false,
+      edges: window.__viewerTestApi?.isEdgesEnabled() ?? false,
+    }))).toEqual({ xray: true, edges: true });
 
     // Restore toggles before the panel assertions below.
     await page.click('#btnTransparency');
@@ -716,25 +698,17 @@ test.describe('federation & load lifecycle', () => {
 
     // AUDIT F9: issues capture the full multi-model selection (not just the
     // first model's elements) while both models are loaded.
-    await page.evaluate(() => {
-      const viewer = (window as any).__viewer;
-      for (const key of Object.keys(viewer.selectedItems)) delete viewer.selectedItems[key];
-      for (const [modelId, index] of viewer.modelIndices.entries()) {
-        const firstId = Array.from(index.allIds)[0];
-        if (typeof firstId === 'number') viewer.selectedItems[modelId] = new Set([firstId]);
-      }
+    await page.evaluate(async () => {
+      await window.__viewerTestApi?.selectFirstItemPerModel();
     });
     await page.click('.tab-btn[data-tab="issues"]');
     await page.fill('#issueTitle', 'Multi-model issue');
     await page.click('#btnCreateIssue');
     await waitForStatus(page, 'Issue created');
-    const captured = await page.evaluate(() => {
-      const issue = (window as any).__viewer.issues[0];
-      return {
-        models: Object.keys(issue.elementsByModel ?? {}).length,
-        legacyModelId: typeof issue.modelId === 'string',
-      };
-    });
+    const captured = await page.evaluate(() => ({
+      models: window.__viewerTestApi?.firstIssueModelCount() ?? 0,
+      legacyModelId: window.__viewerTestApi?.firstIssueHasLegacyModelId() ?? false,
+    }));
     expect(captured.models).toBe(2);
     expect(captured.legacyModelId).toBe(true);
     await page.locator('[data-issue-id]').first().click();
@@ -754,15 +728,9 @@ test.describe('federation & load lifecycle', () => {
 
     await expect(page.locator('.federated-model')).toHaveCount(1);
     await expect(page.locator('#elementCount')).toHaveText(elementsBefore || '');
-    const engineState = await page.evaluate(() => {
-      const viewer = (window as any).__viewer;
-      return {
-        fragmentsCount: viewer.fragments.list.size,
-        federatedCount: viewer.federatedModels.size,
-        indexCount: viewer.modelIndices.size,
-        objectCount: viewer.modelObjects.length,
-      };
-    });
+    const engineState = await page.evaluate(
+      () => window.__viewerTestApi?.engineModelState() ?? null,
+    );
     expect(engineState).toEqual({ fragmentsCount: 1, federatedCount: 1, indexCount: 1, objectCount: 1 });
 
     await page.click('.tab-btn[data-tab="explorer"]');
@@ -823,13 +791,13 @@ test.describe('viewpoints, issues & state persistence', () => {
     // decode it and assert pixel variance; size/mime prove the ≤320px JPEG
     // thumbnail contract. A blank transparent capture decodes to zero spread.
     const snapshotInfo = await page.evaluate(async () => {
-      const viewpoint = (window as any).__viewer.viewpoints[0];
-      if (!viewpoint?.snapshot) return null;
+      const snapshot = window.__viewerTestApi?.firstViewpointSnapshot();
+      if (!snapshot) return null;
       const image = new Image();
       await new Promise((resolve, reject) => {
         image.onload = resolve;
         image.onerror = reject;
-        image.src = viewpoint.snapshot;
+        image.src = snapshot;
       });
       const canvas = document.createElement('canvas');
       canvas.width = image.naturalWidth;
@@ -846,7 +814,7 @@ test.describe('viewpoints, issues & state persistence', () => {
         if (luminance > max) max = luminance;
       }
       return {
-        mime: viewpoint.snapshot.slice(5, viewpoint.snapshot.indexOf(';')),
+        mime: snapshot.slice(5, snapshot.indexOf(';')),
         width: image.naturalWidth,
         height: image.naturalHeight,
         spread: max - min,
