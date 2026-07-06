@@ -29,9 +29,9 @@
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
-    "@thatopen/components": "^3.3.0",
-    "@thatopen/components-front": "^3.3.0",
-    "@thatopen/fragments": "^3.3.0",
+    "@thatopen/components": "~3.3.0",
+    "@thatopen/components-front": "~3.3.0",
+    "@thatopen/fragments": "~3.3.0",
     "three": "^0.175.0",
     "web-ifc": "0.0.74"
   },
