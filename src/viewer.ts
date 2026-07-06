@@ -2882,10 +2882,25 @@ class ViewerApp {
   }
 
   private getModelBoundingBox(): THREE.Box3 | null {
-    if (this.modelObjects.length === 0) return null;
     const bbox = new THREE.Box3();
-    for (const object of this.modelObjects) bbox.expandByObject(object);
-    return bbox;
+    // Prefer each fragments model's data-driven box (A17): it is valid right
+    // after load, whereas expandByObject(object) reads empty until the worker
+    // has streamed meshes — which broke Fit/Section immediately post-load and
+    // on slow GPUs. Transform the local box by the object's world matrix so
+    // federation offsets/rotations are included. Fall back to the streamed
+    // geometry bounds if a model exposes no usable data box.
+    for (const record of this.federatedModels.values()) {
+      if (!record.visible) continue;
+      const model = this.getFragmentsModel(record.modelId);
+      const dataBox = model?.box;
+      if (dataBox && !dataBox.isEmpty()) {
+        record.object.updateWorldMatrix(true, false);
+        bbox.union(dataBox.clone().applyMatrix4(record.object.matrixWorld));
+      } else {
+        bbox.expandByObject(record.object);
+      }
+    }
+    return bbox.isEmpty() ? null : bbox;
   }
 
   private getViewCubeAnchorModel(): FederatedModelRecord | null {

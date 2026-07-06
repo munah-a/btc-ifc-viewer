@@ -35,6 +35,13 @@ export interface FragmentsModelLike {
   readonly modelId: string;
   /** The three.js object representing the model in the scene. */
   object: THREE.Object3D;
+  /**
+   * Data-driven model bounding box (local space) — available right after load,
+   * independent of whether geometry has streamed/rendered yet. Prefer this over
+   * `expandByObject(object)` for fit/section, which reads empty until the
+   * fragments worker has streamed meshes (AUDIT A17).
+   */
+  readonly box: THREE.Box3;
   /** Graphics quality, 0 (lowest) … 1 (highest). */
   graphicsQuality: number;
 

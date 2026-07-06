@@ -892,3 +892,31 @@ test.describe('viewpoints, issues & state persistence', () => {
     }
   });
 });
+
+// AUDIT A17: Fit/Section rely on the model bounding box. It was computed via
+// three's expandByObject(object), which reads EMPTY until the fragments worker
+// streams meshes — so Fit and Section failed ("No model to section") right
+// after load and on slow GPUs, even though the model was loaded/indexed. The
+// fix reads each model's data-driven `.box`. This guard loads a FRESH page and
+// sections IMMEDIATELY (no camera/render interaction first), which the shared
+// fixture never exercises (by the time its tests run, geometry has streamed).
+test.describe('bounding box readiness (A17)', () => {
+  test('section works immediately after load, before any camera interaction', async ({ browser }) => {
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    const page = await context.newPage();
+    try {
+      await applyCpuThrottle(page);
+      await waitForAppReady(page);
+      await page.setInputFiles('#fileInput', ifcPath);
+      await waitForModelReady(page);
+      // No camera/render ops here — this is the previously-failing path.
+      await page.click('#btnSectionX');
+      await waitForStatus(page, 'Section plane added');
+      await page.click('#btnClearSections');
+      await waitForStatus(page, 'Sections cleared');
+    } finally {
+      await page.close();
+      await context.close();
+    }
+  });
+});
