@@ -46,13 +46,15 @@ import type {
   SearchResult,
   TransformVector3,
 } from './core/viewer-types';
-import { hydrateIcons, icon, setIcon, type IconName } from './ui/icons';
+import { hydrateIcons, setIcon, type IconName } from './ui/icons';
 import { buildFederationTreeMarkup } from './ui/federation-panel';
+import { buildIssueCommentsMarkup, buildIssueListMarkup } from './ui/issues-panel';
 import {
   buildModelBrowserMarkup,
   getClassIdsForModelLevel,
-  treeIco,
 } from './ui/model-browser';
+import { buildPropertySectionsMarkup } from './ui/properties-panel';
+import { buildViewpointListMarkup } from './ui/viewpoints-panel';
 
 // Shared runtime types (ModelIndex, BrowserTreeNode, FederatedModelRecord,
 // IssueRecord, SearchResult, MeasureMode) live in core/viewer-types.ts so the
@@ -2844,23 +2846,7 @@ class ViewerApp {
   }
 
   private renderPropertySections(sections: PropertySectionData[]): void {
-    this.dom.propSections.innerHTML = sections.map((section) => `
-      <details class="prop-section" data-prop-section data-search="${escapeHtml(section.title.toLowerCase())}" ${section.defaultOpen ? 'open' : ''}>
-        <summary class="prop-section-summary">
-          ${treeIco('chevron_right', 'browser-twist')}
-          <span class="prop-section-name">${escapeHtml(section.title)}</span>
-          <span class="prop-section-count" data-prop-count>${section.rows.length}</span>
-        </summary>
-        <div class="prop-section-body">
-            ${section.rows.map((row) => `
-              <div class="prop-row" data-prop-row data-search="${escapeHtml(row.searchText)}">
-                <span class="prop-key">${escapeHtml(row.key)}</span>
-                <span class="prop-val">${escapeHtml(row.value)}</span>
-              </div>
-            `).join('')}
-        </div>
-      </details>
-    `).join('');
+    this.dom.propSections.innerHTML = buildPropertySectionsMarkup(sections);
   }
 
   private applyPropertiesFilter(): void {
@@ -3113,37 +3099,11 @@ class ViewerApp {
   }
 
   private updateViewpointList(): void {
-    if (this.viewpoints.length === 0) {
-      this.dom.viewpointList.innerHTML =
-        '<div class="list-empty">No viewpoints yet. Save one before creating issues for better traceability.</div>';
-      return;
-    }
-
-    this.dom.viewpointList.innerHTML = this.viewpoints
-      .map((entry) => {
-        const active = entry.id === this.selectedViewpointId ? ' is-active' : '';
-        const escapedId = escapeHtml(entry.id);
-        const escapedName = escapeHtml(entry.name);
-        const thumbnail = entry.snapshot
-          ? `<img class="vp-thumb" src="${escapeHtml(entry.snapshot)}" alt="" loading="lazy" />`
-          : `<span class="vp-icon">${icon('photo_camera')}</span>`;
-        return `
-          <div class="vp-row${active}" data-viewpoint-id="${escapedId}">
-            <div class="vp-row-main">
-              ${thumbnail}
-              <div class="vp-text">
-                <div class="vp-name">${escapedName}</div>
-                <div class="vp-meta">${escapeHtml(new Date(entry.createdAt).toLocaleString())}</div>
-              </div>
-              <button type="button" class="row-btn" data-viewpoint-action="apply">Apply</button>
-              <button type="button" class="icon-btn-danger" data-viewpoint-action="delete" title="Delete viewpoint" aria-label="Delete viewpoint">${icon('delete', 16)}</button>
-            </div>
-          </div>
-        `;
-      })
-      .join('');
     // A11: row + action clicks handled by delegation bound once in
     // bindViewpointListEvents() — no per-item listeners to leak on re-render.
+    const markup = buildViewpointListMarkup(this.viewpoints, this.selectedViewpointId);
+    this.dom.viewpointList.innerHTML = markup
+      ?? '<div class="list-empty">No viewpoints yet. Save one before creating issues for better traceability.</div>';
   }
 
   private createIssueFromCurrentContext(): void {
@@ -3259,43 +3219,10 @@ class ViewerApp {
   }
 
   private updateIssuesList(): void {
-    if (this.issues.length === 0) {
-      this.dom.issuesList.innerHTML = '<div class="list-empty">No issues yet.</div>';
-      return;
-    }
-
-    const prioColor: Record<string, string> = {
-      Critical: 'var(--error)',
-      High: 'var(--warning)',
-      Medium: 'var(--primary)',
-      Low: 'var(--outline)',
-    };
-    this.dom.issuesList.innerHTML = this.issues
-      .map((issue) => {
-        const active = issue.id === this.activeIssueId ? ' is-active' : '';
-        const modelCount = issue.elementsByModel ? Object.keys(issue.elementsByModel).length : (issue.localIds.length > 0 ? 1 : 0);
-        const linkedText = issue.localIds.length > 0 ? `${issue.localIds.length} linked · ${modelCount} model(s)` : 'No element link';
-        const escapedId = escapeHtml(issue.id);
-        const escapedTitle = escapeHtml(issue.title);
-        const escapedMeta = escapeHtml(`${issue.priority} · ${linkedText}`);
-        const dot = prioColor[issue.priority] ?? 'var(--outline)';
-        return `
-          <div class="issue-row${active}" data-issue-id="${escapedId}">
-            <div class="issue-head">
-              <span class="issue-prio-dot" style="background:${dot};"></span>
-              <span class="issue-title">${escapedTitle}</span>
-              <button type="button" class="icon-btn-danger" data-issue-action="delete" title="Delete issue" aria-label="Delete issue">${icon('delete', 15)}</button>
-            </div>
-            <div class="issue-meta">${escapedMeta}</div>
-            <div class="issue-status-row">
-              <span class="status-badge" style="background:var(--surface-container-high);color:var(--on-surface-variant);">${escapeHtml(issue.status)}</span>
-            </div>
-          </div>
-        `;
-      })
-      .join('');
     // A11: row + action clicks handled by delegation bound once in
     // bindIssueListEvents() — no per-item listeners to leak on re-render.
+    const markup = buildIssueListMarkup(this.issues, this.activeIssueId);
+    this.dom.issuesList.innerHTML = markup ?? '<div class="list-empty">No issues yet.</div>';
   }
 
   private selectIssue(issueId: string, focusView: boolean): void {
@@ -3398,24 +3325,9 @@ class ViewerApp {
 
   private updateIssueComments(): void {
     const issue = this.issues.find((entry) => entry.id === this.activeIssueId);
-    if (!issue) {
-      this.dom.issueComments.innerHTML = '<div class="comment-item">Select an issue to view comments</div>';
-      return;
-    }
-
-    if (issue.comments.length === 0) {
-      this.dom.issueComments.innerHTML = '<div class="comment-item">No comments</div>';
-      return;
-    }
-
-    this.dom.issueComments.innerHTML = issue.comments
-      .map((comment) => `
-        <div class="comment-item">
-          <div><strong>${escapeHtml(comment.author)}</strong> - ${new Date(comment.createdAt).toLocaleString()}</div>
-          <div>${escapeHtml(comment.text)}</div>
-        </div>
-      `)
-      .join('');
+    const markup = buildIssueCommentsMarkup(issue);
+    this.dom.issueComments.innerHTML = markup
+      ?? '<div class="comment-item">Select an issue to view comments</div>';
   }
 
   /**
