@@ -2,6 +2,8 @@ import path from 'node:path';
 
 import { expect, test, type Page } from '@playwright/test';
 
+import { applyCpuThrottle } from './_cpu-throttle';
+
 /**
  * Program acceptance criteria §4 (IMPLEMENTATION_PLAN): zero browser console
  * errors AND warnings across boot → model load → feature exercise, repeated
@@ -15,6 +17,11 @@ import { expect, test, type Page } from '@playwright/test';
 
 const ifcPath = path.join(process.cwd(), 'e2e', 'fixtures', 'school_str.ifc');
 
+// GitHub's 2-core SwiftShader runner is ~2-3x slower than a dev GPU box, so
+// this comprehensive sweep (load + ~25 interactions + viewport passes) needs a
+// generously CI-scaled budget — a fast local pass does NOT prove CI timing.
+const CI = Boolean(process.env.CI);
+
 // Browser/GL-driver-emitted diagnostics — NOT application console calls. The
 // WebGL layer logs a "GPU stall due to ReadPixels" performance hint whenever
 // the canvas is read back (screenshot export, viewpoint snapshots — both are
@@ -26,7 +33,7 @@ const isEnvironmentalNoise = (text: string): boolean =>
   /GL Driver Message \(OpenGL, Performance/i.test(text)
   || /GPU stall due to ReadPixels/i.test(text);
 
-const waitForStatus = async (page: Page, text: string, timeout = 30_000): Promise<void> => {
+const waitForStatus = async (page: Page, text: string, timeout = CI ? 45_000 : 30_000): Promise<void> => {
   await page.waitForFunction(
     (expected) => (document.querySelector('#statusText')?.textContent || '').includes(expected),
     text,
@@ -42,12 +49,15 @@ const settleFrames = async (page: Page): Promise<void> => {
 
 test.describe('console cleanliness (§4 program acceptance)', () => {
   test('boot, load, W1 feature exercise and viewport sweep stay console-clean', async ({ browser }) => {
-    test.setTimeout(10 * 60 * 1000);
+    // ~5min local (many-core SwiftShader) → ~15min on GitHub's 2-core runner
+    // (render-bound flows run ~3x slower there); 30min ceiling = ample margin.
+    test.setTimeout(CI ? 30 * 60 * 1000 : 10 * 60 * 1000);
     const context = await browser.newContext({
       acceptDownloads: true,
       viewport: { width: 1600, height: 1000 },
     });
     const page = await context.newPage();
+    await applyCpuThrottle(page);
 
     const violations: string[] = [];
     page.on('console', (message) => {

@@ -3,6 +3,8 @@ import path from 'node:path';
 
 import { expect, test as base, type Page } from '@playwright/test';
 
+import { applyCpuThrottle } from './_cpu-throttle';
+
 type CameraPosition = {
   x: number;
   y: number;
@@ -32,6 +34,9 @@ const CI = Boolean(process.env.CI);
 const STATE_TIMEOUT = CI ? 45_000 : 20_000;
 const CAMERA_POLL_TIMEOUT = CI ? 30_000 : 15_000;
 const SLOW_STATUS_TIMEOUT = CI ? 60_000 : 30_000;
+// Corrupt-file error surfacing: fast when web-ifc rejects, but worst case waits
+// for the app's own 120s load timeout — so on CI wait past that ceiling.
+const ERROR_STATE_TIMEOUT = CI ? 150_000 : 60_000;
 // Matches playwright.config.ts `use.viewport`: worker-fixture contexts are
 // created via browser.newContext(), which does not inherit config options.
 // 1280x720 keeps the software-rasterizer pixel cost down on CI (T11).
@@ -269,6 +274,7 @@ const test = base.extend<NonNullable<unknown>, WorkerFixtures>({
         viewport: VIEWPORT,
       });
       const page = await context.newPage();
+      await applyCpuThrottle(page);
       await waitForAppReady(page);
       await page.setInputFiles('#fileInput', ifcPath);
       await waitForModelReady(page);
@@ -786,13 +792,16 @@ test.describe('error surfacing (U4)', () => {
     const badIfcPath = testInfo.outputPath('corrupt.ifc');
     fs.writeFileSync(badIfcPath, 'NOT-AN-IFC-FILE');
     await page.setInputFiles('#fileInput', badIfcPath);
-    await expect(page.locator('#loadingOverlay')).toHaveClass(/is-error/, { timeout: 60_000 });
+    // web-ifc rejects the garbage fast on a GPU box but can be slow on the CI
+    // 2-core runner; the app's own load timeout is 120s, so wait past it on CI
+    // so this catches the error regardless of which failure path fires.
+    await expect(page.locator('#loadingOverlay')).toHaveClass(/is-error/, { timeout: ERROR_STATE_TIMEOUT });
     await expect(page.locator('#loadingErrorActions')).toBeVisible();
     await expect(page.locator('.toast-error')).toBeVisible();
 
     // Retry replays the failed file and fails into the same error state.
     await page.click('#btnRetryLoad');
-    await expect(page.locator('#loadingOverlay')).toHaveClass(/is-error/, { timeout: 60_000 });
+    await expect(page.locator('#loadingOverlay')).toHaveClass(/is-error/, { timeout: ERROR_STATE_TIMEOUT });
 
     // Dismiss returns to the normal (model still loaded) viewer.
     await page.click('#btnDismissLoadError');
