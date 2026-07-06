@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # vite 8 major is deferred to W6 (docs/IMPLEMENTATION_PLAN.md §7); the
+      # remaining dev-only esbuild/vite advisories clear with that upgrade.
+      - dependency-name: vite
+        update-types: ["version-update:semver-major"]
+      # Pinned engine stack (docs/IMPLEMENTATION_PLAN.md tech stack): web-ifc
+      # exact 0.0.74, three 0.175, @thatopen 3.3.x. Majors/minors here are a
+      # deliberate program decision, not routine maintenance.
+      - dependency-name: web-ifc
+      - dependency-name: three
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "@thatopen/*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

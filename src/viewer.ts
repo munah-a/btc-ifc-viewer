@@ -1,5 +1,4 @@
 ﻿import * as THREE from 'three';
-import * as WebIFC from 'web-ifc';
 import * as OBC from '@thatopen/components';
 import * as OBCF from '@thatopen/components-front';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
@@ -352,14 +351,6 @@ class ViewerApp {
 
   private get signal(): AbortSignal {
     return this.abortController.signal;
-  }
-
-  private listen<K extends keyof HTMLElementEventMap>(
-    target: EventTarget,
-    type: K | string,
-    listener: EventListenerOrEventListenerObject,
-  ): void {
-    target.addEventListener(type as string, listener, { signal: this.signal });
   }
 
   private readonly dom = {
@@ -904,12 +895,16 @@ class ViewerApp {
     this.dom.btnApplySelectedViewpoint.addEventListener('click', () => {
       this.fireAndForget(this.applySelectedViewpoint(), 'Apply viewpoint');
     });
-    this.dom.btnDeleteSelectedViewpoint.addEventListener('click', () => this.deleteSelectedViewpoint());
+    this.dom.btnDeleteSelectedViewpoint.addEventListener('click', () => {
+      this.fireAndForget(this.deleteSelectedViewpoint(), 'Delete viewpoint');
+    });
 
     this.dom.btnCreateIssue.addEventListener('click', () => {
-      this.fireAndForget(this.createIssueFromCurrentContext(), 'Create issue');
+      this.createIssueFromCurrentContext();
     });
-    this.dom.btnDeleteIssue.addEventListener('click', () => this.deleteSelectedIssue());
+    this.dom.btnDeleteIssue.addEventListener('click', () => {
+      this.fireAndForget(this.deleteSelectedIssue(), 'Delete issue');
+    });
     this.dom.btnAddIssueComment.addEventListener('click', () => this.addCommentToActiveIssue());
 
     window.addEventListener('resize', () => {
@@ -1135,8 +1130,10 @@ class ViewerApp {
 
     this.components.init();
 
-    // Expose debug handles only in development.
-    if (import.meta.env.DEV) {
+    // Expose test/debug handles only in builds made with the explicit VITE_E2E
+    // define (vite.e2e.config.ts) so e2e can exercise the real production
+    // artifact (AUDIT T4). Plain dev/prod builds ship without these hooks.
+    if (import.meta.env.VITE_E2E === 'true') {
       (window as any).__viewer = this;
       (window as any).__components = this.components;
       (window as any).__world = this.world;
@@ -1149,18 +1146,21 @@ class ViewerApp {
     this.gridHelper.visible = this.gridVisible;
     if (grid.material?.uniforms?.uColor) grid.material.uniforms.uColor.value = new THREE.Color(0x25334a);
 
+    // Self-hosted runtime assets (A2/P2): web-ifc.wasm and the fragments
+    // worker are vendored from node_modules into public/ by
+    // scripts/vendor-assets.mjs (prebuild/predev) — no CDN at runtime (C1).
     this.ifcLoader = this.components.get(OBC.IfcLoader);
     await this.ifcLoader.setup({
       autoSetWasm: false,
       wasm: {
-        path: 'https://unpkg.com/web-ifc@0.0.74/',
+        path: import.meta.env.BASE_URL,
         absolute: true,
       },
     });
     this.ifcLoader.settings.webIfc.CIRCLE_SEGMENTS = 24;
 
     this.fragments = this.components.get(OBC.FragmentsManager);
-    const workerUrl = 'https://thatopen.github.io/engine_fragment/resources/worker.mjs';
+    const workerUrl = `${import.meta.env.BASE_URL}worker.mjs`;
     const fetchedWorker = await fetch(workerUrl);
     const workerBlob = await fetchedWorker.blob();
     const workerFile = new File([workerBlob], 'worker.mjs', { type: 'text/javascript' });
@@ -2239,44 +2239,6 @@ class ViewerApp {
     this.hiddenLineColorOverride = false;
   }
 
-  private async applyHiddenLineColors(): Promise<void> {
-    const tasks: Promise<unknown>[] = [];
-    const white = new THREE.Color(0xffffff);
-    for (const model of this.federatedModels.values()) {
-      const fragmentsModel = this.getFragmentsModel(model.modelId);
-      if (!fragmentsModel || typeof fragmentsModel?.setColor !== 'function') continue;
-      tasks.push(fragmentsModel.setColor(undefined, white));
-    }
-    if (tasks.length > 0) await Promise.allSettled(tasks);
-    this.hiddenLineColorOverride = tasks.length > 0;
-  }
-
-  private applyConsistentLighting(): void {
-    const scene = this.world?.scene as OBC.SimpleScene | undefined;
-    if (!scene?.three) return;
-
-    // Save original light intensities
-    this.savedLightStates = [];
-
-    // Disable directional lights (remove directional shading / shadows)
-    if (scene.directionalLights) {
-      for (const [, light] of scene.directionalLights) {
-        this.savedLightStates.push({ light, visible: light.visible, intensity: light.intensity });
-        light.intensity = 0;
-      }
-    }
-
-    // Boost ambient lights for flat, even illumination preserving original colors
-    if (scene.ambientLights) {
-      for (const [, light] of scene.ambientLights) {
-        this.savedLightStates.push({ light, visible: light.visible, intensity: light.intensity });
-        light.intensity = 2.0;
-      }
-    }
-
-    this.consistentLightOverride = true;
-  }
-
   private restoreOriginalLighting(): void {
     if (!this.consistentLightOverride) return;
 
@@ -2348,7 +2310,7 @@ class ViewerApp {
     return null;
   }
 
-  private getFragmentsModel(modelIdOrAlias: string): any | null {
+  private getFragmentsModel(modelIdOrAlias: string): any {
     if (!this.fragments?.list) return null;
     const resolvedModelId = this.resolveModelId(modelIdOrAlias);
     if (!resolvedModelId) return null;
@@ -2927,374 +2889,6 @@ class ViewerApp {
     return false;
   }
 
-  // NOTE: extractAndApplyMaterialColors was removed — the workaround for web-ifc#1833
-  // is no longer needed with native fragment colors. See git history if re-enabling.
-  private async _unused_extractAndApplyMaterialColors(ifcData: Uint8Array, model: any): Promise<void> {
-    const ifcApi = new WebIFC.IfcAPI();
-    // Load WASM from public folder (web-ifc.wasm is served by Vite with correct MIME type)
-    ifcApi.SetWasmPath('/', true);
-    await ifcApi.Init();
-    const modelId = ifcApi.OpenModel(ifcData);
-
-    try {
-      // IFC type constants
-      const IFCINDEXEDCOLOURMAP = 3570813810;
-      const IFCCOLOURRGBLIST = 3285139300;
-      const IFCPRODUCTDEFINITIONSHAPE = 673634403;
-      const IFCSHAPEREPRESENTATION = 4240577450;
-      const IFCMAPPEDITEM = 2347385850;
-      const IFCREPRESENTATIONMAP = 1660063152;
-
-      const expressIdToColor = new Map<number, THREE.Color>();
-
-      // ──────────────────────────────────────────────────────────────────────
-      // Strategy A: IFC4 Reference View — IfcIndexedColourMap + IfcColourRgbList
-      // Used by Revit IFC4 exports with tessellated geometry (IfcPolygonalFaceSet)
-      // ──────────────────────────────────────────────────────────────────────
-      const icmIds = ifcApi.GetLineIDsWithType(modelId, IFCINDEXEDCOLOURMAP);
-      console.log(`[Viewer] Found ${icmIds.size()} IfcIndexedColourMap entities`);
-
-      if (icmIds.size() > 0) {
-        // Build faceSetId → primary color map from IfcIndexedColourMap
-        const faceSetToColor = new Map<number, THREE.Color>();
-
-        for (let i = 0; i < icmIds.size(); i++) {
-          try {
-            const icm = ifcApi.GetLine(modelId, icmIds.get(i), false);
-            if (!icm) continue;
-
-            // MappedTo → IfcPolygonalFaceSet expressId
-            const mappedTo = icm.MappedTo?.value ?? icm.MappedTo;
-            if (typeof mappedTo !== 'number') continue;
-
-            // Colours → IfcColourRgbList expressId
-            const coloursRef = icm.Colours?.value ?? icm.Colours;
-            if (typeof coloursRef !== 'number') continue;
-
-            const colourList = ifcApi.GetLine(modelId, coloursRef, false);
-            if (!colourList?.ColourList || !Array.isArray(colourList.ColourList) || colourList.ColourList.length === 0) continue;
-
-            // Extract the first colour from the list (primary colour for this face set)
-            const firstColour = colourList.ColourList[0];
-            if (!Array.isArray(firstColour) || firstColour.length < 3) continue;
-
-            const r = firstColour[0]?._representationValue ?? firstColour[0]?.value ?? firstColour[0] ?? 0.5;
-            const g = firstColour[1]?._representationValue ?? firstColour[1]?.value ?? firstColour[1] ?? 0.5;
-            const b = firstColour[2]?._representationValue ?? firstColour[2]?.value ?? firstColour[2] ?? 0.5;
-
-            const color = new THREE.Color(
-              typeof r === 'number' ? r : 0.5,
-              typeof g === 'number' ? g : 0.5,
-              typeof b === 'number' ? b : 0.5,
-            );
-            faceSetToColor.set(mappedTo, color);
-          } catch (e) {
-            // Skip
-          }
-        }
-
-        console.log(`[Viewer] Built faceSet→color map with ${faceSetToColor.size} entries`);
-
-        // Now iterate ALL products to find their face sets and look up colors
-        // Instead of hardcoding product type constants (which can be incorrect across web-ifc versions),
-        // find all products via IfcRelContainedInSpatialStructure traversal
-        const IFCRELCONTAINEDINSPATIALSTRUCTURE = 3242617779;
-
-        const allProductIds = new Set<number>();
-
-        // Collect products from IfcRelContainedInSpatialStructure
-        try {
-          const relContained = ifcApi.GetLineIDsWithType(modelId, IFCRELCONTAINEDINSPATIALSTRUCTURE);
-          for (let i = 0; i < relContained.size(); i++) {
-            const rel = ifcApi.GetLine(modelId, relContained.get(i), false);
-            if (rel?.RelatedElements) {
-              const elems = Array.isArray(rel.RelatedElements) ? rel.RelatedElements : [rel.RelatedElements];
-              for (const e of elems) {
-                const eId = e?.value ?? e;
-                if (typeof eId === 'number') allProductIds.add(eId);
-              }
-            }
-          }
-        } catch { /* skip */ }
-
-        console.log(`[Viewer] Found ${allProductIds.size} products via spatial containment`);
-
-        for (const prodExpressId of allProductIds) {
-          try {
-            const prod = ifcApi.GetLine(modelId, prodExpressId, false);
-            if (!prod?.Representation) continue;
-
-            const repRef = prod.Representation?.value ?? prod.Representation;
-            if (typeof repRef !== 'number') continue;
-
-            const prodDefShape = ifcApi.GetLine(modelId, repRef, false);
-            if (!prodDefShape?.Representations) continue;
-
-            const reps = Array.isArray(prodDefShape.Representations)
-              ? prodDefShape.Representations : [prodDefShape.Representations];
-
-            let foundColor: THREE.Color | null = null;
-
-            for (const shapeRepRef of reps) {
-              if (foundColor) break;
-              const shapeRepId = shapeRepRef?.value ?? shapeRepRef;
-              if (typeof shapeRepId !== 'number') continue;
-
-              const shapeRep = ifcApi.GetLine(modelId, shapeRepId, false);
-              if (!shapeRep?.Items) continue;
-
-              const items = Array.isArray(shapeRep.Items) ? shapeRep.Items : [shapeRep.Items];
-
-              for (const itemRef of items) {
-                if (foundColor) break;
-                const itemId = itemRef?.value ?? itemRef;
-                if (typeof itemId !== 'number') continue;
-
-                // Check if this item is directly a face set with a color
-                if (faceSetToColor.has(itemId)) {
-                  foundColor = faceSetToColor.get(itemId)!;
-                  break;
-                }
-
-                // It might be an IfcMappedItem → IfcRepresentationMap → MappedRepresentation → Items
-                try {
-                  const item = ifcApi.GetLine(modelId, itemId, false);
-                  if (item?.type === IFCMAPPEDITEM) {
-                    const mapRef = item.MappingSource?.value ?? item.MappingSource;
-                    if (typeof mapRef === 'number') {
-                      const repMap = ifcApi.GetLine(modelId, mapRef, false);
-                      const mappedRepRef = repMap?.MappedRepresentation?.value ?? repMap?.MappedRepresentation;
-                      if (typeof mappedRepRef === 'number') {
-                        const mappedRep = ifcApi.GetLine(modelId, mappedRepRef, false);
-                        if (mappedRep?.Items) {
-                          const innerItems = Array.isArray(mappedRep.Items) ? mappedRep.Items : [mappedRep.Items];
-                          for (const innerRef of innerItems) {
-                            const innerId = innerRef?.value ?? innerRef;
-                            if (typeof innerId === 'number' && faceSetToColor.has(innerId)) {
-                              foundColor = faceSetToColor.get(innerId)!;
-                              break;
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                } catch {
-                  // Skip
-                }
-              }
-            }
-
-            if (foundColor) {
-              expressIdToColor.set(prodExpressId, foundColor);
-            }
-          } catch (e) {
-            // Skip problematic products
-          }
-        }
-
-        console.log(`[Viewer] Mapped ${expressIdToColor.size} products to IfcIndexedColourMap colors`);
-      }
-
-      // ──────────────────────────────────────────────────────────────────────
-      // Strategy B: Traditional IfcMaterialDefinitionRepresentation path
-      // Used by IFC2x3 and some IFC4 exports with IfcStyledItem
-      // Only runs if Strategy A found no colors
-      // ──────────────────────────────────────────────────────────────────────
-      if (expressIdToColor.size === 0) {
-        const IFCRELASSOCIATESMATERIAL = 2655215786;
-        const IFCMATERIAL = 1838606355;
-        const IFCMATERIALLAYERSETUSAGE = 1303795690;
-        const IFCMATERIALLAYERSET = 3303938423;
-        const IFCMATERIALLAYER = 248100487;
-        const IFCMATERIALCONSTITUENTSET = 3079605661;
-        const IFCMATERIALPROFILESET = 164193824;
-        const IFCMATERIALDEFINITIONREPRESENTATION = 2022407955;
-
-        const materialColorCache = new Map<number, THREE.Color>();
-
-        const extractColorFromSurfaceStyle = (styleExpressId: number): THREE.Color | null => {
-          try {
-            const style = ifcApi.GetLine(modelId, styleExpressId, true);
-            if (!style) return null;
-
-            const styles = style.Styles;
-            if (styles) {
-              const styleEntries = Array.isArray(styles) ? styles : [styles];
-              for (const entry of styleEntries) {
-                const entryObj = entry?.value ? ifcApi.GetLine(modelId, entry.value, true) : entry;
-                if (!entryObj) continue;
-                const surfaceColour = entryObj.SurfaceColour;
-                if (surfaceColour) {
-                  const colourObj = surfaceColour?.value
-                    ? ifcApi.GetLine(modelId, surfaceColour.value, true) : surfaceColour;
-                  if (colourObj) {
-                    const r = colourObj.Red?.value ?? colourObj.Red ?? 0.5;
-                    const g = colourObj.Green?.value ?? colourObj.Green ?? 0.5;
-                    const b = colourObj.Blue?.value ?? colourObj.Blue ?? 0.5;
-                    return new THREE.Color(
-                      typeof r === 'number' ? r : 0.5, typeof g === 'number' ? g : 0.5, typeof b === 'number' ? b : 0.5);
-                  }
-                }
-              }
-            }
-          } catch (e) { /* skip */ }
-          return null;
-        };
-
-        // Query IfcMaterialDefinitionRepresentation
-        const matDefRepIds = ifcApi.GetLineIDsWithType(modelId, IFCMATERIALDEFINITIONREPRESENTATION);
-        console.log(`[Viewer] Found ${matDefRepIds.size()} IfcMaterialDefinitionRepresentation entities`);
-
-        for (let i = 0; i < matDefRepIds.size(); i++) {
-          try {
-            const defRep = ifcApi.GetLine(modelId, matDefRepIds.get(i), false);
-            if (!defRep) continue;
-            const matId = defRep.RepresentedMaterial?.value ?? defRep.RepresentedMaterial;
-            if (typeof matId !== 'number') continue;
-            const representations = defRep.Representations;
-            if (!representations) continue;
-            const repList = Array.isArray(representations) ? representations : [representations];
-            for (const repRef of repList) {
-              const repId = repRef?.value ?? repRef;
-              if (typeof repId !== 'number') continue;
-              const styledRep = ifcApi.GetLine(modelId, repId, false);
-              if (!styledRep?.Items) continue;
-              const items = Array.isArray(styledRep.Items) ? styledRep.Items : [styledRep.Items];
-              for (const itemRef of items) {
-                const itemId = itemRef?.value ?? itemRef;
-                if (typeof itemId !== 'number') continue;
-                const styledItem = ifcApi.GetLine(modelId, itemId, false);
-                if (!styledItem) continue;
-                const stylesProp = styledItem.Styles ?? styledItem.styles;
-                if (!stylesProp) continue;
-                const stylesList = Array.isArray(stylesProp) ? stylesProp : [stylesProp];
-                for (const styleRef of stylesList) {
-                  const styleId = styleRef?.value ?? styleRef;
-                  if (typeof styleId !== 'number') continue;
-                  const psaOrStyle = ifcApi.GetLine(modelId, styleId, false);
-                  if (!psaOrStyle) continue;
-                  if (psaOrStyle.Styles) {
-                    const innerStyles = Array.isArray(psaOrStyle.Styles) ? psaOrStyle.Styles : [psaOrStyle.Styles];
-                    for (const innerRef of innerStyles) {
-                      const innerId = innerRef?.value ?? innerRef;
-                      if (typeof innerId !== 'number') continue;
-                      const color = extractColorFromSurfaceStyle(innerId);
-                      if (color) { materialColorCache.set(matId, color); break; }
-                    }
-                  } else {
-                    const color = extractColorFromSurfaceStyle(styleId);
-                    if (color) materialColorCache.set(matId, color);
-                  }
-                  if (materialColorCache.has(matId)) break;
-                }
-                if (materialColorCache.has(matId)) break;
-              }
-              if (materialColorCache.has(matId)) break;
-            }
-          } catch (e) { /* skip */ }
-        }
-
-        console.log(`[Viewer] Built material color cache with ${materialColorCache.size} entries`);
-
-        const lookupColor = (matId: number): THREE.Color | null => {
-          if (materialColorCache.has(matId)) return materialColorCache.get(matId)!;
-          try {
-            const mat = ifcApi.GetLine(modelId, matId, false);
-            if (!mat) return null;
-            const typeId = mat.type;
-            if (typeId === IFCMATERIALLAYERSETUSAGE) {
-              const layerSetRef = mat.ForLayerSet?.value ?? mat.ForLayerSet;
-              if (typeof layerSetRef === 'number') {
-                const ls = ifcApi.GetLine(modelId, layerSetRef, false);
-                if (ls?.MaterialLayers) {
-                  for (const lr of (Array.isArray(ls.MaterialLayers) ? ls.MaterialLayers : [ls.MaterialLayers])) {
-                    const lid = lr?.value ?? lr; if (typeof lid !== 'number') continue;
-                    const l = ifcApi.GetLine(modelId, lid, false);
-                    const mid = l?.Material?.value ?? l?.Material;
-                    if (typeof mid === 'number' && materialColorCache.has(mid)) return materialColorCache.get(mid)!;
-                  }
-                }
-              }
-            }
-            if (typeId === IFCMATERIALLAYERSET && mat.MaterialLayers) {
-              for (const lr of (Array.isArray(mat.MaterialLayers) ? mat.MaterialLayers : [mat.MaterialLayers])) {
-                const lid = lr?.value ?? lr; if (typeof lid !== 'number') continue;
-                const l = ifcApi.GetLine(modelId, lid, false);
-                const mid = l?.Material?.value ?? l?.Material;
-                if (typeof mid === 'number' && materialColorCache.has(mid)) return materialColorCache.get(mid)!;
-              }
-            }
-            if (typeId === IFCMATERIALCONSTITUENTSET && mat.MaterialConstituents) {
-              for (const cr of (Array.isArray(mat.MaterialConstituents) ? mat.MaterialConstituents : [mat.MaterialConstituents])) {
-                const cid = cr?.value ?? cr; if (typeof cid !== 'number') continue;
-                const c = ifcApi.GetLine(modelId, cid, false);
-                const mid = c?.Material?.value ?? c?.Material;
-                if (typeof mid === 'number' && materialColorCache.has(mid)) return materialColorCache.get(mid)!;
-              }
-            }
-            if (typeId === IFCMATERIALPROFILESET && mat.MaterialProfiles) {
-              for (const pr of (Array.isArray(mat.MaterialProfiles) ? mat.MaterialProfiles : [mat.MaterialProfiles])) {
-                const pid = pr?.value ?? pr; if (typeof pid !== 'number') continue;
-                const p = ifcApi.GetLine(modelId, pid, false);
-                const mid = p?.Material?.value ?? p?.Material;
-                if (typeof mid === 'number' && materialColorCache.has(mid)) return materialColorCache.get(mid)!;
-              }
-            }
-            if (typeId === IFCMATERIALLAYER) {
-              const mid = mat.Material?.value ?? mat.Material;
-              if (typeof mid === 'number' && materialColorCache.has(mid)) return materialColorCache.get(mid)!;
-            }
-            if (typeId === IFCMATERIAL) return materialColorCache.get(matId) ?? null;
-          } catch { /* skip */ }
-          return null;
-        };
-
-        const relIds = ifcApi.GetLineIDsWithType(modelId, IFCRELASSOCIATESMATERIAL);
-        for (let i = 0; i < relIds.size(); i++) {
-          try {
-            const rel = ifcApi.GetLine(modelId, relIds.get(i), false);
-            if (!rel?.RelatedObjects) continue;
-            const matRef = rel.RelatingMaterial?.value ?? rel.RelatingMaterial;
-            if (typeof matRef !== 'number') continue;
-            const color = lookupColor(matRef);
-            if (!color) continue;
-            for (const obj of (Array.isArray(rel.RelatedObjects) ? rel.RelatedObjects : [rel.RelatedObjects])) {
-              const eid = obj?.value ?? obj;
-              if (typeof eid === 'number') expressIdToColor.set(eid, color);
-            }
-          } catch { continue; }
-        }
-      }
-
-      console.log(`[Viewer] Total extracted ${expressIdToColor.size} element material colors from IFC`);
-
-      // Apply colors to model
-      if (expressIdToColor.size > 0) {
-        const colorGroups = new Map<string, number[]>();
-        for (const [expressId, color] of expressIdToColor) {
-          const key = color.getHexString();
-          if (!colorGroups.has(key)) colorGroups.set(key, []);
-          colorGroups.get(key)!.push(expressId);
-        }
-
-        for (const [hex, ids] of colorGroups) {
-          try {
-            const color = new THREE.Color('#' + hex);
-            await model.setColor(ids, color);
-          } catch (e) {
-            // Some IDs may not have geometry, skip silently
-          }
-        }
-
-        console.log(`[Viewer] Applied ${colorGroups.size} distinct material colors to model`);
-      }
-    } finally {
-      ifcApi.CloseModel(modelId);
-      (ifcApi as any).wasmModule = undefined;
-    }
-  }
-
   private async ensureModelRegistered(model: any): Promise<void> {
     if (!model) return;
     const modelId = this.getModelInternalId(model, '');
@@ -3482,22 +3076,6 @@ class ViewerApp {
     this.navigateToCubeTarget('top');
   }
 
-  private setRightView(): void {
-    this.navigateToCubeTarget('right');
-  }
-
-  private setLeftView(): void {
-    this.navigateToCubeTarget('left');
-  }
-
-  private setBackView(): void {
-    this.navigateToCubeTarget('back');
-  }
-
-  private setBottomView(): void {
-    this.navigateToCubeTarget('bottom');
-  }
-
   private setHomeView(): void {
     const bbox = this.getModelBoundingBox();
     if (!bbox || bbox.isEmpty()) return;
@@ -3532,7 +3110,7 @@ class ViewerApp {
       const screenX = centerX + this.cubeProjectedPoint.x * perspectiveScale;
       const screenY = centerY - this.cubeProjectedPoint.y * perspectiveScale;
 
-      let visible = false;
+      let visible: boolean;
       if (target.kind === 'face') {
         this.cubeProjectedNormal.set(x, y, z).normalize().applyQuaternion(this.cubeDisplayQuaternion);
         visible = this.cubeProjectedNormal.z > 0.08;
@@ -3644,7 +3222,7 @@ class ViewerApp {
     // (renders on top of model geometry and not clipped by section planes)
     const plane = this.clipper.list.get(planeId);
     if (plane) {
-      const renderer = this.world.renderer!.three as THREE.WebGLRenderer;
+      const renderer = this.world.renderer!.three;
       renderer.localClippingEnabled = true;
       const gizmoHelper = (plane as any)._controls.getHelper();
       gizmoHelper.traverse((child: THREE.Object3D) => {
@@ -3935,7 +3513,10 @@ class ViewerApp {
     if (typeof normalized === 'object') {
       return this.summarizeObject(normalized as Record<string, unknown>);
     }
-    return String(normalized);
+    // `unknown` cannot be subtract-narrowed: every object/array/date shape has
+    // already returned above, so only stringifiable primitives remain here.
+    const primitive = normalized as string | number | boolean | bigint | symbol;
+    return String(primitive);
   }
 
   private flattenPropertyEntries(
@@ -4066,7 +3647,10 @@ class ViewerApp {
       return;
     }
 
-    output.push([prefix, String(normalized)]);
+    // `unknown` cannot be subtract-narrowed: every object/array/date shape has
+    // already returned above, so only stringifiable primitives remain here.
+    const primitive = normalized as string | number | boolean | bigint | symbol;
+    output.push([prefix, String(primitive)]);
   }
 
   private prettifyPropertyLabel(label: string): string {
@@ -4690,7 +4274,7 @@ class ViewerApp {
     });
   }
 
-  private async createIssueFromCurrentContext(): Promise<void> {
+  private createIssueFromCurrentContext(): void {
     const title = this.dom.issueTitle.value.trim();
     if (!title) {
       this.setStatus('Issue title is required');
@@ -5176,7 +4760,7 @@ class ViewerApp {
         this.dom.btnIssuePinMode.click();
         break;
       case 'delete':
-        this.deleteSelectedIssue();
+        this.fireAndForget(this.deleteSelectedIssue(), 'Delete issue');
         break;
       case 'enter':
         if (this.measureMode === 'area') this.areaMeasurement.endCreation();

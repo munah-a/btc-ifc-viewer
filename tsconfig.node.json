@@ -1,6 +1,6 @@
 {
     "compilerOptions": {
-        "target": "ES2020",
+        "target": "ES2022",
         "module": "ESNext",
         "moduleResolution": "bundler",
         "strict": true,
@@ -12,13 +12,15 @@
         "noEmit": true,
         "noUnusedLocals": true,
         "noUnusedParameters": true,
-        "types": ["vite/client"]
+        "types": ["node"]
     },
     "include": [
-        "src/**/*"
-    ],
-    "exclude": [
-        "node_modules",
-        "dist"
+        "e2e/**/*",
+        "scripts/**/*",
+        "tests/**/*",
+        "vite.config.ts",
+        "vite.e2e.config.ts",
+        "vitest.config.ts",
+        "playwright.config.ts"
     ]
 }

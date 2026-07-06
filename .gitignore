@@ -5,3 +5,8 @@ dist/
 playwright-report/
 test-results/
 .tmp-playwright/
+.vercel
+
+# vendored at build time by scripts/vendor-assets.mjs (versions track package-lock)
+public/web-ifc.wasm
+public/worker.mjs

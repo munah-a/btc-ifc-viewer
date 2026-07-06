@@ -1,0 +1,113 @@
+/* ============================================================
+   BIM Tech Consulting — Shared document / print stylesheet
+   Used by all print-ready templates (A4 / DIN).
+   Pairs with colors_and_type.css (tokens + type scale).
+   ============================================================ */
+
+/* ── Screen backdrop: documents sit as sheets on a tinted desk ── */
+body.doc {
+  background: var(--surface-dim);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  padding: 40px 24px 80px;
+  min-height: 100dvh;
+}
+
+/* A toolbar that appears only on screen (hidden in print) */
+.doc-toolbar {
+  position: sticky;
+  top: 16px;
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px 10px 20px;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-float);
+  font-family: var(--font-body);
+}
+.doc-toolbar .tb-title {
+  font-size: var(--label-md);
+  font-weight: 600;
+  color: var(--on-surface);
+  letter-spacing: 0.01em;
+}
+.doc-toolbar .tb-hint {
+  font-size: var(--label-sm);
+  color: var(--on-surface-variant);
+}
+.doc-toolbar button {
+  height: 38px;
+  padding: 0 18px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  color: var(--on-primary);
+  font-family: var(--font-body);
+  font-size: var(--body-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.doc-toolbar button:hover { background: var(--primary-container); }
+.doc-toolbar button.ghost { background: var(--surface-container-low); color: var(--primary); }
+.doc-toolbar button.ghost:hover { background: var(--surface-container-high); }
+
+/* ── The A4 sheet ───────────────────────────────────────── */
+.sheet {
+  position: relative;
+  width: 210mm;
+  min-height: 297mm;
+  background: var(--surface-container-lowest);
+  color: var(--on-surface);
+  box-shadow: var(--shadow-float);
+  overflow: hidden;
+  font-family: var(--font-body);
+}
+.sheet.landscape { width: 297mm; min-height: 210mm; }
+
+/* Editable fields look seamless on screen, clean in print */
+[contenteditable] { outline: none; }
+[contenteditable]:focus {
+  background: var(--primary-fixed);
+  border-radius: 3px;
+  box-shadow: 0 0 0 3px var(--primary-fixed);
+}
+input.cell, .cell {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  border: none;
+  background: transparent;
+  width: 100%;
+}
+input.cell:focus { outline: none; background: var(--primary-fixed); border-radius: 3px; }
+
+/* Tabular numbers helper */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* ── Print rules ────────────────────────────────────────── */
+@media print {
+  html, body { background: #fff; }
+  body.doc { display: block; padding: 0; gap: 0; background: #fff; }
+  .doc-toolbar, .screen-only { display: none !important; }
+  .sheet {
+    box-shadow: none;
+    margin: 0;
+    width: 210mm;
+    min-height: 297mm;
+    page-break-after: always;
+    break-after: page;
+  }
+  .sheet.landscape { width: 297mm; min-height: 210mm; }
+  .sheet:last-of-type { page-break-after: auto; break-after: auto; }
+  [contenteditable]:focus { background: transparent; box-shadow: none; }
+}
+
+@page { size: A4; margin: 0; }
+@page landscape { size: A4 landscape; margin: 0; }

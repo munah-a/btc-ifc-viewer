@@ -1,3 +1,6 @@
+# GitHub Pages mirror deploy (Vercel is the primary target — see
+# docs/IMPLEMENTATION_PLAN.md W0.6). Gated on the CI workflow (AUDIT T1);
+# actions pinned to full commit SHAs (AUDIT T9), tag noted per pin.
 name: Deploy to GitHub Pages
 
 on:
@@ -15,20 +18,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  ci:
+    # Red CI blocks deploy (AUDIT T1).
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   build:
+    needs: ci
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - run: npm ci
       - run: npm run build
+        env:
+          # GitHub Pages mirror serves under the repo subpath (AUDIT P8).
+          VITE_BASE: /btc-ifc-viewer/
 
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: dist
 
@@ -40,4 +53,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

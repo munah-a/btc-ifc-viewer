@@ -5,26 +5,52 @@
   "description": "ThatOpen Engine BIM Viewer - Proof of Concept",
   "type": "module",
   "scripts": {
+    "vendor-assets": "node scripts/vendor-assets.mjs",
+    "predev": "node scripts/vendor-assets.mjs",
     "dev": "vite",
+    "predev:e2e": "node scripts/vendor-assets.mjs",
     "dev:e2e": "vite --config vite.e2e.config.ts",
+    "prebuild": "node scripts/vendor-assets.mjs",
     "build": "vite build",
+    "prebuild:e2e": "node scripts/vendor-assets.mjs",
+    "build:e2e": "vite build --config vite.e2e.config.ts",
     "preview": "vite preview",
+    "preview:e2e": "vite preview --config vite.e2e.config.ts",
+    "e2e:serve": "npm run build:e2e && npm run preview:e2e",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:unit": "vitest run",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:install": "playwright install chromium",
     "test:e2e:ui": "playwright test --ui"
   },
   "dependencies": {
-    "@thatopen/components": "^3.3.0",
-    "@thatopen/components-front": "^3.3.0",
-    "@thatopen/fragments": "^3.3.0",
+    "@thatopen/components": "~3.3.0",
+    "@thatopen/components-front": "~3.3.0",
+    "@thatopen/fragments": "~3.3.0",
     "three": "^0.175.0",
-    "web-ifc": "^0.0.74"
+    "web-ifc": "0.0.74"
+  },
+  "overrides": {
+    "@thatopen/components": {
+      "fast-xml-parser": "^5.7.2"
+    }
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.58.2",
+    "@types/node": "^26.1.0",
     "@types/three": "^0.175.0",
+    "eslint": "^10.6.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.4",
     "typescript": "^5.3.0",
-    "vite": "^5.4.0"
+    "typescript-eslint": "^8.62.1",
+    "vite": "^5.4.0",
+    "vitest": "^4.1.9"
   }
 }

@@ -1,21 +1,9 @@
-import { defineConfig, Plugin } from 'vite';
+import { defineConfig } from 'vite';
 
-function wasmMimePlugin(): Plugin {
-    return {
-        name: 'wasm-mime-type',
-        configureServer(server) {
-            server.middlewares.use((req, res, next) => {
-                if (req.url?.endsWith('.wasm')) {
-                    res.setHeader('Content-Type', 'application/wasm');
-                }
-                next();
-            });
-        },
-    };
-}
-
+// Base is env-driven (AUDIT P8): Vercel (primary) serves at '/', the GitHub
+// Pages mirror sets VITE_BASE=/btc-ifc-viewer/ in its workflow.
 export default defineConfig({
-    base: '/btc-ifc-viewer/',
+    base: process.env.VITE_BASE ?? '/',
     root: './src',
     publicDir: '../public',
     build: {
@@ -29,5 +17,4 @@ export default defineConfig({
     optimizeDeps: {
         exclude: ['web-ifc'],
     },
-    plugins: [wasmMimePlugin()],
 });
