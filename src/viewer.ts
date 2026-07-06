@@ -44,6 +44,7 @@ import {
   type Language,
 } from './core/i18n';
 import { bootstrapEngine, createFpsMonitor, ShaderWarningFilter } from './core/viewer-core';
+import { exportObjectsToGlb, hasActiveClipping, isValidGlb } from './core/glb-export';
 import type { TestItemRef, ViewerTestApi } from './core/test-api';
 import { getViewCubeAxes, getViewCubeNavigationDistance, resolveViewCubeCameraUp } from './core/view-cube';
 import { buildEdgeOverlays } from './tools/edges';
@@ -377,6 +378,7 @@ class ViewerApp {
       this.hideLoadError();
     });
 
+    this.dom.btnExportGlb.addEventListener('click', () => this.fireAndForget(this.exportGlb(), 'Export GLB'));
     this.dom.btnExportScreenshot.addEventListener('click', () => this.exportScreenshot());
     this.dom.btnExportState.addEventListener('click', () => this.exportViewerState());
     this.dom.btnImportState.addEventListener('click', () => this.dom.importStateInput.click());
@@ -3106,6 +3108,34 @@ class ViewerApp {
       });
   }
 
+  /**
+   * W4.5: exports the current visibility/isolation state to a binary GLB for
+   * PowerPoint Insert → 3D Models. `onlyVisible` in the exporter honours
+   * hide/isolate; section-clipped geometry is a render-time effect and stays in
+   * the mesh, so we warn when clipping is active.
+   */
+  private async exportGlb(): Promise<void> {
+    if (this.modelObjects.length === 0) {
+      this.showToast(t('share.glbNoModel'), 'error');
+      this.setStatus(t('share.glbNoModel'));
+      return;
+    }
+    this.setStatus(t('share.glbExporting'));
+    try {
+      const buffer = await exportObjectsToGlb(this.modelObjects);
+      const blob = new Blob([buffer], { type: 'model/gltf-binary' });
+      const name = `bim-model-${new Date().toISOString().replace(/[:.]/g, '-')}.glb`;
+      downloadBlob(name, blob);
+      if (hasActiveClipping(this.clipper.enabled, this.clipper.list.size)) {
+        this.showToast(t('share.glbClippingWarning'), 'info', 6000);
+      }
+      this.setStatus(t('share.glbExported'));
+    } catch (error) {
+      this.showToast(t('share.glbFailed', { error: serializeError(error) }), 'error');
+      this.setStatus(t('share.glbFailed', { error: serializeError(error) }));
+    }
+  }
+
   private exportViewerState(): void {
     const payload = this.getPersistedState();
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -3551,6 +3581,10 @@ class ViewerApp {
           -((clientY - rect.top) / rect.height) * 2 + 1,
         );
         return this.pickAndSelect(ndc);
+      },
+      exportGlbBytes: async (): Promise<{ byteLength: number; valid: boolean }> => {
+        const buffer = await exportObjectsToGlb(this.modelObjects);
+        return { byteLength: buffer.byteLength, valid: isValidGlb(buffer) };
       },
     };
     return Object.freeze(api);

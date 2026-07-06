@@ -24,6 +24,8 @@ export function createDomCache() {
     btnUpload: required<HTMLButtonElement>('btnUpload'),
     btnUploadEmpty: required<HTMLButtonElement>('btnUploadEmpty'),
     fileInput: required<HTMLInputElement>('fileInput'),
+    btnShare: required<HTMLButtonElement>('btnShare'),
+    btnExportGlb: required<HTMLButtonElement>('btnExportGlb'),
     btnExportScreenshot: required<HTMLButtonElement>('btnExportScreenshot'),
     btnExportState: required<HTMLButtonElement>('btnExportState'),
     btnImportState: required<HTMLButtonElement>('btnImportState'),
