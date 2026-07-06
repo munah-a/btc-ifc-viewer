@@ -401,13 +401,21 @@ test.describe('selection & search', () => {
     expect(disjoint).not.toBeNull();
     if (!disjoint) return;
 
-    const visibleBefore = await page.locator('#visibleCount').textContent();
-    // Filter chips apply immediately on toggle (design: no Apply button).
+    // Filter chips apply immediately on toggle (design: no Apply button), so
+    // the first (valid) chip already reduces visibility. Capture the state just
+    // BEFORE the disjoint second chip; F11 requires that click leaves it
+    // untouched (and >0) rather than hiding the whole model.
+    const readVisible = async (): Promise<number> =>
+      Number((await page.locator('#visibleCount').textContent())?.replace(/\D/g, '') || '0');
     await page.click(`.filter-chip[data-filter-type="class"][data-filter-value="${disjoint.className}"]`);
+    await waitForStatus(page, 'Filters applied');
+    const visibleBeforeDisjoint = await readVisible();
+    expect(visibleBeforeDisjoint).toBeGreaterThan(0);
+
     await page.click(`.filter-chip[data-filter-type="level"][data-filter-value="${disjoint.levelName}"]`);
     await expect(page.locator('.toast-warning')).toBeVisible();
     await waitForStatus(page, 'Selected filters have no elements in common');
-    await expect(page.locator('#visibleCount')).toHaveText(visibleBefore || '');
+    expect(await readVisible()).toBe(visibleBeforeDisjoint);
 
     // Toggling the chips back off clears the filter (shows all).
     await page.click(`.filter-chip[data-filter-type="class"][data-filter-value="${disjoint.className}"]`);
@@ -479,19 +487,20 @@ test.describe('properties panel', () => {
       { timeout: STATE_TIMEOUT },
     );
     const propertiesScrollState = await page.evaluate(() => {
-      const sections = document.querySelector('#propSections');
-      const panel = document.querySelector('#panel-properties');
-      if (!sections) return null;
+      // W3: the panel body (.side-panel-body) is the scroll container; sections
+      // grow within it. Verify the body scrolls and all sections start open.
+      const body = document.querySelector('.side-panel-body');
+      if (!body) return null;
       return {
-        panelOverflowY: panel ? getComputedStyle(panel).overflowY : null,
-        sectionsOverflowY: getComputedStyle(sections).overflowY,
+        bodyOverflowY: getComputedStyle(body).overflowY,
+        scrollable: body.scrollHeight > body.clientHeight,
         sectionCount: document.querySelectorAll('.prop-section').length,
         openSectionCount: document.querySelectorAll('.prop-section[open]').length,
       };
     });
     expect(propertiesScrollState).not.toBeNull();
-    expect(propertiesScrollState?.panelOverflowY).toBe('hidden');
-    expect(propertiesScrollState?.sectionsOverflowY).toBe('auto');
+    expect(propertiesScrollState?.bodyOverflowY).toBe('auto');
+    expect(propertiesScrollState?.scrollable).toBe(true);
     expect(propertiesScrollState?.openSectionCount).toBe(propertiesScrollState?.sectionCount);
     // W3: tools live on the left rail; it must stay within the viewport height.
     await expect(page.locator('.tool-rail')).toBeVisible();

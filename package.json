@@ -44,10 +44,12 @@
     }
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
     "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.58.2",
     "@types/node": "^26.1.0",
     "@types/three": "^0.175.0",
+    "axe-core": "^4.12.1",
     "cross-env": "^10.1.0",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",
