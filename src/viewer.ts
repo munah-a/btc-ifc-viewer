@@ -47,6 +47,7 @@ import type {
   TransformVector3,
 } from './core/viewer-types';
 import { hydrateIcons, icon, setIcon, type IconName } from './ui/icons';
+import { buildFederationTreeMarkup } from './ui/federation-panel';
 import {
   buildModelBrowserMarkup,
   getClassIdsForModelLevel,
@@ -1661,115 +1662,12 @@ class ViewerApp {
   }
 
   private renderFederatedTree(): void {
-    if (this.federatedModels.size === 0) {
+    const markup = buildFederationTreeMarkup(this.federatedModels, this.modelIndices, this.activeGizmoModelId);
+    if (markup === null) {
       this.dom.federationTree.innerHTML = '<div class="tree-item">No models loaded yet</div>';
       return;
     }
-
-    const cards = [...this.federatedModels.values()]
-      .map((record) => {
-        const modelId = String(record.modelId);
-        const escapedModelId = escapeHtml(modelId);
-        const opacityPct = Math.round(this.clamp(record.opacity, 0, 1) * 100);
-        const visibilityLabel = record.visible ? 'Hide' : 'Show';
-        const visibilityStateClass = record.visible ? '' : 'is-off';
-        const gizmoStateClass = this.activeGizmoModelId === modelId ? 'is-active' : '';
-        const levels = this.modelIndices.get(record.modelId)?.levels;
-        const levelEntries = levels ? [...levels.entries()] : [];
-        const levelMarkup = levelEntries.length === 0
-          ? '<div class="federated-level-empty">No storeys found</div>'
-          : levelEntries
-            .slice(0, 80)
-            .map(([levelName, ids]) => `
-              <button
-                class="federated-level-btn"
-                type="button"
-                data-model-id="${escapedModelId}"
-                data-level="${escapeHtml(levelName)}"
-                title="Isolate level ${escapeHtml(levelName)}"
-              >
-                ${escapeHtml(levelName)} (${ids.size})
-              </button>
-            `)
-            .join('');
-
-        return `
-          <div class="federated-model">
-            <div class="federated-model-header">
-              <div class="federated-header-row">
-                <button
-                  class="federated-model-name-btn"
-                  type="button"
-                  data-model-id="${escapedModelId}"
-                  data-model-action="select-model"
-                  title="Select full model"
-                >
-                  ${escapeHtml(record.fileName)}
-                </button>
-                <button
-                  class="federated-model-btn federated-visibility-btn ${visibilityStateClass}"
-                  type="button"
-                  data-model-id="${escapedModelId}"
-                  data-model-action="toggle-visibility"
-                >
-                  ${visibilityLabel}
-                </button>
-              </div>
-              <div class="federated-model-meta">
-                ${escapedModelId} | ${record.elementCount} elements | ${this.formatModelSize(record.sizeBytes)}
-              </div>
-            </div>
-
-            <div class="federated-opacity">
-              <div class="federated-opacity-head">
-                <span>Opacity</span>
-                <span data-opacity-value>${opacityPct}%</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                value="${opacityPct}"
-                data-model-id="${escapedModelId}"
-                data-model-opacity="1"
-              />
-            </div>
-
-            <div class="federated-transform-title">Offset XYZ</div>
-            <div class="federated-transform-grid">
-              <label>X<input type="number" step="0.1" value="${record.offsetPosition.x.toFixed(2)}" data-model-id="${escapedModelId}" data-transform="px" /></label>
-              <label>Y<input type="number" step="0.1" value="${record.offsetPosition.y.toFixed(2)}" data-model-id="${escapedModelId}" data-transform="py" /></label>
-              <label>Z<input type="number" step="0.1" value="${record.offsetPosition.z.toFixed(2)}" data-model-id="${escapedModelId}" data-transform="pz" /></label>
-            </div>
-
-            <div class="federated-transform-title">Rotation XYZ (deg)</div>
-            <div class="federated-transform-grid">
-              <label>Rx<input type="number" step="1" value="${record.offsetRotation.x.toFixed(1)}" data-model-id="${escapedModelId}" data-transform="rx" /></label>
-              <label>Ry<input type="number" step="1" value="${record.offsetRotation.y.toFixed(1)}" data-model-id="${escapedModelId}" data-transform="ry" /></label>
-              <label>Rz<input type="number" step="1" value="${record.offsetRotation.z.toFixed(1)}" data-model-id="${escapedModelId}" data-transform="rz" /></label>
-            </div>
-
-            <div class="federated-model-actions">
-              <button class="federated-model-btn" type="button" data-model-id="${escapedModelId}" data-model-action="select-model">Select</button>
-              <button class="federated-model-btn ${gizmoStateClass}" type="button" data-model-id="${escapedModelId}" data-model-action="toggle-gizmo">Gizmo</button>
-              <button class="federated-model-btn" type="button" data-model-id="${escapedModelId}" data-model-action="fit">Fit</button>
-              <button class="federated-model-btn" type="button" data-model-id="${escapedModelId}" data-model-action="reset">Reset</button>
-              <button class="federated-model-btn federated-unload-btn" type="button" data-model-id="${escapedModelId}" data-model-action="unload" title="Unload model and free its memory">Unload</button>
-            </div>
-
-            <div class="federated-levels">
-              <details>
-                <summary>Levels (${levelEntries.length})</summary>
-                <div class="federated-level-list">${levelMarkup}</div>
-              </details>
-            </div>
-          </div>
-        `;
-      })
-      .join('');
-
-    this.dom.federationTree.innerHTML = cards;
+    this.dom.federationTree.innerHTML = markup;
   }
 
   private normalizeHexColor(value: string | null | undefined, fallback = DEFAULT_BACKGROUND_COLOR): string {
@@ -1938,11 +1836,6 @@ class ViewerApp {
 
     if (persist) this.persistLocalState();
     if (updateStatus) this.setStatus(`Visual style: ${this.getVisualStyleLabel(resolvedStyle)}`);
-  }
-
-  private formatModelSize(sizeBytes: number): string {
-    if (!sizeBytes || sizeBytes <= 0) return '-';
-    return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
   }
 
   private clamp(value: number, min: number, max: number): number {
