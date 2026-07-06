@@ -91,6 +91,9 @@ export const en = {
   'status.filtersApplied': 'Filters applied',
   'status.searchMatches': 'Search found {count} matches',
   'status.batchLoaded': 'Loaded {count} IFC models',
+  'status.batchFailedAll': 'Failed to load {names}',
+  'status.batchFailedSome': 'Loaded {ok}/{total} IFC files — failed: {names}',
+  'status.notValidIfc': 'Not a valid IFC file (missing ISO-10303-21 header).',
   'status.modelLoadedOk': 'Model loaded successfully',
   'status.modelAlreadyLoading': 'A model is already loading. Please wait…',
   'status.loadingModel': 'Loading model…',
@@ -143,6 +146,7 @@ export const en = {
   'confirm.ok': 'Confirm',
   'confirm.cancel': 'Cancel',
   'confirm.unload': 'Unload',
+  'confirm.delete': 'Delete',
 
   // ---- loading / progress ----
   'load.parsingBatch': 'Parsing IFC {index}/{total}…',
@@ -200,6 +204,9 @@ export const en = {
   'tree.spatialStructure': 'Spatial structure',
   'tree.noLevelsDetected': 'No levels detected',
   'tree.noSpatialData': 'No spatial tree data',
+  'tree.isolate': 'Isolate',
+  'tree.isolateLevel': 'Isolate level',
+  'tree.select': 'Select',
 
   // ---- federation panel (passed into the pure builder) ----
   'fed.show': 'Show',
@@ -224,6 +231,7 @@ export const en = {
   'issue.linked': '{count} linked · {models} model(s)',
   'issue.noLink': 'No element link',
   'issue.comments': 'Comments',
+  'issue.deleteTitle': 'Delete issue',
 
   // ---- viewpoint list (passed into the pure builder) ----
   'vp.apply': 'Apply',
@@ -237,6 +245,13 @@ export const en = {
   'style.colorPenShadows': 'Colour pen shadows',
   'measure.length': 'Length',
   'measure.area': 'Area',
+
+  // ---- mobile "More" sheet toggles (plain labels, no keyboard hints) ----
+  'mobileSheet.xray': 'X-ray',
+  'mobileSheet.edges': 'Edges',
+  'mobileSheet.grid': 'Grid',
+  'mobileSheet.lightTheme': 'Light theme',
+  'mobileSheet.style': 'Style',
 
   // ---- static shell (index.html data-i18n / data-i18n-attr) ----
   'shell.skipNav': 'Skip to viewer',
@@ -435,6 +450,9 @@ export const de: Record<MessageKey, string> = {
   'status.filtersApplied': 'Filter angewendet',
   'status.searchMatches': 'Suche fand {count} Treffer',
   'status.batchLoaded': '{count} IFC-Modelle geladen',
+  'status.batchFailedAll': 'Laden fehlgeschlagen: {names}',
+  'status.batchFailedSome': '{ok}/{total} IFC-Dateien geladen — fehlgeschlagen: {names}',
+  'status.notValidIfc': 'Keine gültige IFC-Datei (ISO-10303-21-Kopf fehlt).',
   'status.modelLoadedOk': 'Modell erfolgreich geladen',
   'status.modelAlreadyLoading': 'Ein Modell wird bereits geladen. Bitte warten…',
   'status.loadingModel': 'Modell wird geladen…',
@@ -487,6 +505,7 @@ export const de: Record<MessageKey, string> = {
   'confirm.ok': 'Bestätigen',
   'confirm.cancel': 'Abbrechen',
   'confirm.unload': 'Entladen',
+  'confirm.delete': 'Löschen',
 
   // ---- loading / progress ----
   'load.parsingBatch': 'IFC {index}/{total} wird gelesen…',
@@ -544,6 +563,9 @@ export const de: Record<MessageKey, string> = {
   'tree.spatialStructure': 'Räumliche Struktur',
   'tree.noLevelsDetected': 'Keine Geschosse erkannt',
   'tree.noSpatialData': 'Keine räumlichen Baumdaten',
+  'tree.isolate': 'Isolieren',
+  'tree.isolateLevel': 'Geschoss isolieren',
+  'tree.select': 'Auswählen',
 
   // ---- federation panel ----
   'fed.show': 'Einblenden',
@@ -568,6 +590,7 @@ export const de: Record<MessageKey, string> = {
   'issue.linked': '{count} verknüpft · {models} Modell(e)',
   'issue.noLink': 'Keine Elementverknüpfung',
   'issue.comments': 'Kommentare',
+  'issue.deleteTitle': 'Aufgabe löschen',
 
   // ---- viewpoint list ----
   'vp.apply': 'Anwenden',
@@ -581,6 +604,13 @@ export const de: Record<MessageKey, string> = {
   'style.colorPenShadows': 'Farbstift mit Schatten',
   'measure.length': 'Länge',
   'measure.area': 'Fläche',
+
+  // ---- mobile "More" sheet toggles ----
+  'mobileSheet.xray': 'Röntgenansicht',
+  'mobileSheet.edges': 'Kanten',
+  'mobileSheet.grid': 'Raster',
+  'mobileSheet.lightTheme': 'Helles Design',
+  'mobileSheet.style': 'Stil',
 
   // ---- static shell ----
   'shell.skipNav': 'Zum Viewer springen',

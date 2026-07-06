@@ -10,6 +10,8 @@
 
 export type SelectionMode = 'single' | 'multi';
 export type NavigationMode = 'Orbit' | 'Plan' | 'FirstPerson';
+/** UI language (C7). Mirrors i18n.Language; kept local so persistence stays dep-free. */
+export type PersistedLanguage = 'en' | 'de';
 export type VisualStyle = 'basic' | 'pen' | 'color-pen' | 'color-shadows' | 'color-pen-shadows';
 /** Mirrors OBC.CameraProjection ("Perspective" | "Orthographic"). */
 export type CameraProjection = 'Perspective' | 'Orthographic';
@@ -77,6 +79,8 @@ export interface PersistedViewerState {
   /** F8: each theme remembers its own background. */
   backgroundByTheme?: { dark: string; light: string };
   theme?: 'dark' | 'light';
+  /** C7: persisted UI language so a restored session reopens in the same locale. */
+  language?: PersistedLanguage;
   viewpoints: SavedViewpoint[];
   issues: PersistedIssue[];
 }
@@ -244,6 +248,11 @@ export const normalizePersistedState = (raw: unknown): PersistedViewerState | nu
     backgroundColor: asHexColor(raw.backgroundColor),
     backgroundByTheme: dark && light ? { dark, light } : undefined,
     theme: asEnum<'dark' | 'light'>(raw.theme, ['dark', 'light'], 'dark'),
+    // C7: language is optional — undefined means "leave as-is" (the i18n module
+    // has its own persisted key), so we only carry a value when it's a valid enum.
+    language: typeof raw.language === 'string'
+      ? asEnum<PersistedLanguage>(raw.language, ['en', 'de'], 'en')
+      : undefined,
     viewpoints: Array.isArray(raw.viewpoints)
       ? raw.viewpoints.map(normalizeViewpoint).filter((viewpoint): viewpoint is SavedViewpoint => viewpoint !== null)
       : [],

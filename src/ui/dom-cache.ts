@@ -29,6 +29,8 @@ export function createDomCache() {
     btnImportState: required<HTMLButtonElement>('btnImportState'),
     importStateInput: required<HTMLInputElement>('importStateInput'),
     btnThemeToggle: required<HTMLButtonElement>('btnThemeToggle'),
+    btnLangToggle: required<HTMLButtonElement>('btnLangToggle'),
+    langCode: required<HTMLSpanElement>('langCode'),
     btnPanelToggle: required<HTMLButtonElement>('btnPanelToggle'),
     // Overlays
     emptyState: required<HTMLDivElement>('emptyState'),

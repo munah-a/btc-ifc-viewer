@@ -10,13 +10,25 @@ import { escapeHtml } from '../core/markup';
 import type { SavedViewpoint } from '../core/persistence';
 import { icon } from './icons';
 
+export interface ViewpointListLabels {
+  /** "Apply" (row action button). */
+  apply: string;
+  /** "Delete viewpoint" (button title/aria). */
+  deleteTitle: string;
+  /** Localized created-at timestamp (brand DD.MM.YYYY, HH:MM). */
+  formatDate(iso: string): string;
+}
+
 /**
  * Builds the viewpoint list markup. Returns `null` when there are no
- * viewpoints so the caller can render its own empty state.
+ * viewpoints so the caller can render its own empty state. i18n (C7): the
+ * caller passes already-translated labels + a date formatter so this stays
+ * DOM-free and language-agnostic.
  */
 export function buildViewpointListMarkup(
   viewpoints: SavedViewpoint[],
   selectedViewpointId: string | null,
+  labels: ViewpointListLabels,
 ): string | null {
   if (viewpoints.length === 0) return null;
 
@@ -34,10 +46,10 @@ export function buildViewpointListMarkup(
             ${thumbnail}
             <div class="vp-text">
               <div class="vp-name">${escapedName}</div>
-              <div class="vp-meta">${escapeHtml(new Date(entry.createdAt).toLocaleString())}</div>
+              <div class="vp-meta">${escapeHtml(labels.formatDate(entry.createdAt))}</div>
             </div>
-            <button type="button" class="row-btn" data-viewpoint-action="apply">Apply</button>
-            <button type="button" class="icon-btn-danger" data-viewpoint-action="delete" title="Delete viewpoint" aria-label="Delete viewpoint">${icon('delete', 16)}</button>
+            <button type="button" class="row-btn" data-viewpoint-action="apply">${escapeHtml(labels.apply)}</button>
+            <button type="button" class="icon-btn-danger" data-viewpoint-action="delete" title="${escapeHtml(labels.deleteTitle)}" aria-label="${escapeHtml(labels.deleteTitle)}">${icon('delete', 16)}</button>
           </div>
         </div>
       `;
