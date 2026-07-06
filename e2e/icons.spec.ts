@@ -24,7 +24,7 @@ test.describe('icon hydration (A18)', () => {
         ns: svg?.namespaceURI ?? null,
         w: rect ? Math.round(rect.width) : 0,
         h: rect ? Math.round(rect.height) : 0,
-        fill: svg ? getComputedStyle(svg as unknown as Element).fill : null,
+        fill: svg ? getComputedStyle(svg).fill : null,
       };
     });
     expect(info.found).toBe(true);
