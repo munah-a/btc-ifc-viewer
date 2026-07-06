@@ -36,6 +36,7 @@ import {
   type PropertySectionData,
 } from './core/property-engine';
 import { getClipperPlaneGizmoHelper, type FragmentsModelLike } from './core/fragments-model';
+import type { TestItemRef, ViewerTestApi } from './core/test-api';
 
 type MeasureMode = 'none' | 'length' | 'area';
 type CubeFaceKey = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom';
@@ -1070,11 +1071,10 @@ class ViewerApp {
     // Expose test/debug handles only in builds made with the explicit VITE_E2E
     // define (vite.e2e.config.ts) so e2e can exercise the real production
     // artifact (AUDIT T4). Plain dev/prod builds ship without these hooks.
+    // T6 (W2.5): expose ONLY the frozen, explicit test contract — not the whole
+    // instance or its private fields — and only in VITE_E2E builds.
     if (import.meta.env.VITE_E2E === 'true') {
-      (window as any).__viewer = this;
-      (window as any).__components = this.components;
-      (window as any).__world = this.world;
-      (window as any).__THREE = THREE;
+      window.__viewerTestApi = this.buildTestApi();
     }
 
     const grids = this.components.get(OBC.Grids);
@@ -3105,22 +3105,33 @@ class ViewerApp {
   }
 
   private async onViewerClick(_event: MouseEvent): Promise<void> {
-    if (this.pointerDragged || this.gizmoDragging || !!this.activeGizmoModelId) return;
+    await this.pickAndSelect();
+  }
+
+  /**
+   * The canvas selection path: raycast (at `position` if given, else the last
+   * pointer position), then apply measure/issue/single/multi selection exactly
+   * as a real click would. Returns the hit item, or null. `position` is used by
+   * the e2e test API (T6) to pick at explicit coordinates; production clicks
+   * pass nothing and behave exactly as before.
+   */
+  private async pickAndSelect(position?: THREE.Vector2): Promise<{ modelId: string; localId: number } | null> {
+    if (this.pointerDragged || this.gizmoDragging || !!this.activeGizmoModelId) return null;
 
     if (this.measureMode !== 'none') {
       if (this.measureMode === 'length') await this.lengthMeasurement.create();
       if (this.measureMode === 'area') await this.areaMeasurement.create();
-      return;
+      return null;
     }
 
-    const result = await this.raycaster.castRay() as any;
+    const result = await this.raycaster.castRay(position ? { position } : undefined) as any;
     if (!result || !result.fragments || result.localId === undefined) {
       if (this.selectionMode === 'single' && !this.issuePinMode) await this.clearSelection();
-      return;
+      return null;
     }
 
     const modelId = String(result.fragments.modelId);
-    if (!this.isLoadedModelId(modelId)) return;
+    if (!this.isLoadedModelId(modelId)) return null;
     const localId = result.localId as number;
     if (result.point) this.lastHitPoint = result.point.clone();
 
@@ -3129,16 +3140,17 @@ class ViewerApp {
       if (this.selectionMode === 'single') await this.selectSingleItem(modelId, localId, false);
       this.activateTab('issues');
       this.setStatus('Issue point captured. Fill issue form and create issue');
-      return;
+      return { modelId, localId };
     }
 
     if (this.selectionMode === 'single') {
       await this.selectSingleItem(modelId, localId, false);
-      return;
+      return { modelId, localId };
     }
 
     this.toggleSelectionItem(modelId, localId);
     await this.refreshSelectionVisuals();
+    return { modelId, localId };
   }
 
   private async selectSingleItem(modelId: string, localId: number, zoomToItem: boolean): Promise<void> {
@@ -4116,6 +4128,116 @@ class ViewerApp {
       document.body.appendChild(overlay);
       btnConfirm.focus();
     });
+  }
+
+  /**
+   * Builds the frozen e2e contract (T6). Only reached in VITE_E2E builds.
+   * Every member is a stable, documented accessor over viewer state/behavior;
+   * e2e must not reach past this object into private fields.
+   */
+  private buildTestApi(): ViewerTestApi {
+    const api: ViewerTestApi = {
+      version: 1,
+      modelCount: () => this.federatedModels.size,
+      indexedModelCount: () => this.modelIndices.size,
+      findItemByName: (keyword: string): TestItemRef | null => {
+        const needle = keyword.toLowerCase();
+        for (const [modelId, index] of this.modelIndices.entries()) {
+          for (const [localId, name] of index.itemNames.entries()) {
+            if (!index.allIds.has(localId) || !name) continue;
+            if (name.toLowerCase().includes(needle)) return { modelId, localId };
+          }
+        }
+        return null;
+      },
+      firstModelId: (): string | null => {
+        for (const modelId of this.federatedModels.keys()) return modelId;
+        return null;
+      },
+      findDisjointClassLevel: () => {
+        const index = this.modelIndices.values().next().value;
+        if (!index) return null;
+        for (const [className, classIds] of index.classes.entries()) {
+          for (const [levelName, levelIds] of index.levels.entries()) {
+            let overlaps = false;
+            for (const id of classIds) {
+              if (levelIds.has(id)) { overlaps = true; break; }
+            }
+            if (!overlaps) return { className, levelName };
+          }
+        }
+        return null;
+      },
+      firstModelContext: () => {
+        const firstEntry = this.modelIndices.entries().next().value;
+        if (!firstEntry) return null;
+        const [modelId, index] = firstEntry;
+        let firstNamed: { id: number; name: string } | null = null;
+        for (const [id, name] of index.itemNames.entries()) {
+          if (!index.allIds.has(id) || !name) continue;
+          firstNamed = { id, name };
+          break;
+        }
+        return {
+          modelId,
+          searchTerm: firstNamed?.name || index.classes.keys().next().value || '',
+          firstItemId: firstNamed?.id ?? index.allIds.values().next().value ?? 0,
+        };
+      },
+      selectionCount: () => countMapItems(this.selectedItems),
+      isXrayEnabled: () => this.xrayEnabled,
+      isEdgesEnabled: () => this.edgesEnabled,
+      activeGizmoModelId: () => this.activeGizmoModelId,
+      viewpointCount: () => this.viewpoints.length,
+      issueCount: () => this.issues.length,
+      firstViewpointSnapshot: () => this.viewpoints[0]?.snapshot ?? null,
+      firstIssueLinkedCount: () => this.issues[0]?.localIds.length ?? 0,
+      firstIssueModelCount: () => Object.keys(this.issues[0]?.elementsByModel ?? {}).length,
+      firstIssueHasLegacyModelId: () => typeof this.issues[0]?.modelId === 'string',
+      engineModelState: () => ({
+        fragmentsCount: this.fragments.list.size,
+        federatedCount: this.federatedModels.size,
+        indexCount: this.modelIndices.size,
+        objectCount: this.modelObjects.length,
+      }),
+      cameraState: () => {
+        const camera = this.world.camera.three;
+        const target = new THREE.Vector3();
+        this.world.camera.controls.getTarget(target);
+        return {
+          position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+          target: { x: target.x, y: target.y, z: target.z },
+        };
+      },
+      anchorDirectionForCube: (localVector) => {
+        const anchor = this.getViewCubeAnchorModel();
+        if (!anchor) return null;
+        const basis = this.getViewCubeBasisQuaternion(new THREE.Quaternion());
+        const direction = new THREE.Vector3(localVector[0], localVector[1], localVector[2])
+          .normalize()
+          .applyQuaternion(basis)
+          .normalize();
+        return { x: direction.x, y: direction.y, z: direction.z };
+      },
+      selectItem: (modelId: string, localId: number, zoom = false): Promise<void> =>
+        this.selectSingleItem(modelId, localId, zoom),
+      selectFirstItemPerModel: async (): Promise<void> => {
+        clearMap(this.selectedItems);
+        for (const [modelId, index] of this.modelIndices.entries()) {
+          const firstId = index.allIds.values().next().value;
+          if (typeof firstId === 'number') this.selectedItems[modelId] = new Set([firstId]);
+        }
+        await this.refreshSelectionVisuals();
+      },
+      setVisualStyle: (style: string): Promise<void> =>
+        this.setVisualStyle(this.parseVisualStyle(style), false, false),
+      clickCanvasAt: async (clientX: number, clientY: number): Promise<TestItemRef | null> => {
+        const rect = this.dom.viewerContainer.getBoundingClientRect();
+        const position = new THREE.Vector2(clientX - rect.left, clientY - rect.top);
+        return this.pickAndSelect(position);
+      },
+    };
+    return Object.freeze(api);
   }
 
   private startFpsMonitor(): void {
