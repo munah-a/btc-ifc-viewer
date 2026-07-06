@@ -109,8 +109,16 @@ and to the final program exit):**
 3. **Functional click-through with real models loaded** — every button, input, slider, menu item and
    keyboard shortcut exercised against a loaded IFC fixture (e2e/fixtures/*.ifc) and verified to do
    what its label says. Broken-by-design items already logged in AUDIT.md are exempt until their wave.
+4. **Visual-fidelity sign-off on rebrand (user directive, 2026-07-06 — LOOP-EXIT GATE):** every UX/UI
+   change from the rebrand must be captured in **screenshots** (desktop/tablet/phone × dark/light ×
+   empty + panels-open states) and confirmed to **match the Claude Design mockup closely**. Where the
+   implementation deviates from the design (e.g. the design drops the interactive view-cube and the
+   desktop background-picker), the PO must call it out explicitly and get **user approval**. The loop
+   MUST NOT exit until the user has confirmed the rebrand look. W3 is not "done-done" until this
+   sign-off; the PO holds the W3 merge (or a follow-up) pending it.
 Wave orchestrators must include a console-capture + viewport sweep + interactive sweep in their gate
-evidence. The PO re-verifies in the live browser before opening each wave PR.
+evidence. The PO re-verifies in the live browser before opening each wave PR, and produces the
+rebrand screenshot set for user sign-off (criterion 4).
 
 ## 5. Wave task breakdowns
 
