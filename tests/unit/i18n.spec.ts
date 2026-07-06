@@ -65,7 +65,8 @@ describe('coerceLanguage', () => {
 
 describe('t() translation + interpolation', () => {
   it('returns the English string by default', () => {
-    expect(t('status.ready')).toBe('Ready — load IFC model(s)');
+    // Pinned to the pre-i18n hyphen form so the existing e2e app-ready waits match.
+    expect(t('status.ready')).toBe('Ready - load IFC model(s)');
   });
 
   it('returns the German string after switching', () => {
