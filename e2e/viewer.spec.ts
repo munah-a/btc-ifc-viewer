@@ -332,8 +332,10 @@ test.describe('selection & search', () => {
   });
 
   // T6 (W2.5): real canvas-pick selection coverage via the frozen test API.
-  // Fit the model so geometry fills the viewport, then pick at its center and
-  // assert an element gets selected. Restores single-select and clears after.
+  // Fit the model, then scan a grid of viewport points (the structural fixture
+  // is sparse — beams/columns leave gaps, so a single centre ray can miss) and
+  // require at least one to pick an element via the real castRay path. Then a
+  // click on empty corner space clears the selection.
   test('canvas click selects an element', async ({ appPage: page }) => {
     await page.click('#btnSelectSingle');
     await page.click('#btnFitAll');
@@ -342,12 +344,19 @@ test.describe('selection & search', () => {
     const hit = await page.evaluate(async () => {
       const rect = document.getElementById('viewer-container')?.getBoundingClientRect();
       if (!rect) return null;
-      const cx = rect.left + rect.width / 2;
-      const cy = rect.top + rect.height / 2;
-      return window.__viewerTestApi?.clickCanvasAt(cx, cy) ?? null;
+      // 5x5 interior grid — sparse geometry means many points miss, but a
+      // 1500-element model reliably covers several of the 25 candidates.
+      for (let row = 1; row <= 5; row += 1) {
+        for (let col = 1; col <= 5; col += 1) {
+          const x = rect.left + (rect.width * col) / 6;
+          const y = rect.top + (rect.height * row) / 6;
+          const result = await window.__viewerTestApi?.clickCanvasAt(x, y);
+          if (result) return result;
+        }
+      }
+      return null;
     });
 
-    // The structural fixture fills the fit view, so the center ray hits an element.
     expect(hit).not.toBeNull();
     await expect(page.locator('#selectionCount')).toHaveText(/1 selected/);
 
@@ -355,7 +364,7 @@ test.describe('selection & search', () => {
     await page.evaluate(async () => {
       const rect = document.getElementById('viewer-container')?.getBoundingClientRect();
       if (!rect) return;
-      await window.__viewerTestApi?.clickCanvasAt(rect.left + 3, rect.top + 3);
+      await window.__viewerTestApi?.clickCanvasAt(rect.left + 2, rect.top + 2);
     });
     await expect(page.locator('#selectionCount')).toHaveText(/0 selected/);
   });
