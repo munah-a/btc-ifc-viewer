@@ -2,6 +2,12 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "crons": [
+    {
+      "path": "/api/cron-cleanup",
+      "schedule": "0 3 * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/assets/(.*)",
@@ -18,6 +24,24 @@
         {
           "key": "Cache-Control",
           "value": "public, max-age=86400, must-revalidate"
+        }
+      ]
+    },
+    {
+      "source": "/embed.html",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "frame-ancestors 'self' *.officeapps.live.com teams.microsoft.com *.cloud.microsoft *.sharepoint.com miro.com *.notion.so *.atlassian.net"
+        }
+      ]
+    },
+    {
+      "source": "/embed",
+      "headers": [
+        {
+          "key": "Content-Security-Policy",
+          "value": "frame-ancestors 'self' *.officeapps.live.com teams.microsoft.com *.cloud.microsoft *.sharepoint.com miro.com *.notion.so *.atlassian.net"
         }
       ]
     }
