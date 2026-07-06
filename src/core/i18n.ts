@@ -241,6 +241,17 @@ export const en = {
   'vp.deleteTitle': 'Delete viewpoint',
 
   // ---- enum display maps (display only; stored value stays English) ----
+  // property section headings (property-engine produces stable ids; title localized at render)
+  'prop.identity': 'Identity',
+  'prop.type': 'Type',
+  'prop.dimensions': 'Dimensions',
+  'prop.location': 'Location',
+  'prop.levels': 'Levels',
+  'prop.materials': 'Materials',
+  'prop.quantities': 'Quantities',
+  'prop.relations': 'Relations',
+  'prop.raw': 'Raw IFC',
+
   'style.basic': 'Basic',
   'style.pen': 'Pen',
   'style.colorPen': 'Colour pen',
@@ -600,6 +611,17 @@ export const de: Record<MessageKey, string> = {
   'vp.deleteTitle': 'Blickpunkt löschen',
 
   // ---- enum display maps ----
+  // property section headings
+  'prop.identity': 'Identität',
+  'prop.type': 'Typ',
+  'prop.dimensions': 'Abmessungen',
+  'prop.location': 'Lage',
+  'prop.levels': 'Geschosse',
+  'prop.materials': 'Materialien',
+  'prop.quantities': 'Mengen',
+  'prop.relations': 'Beziehungen',
+  'prop.raw': 'Roh-IFC',
+
   'style.basic': 'Einfach',
   'style.pen': 'Stift',
   'style.colorPen': 'Farbstift',

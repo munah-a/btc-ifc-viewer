@@ -2551,7 +2551,21 @@ class ViewerApp {
   }
 
   private renderPropertySections(sections: PropertySectionData[]): void {
-    this.dom.propSections.innerHTML = buildPropertySectionsMarkup(sections);
+    // Localize the section headings by their stable id (C7). The property engine
+    // stays pure/English; only the displayed title is swapped here.
+    const titleKeys = {
+      identity: 'prop.identity',
+      type: 'prop.type',
+      dimensions: 'prop.dimensions',
+      location: 'prop.location',
+      levels: 'prop.levels',
+      materials: 'prop.materials',
+      quantities: 'prop.quantities',
+      relations: 'prop.relations',
+      raw: 'prop.raw',
+    } as const;
+    const localized = sections.map((section) => ({ ...section, title: t(titleKeys[section.id]) }));
+    this.dom.propSections.innerHTML = buildPropertySectionsMarkup(localized);
   }
 
   private applyPropertiesFilter(): void {
