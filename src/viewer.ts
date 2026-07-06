@@ -48,6 +48,7 @@ import type {
   TransformVector3,
 } from './core/viewer-types';
 import { createDomCache, type ViewerDom } from './ui/dom-cache';
+import { buildMobileSheet as buildMobileSheetView } from './ui/mobile-sheet';
 import { hydrateIcons, setIcon, type IconName } from './ui/icons';
 import { buildFederationTreeMarkup } from './ui/federation-panel';
 import { buildIssueCommentsMarkup, buildIssueListMarkup } from './ui/issues-panel';
@@ -791,53 +792,24 @@ class ViewerApp {
   }
 
   private buildMobileSheet(): void {
-    const toggles: Array<{ icon: IconName; label: string; on: boolean; onClick: () => void }> = [
-      { icon: 'blur_on', label: 'X-ray', on: this.xrayEnabled, onClick: () => this.toggleXray() },
-      { icon: 'border_style', label: 'Edges', on: this.edgesEnabled, onClick: () => this.toggleEdges() },
-      { icon: 'grid_on', label: 'Grid', on: this.gridVisible, onClick: () => { this.setGridVisible(!this.gridVisible, true); this.persistLocalState(); this.syncMobileSheet(); } },
-      { icon: this.themeMode === 'dark' ? 'dark_mode' : 'light_mode', label: 'Light theme', on: this.themeMode === 'light', onClick: () => this.toggleTheme() },
-    ];
-    this.dom.sheetBody.replaceChildren();
-    for (const t of toggles) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = `sheet-toggle${t.on ? ' is-active' : ''}`;
-      const iconSpan = document.createElement('span');
-      setIcon(iconSpan, t.icon);
-      const label = document.createElement('span');
-      label.textContent = t.label;
-      label.style.flex = '1';
-      const track = document.createElement('span');
-      track.className = 'sheet-toggle-track';
-      const knob = document.createElement('span');
-      knob.className = 'sheet-toggle-knob';
-      track.append(knob);
-      button.append(iconSpan, label, track);
-      button.addEventListener('click', t.onClick);
-      this.dom.sheetBody.append(button);
-    }
-    // Visual style selector
-    const field = document.createElement('label');
-    field.className = 'sheet-toggle';
-    field.style.gap = '10px';
-    const styleLabel = document.createElement('span');
-    styleLabel.textContent = 'Style';
-    styleLabel.style.flex = '1';
-    const select = document.createElement('select');
-    select.className = 'text-input';
-    select.style.width = 'auto';
-    for (const [value, label] of [['basic', 'Basic'], ['pen', 'Pen'], ['color-pen', 'Color pen'], ['color-shadows', 'Color shadows'], ['color-pen-shadows', 'Color pen shadows']] as const) {
-      const option = document.createElement('option');
-      option.value = value;
-      option.textContent = label;
-      if (value === this.visualStyle) option.selected = true;
-      select.append(option);
-    }
-    select.addEventListener('change', () => {
-      this.fireAndForget(this.setVisualStyle(this.parseVisualStyle(select.value), true, true, true), 'Set visual style');
-    });
-    field.append(styleLabel, select);
-    this.dom.sheetBody.append(field);
+    buildMobileSheetView(
+      this.dom.sheetBody,
+      {
+        xrayEnabled: this.xrayEnabled,
+        edgesEnabled: this.edgesEnabled,
+        gridVisible: this.gridVisible,
+        themeMode: this.themeMode,
+        visualStyle: this.visualStyle,
+      },
+      {
+        toggleXray: () => this.toggleXray(),
+        toggleEdges: () => this.toggleEdges(),
+        toggleGrid: () => { this.setGridVisible(!this.gridVisible, true); this.persistLocalState(); this.syncMobileSheet(); },
+        toggleTheme: () => this.toggleTheme(),
+        setVisualStyle: (value: string) =>
+          this.fireAndForget(this.setVisualStyle(this.parseVisualStyle(value), true, true, true), 'Set visual style'),
+      },
+    );
   }
 
   /** Keeps the More sheet's toggle states current when opened. */
