@@ -23,6 +23,18 @@ const ifcPath = path.join(process.cwd(), 'e2e', 'fixtures', 'school_str.ifc');
 // Resolved against playwright.config.ts baseURL (production preview at '/').
 const viewerUrl = '/';
 
+// CI runs on a 2-core SwiftShader runner where the render loop starves rAF
+// and everything render- or CPU-bound is several times slower (AUDIT T11).
+// Render-bound waits get extra headroom there; local runs stay snappy.
+const CI = Boolean(process.env.CI);
+const STATE_TIMEOUT = CI ? 45_000 : 20_000;
+const CAMERA_POLL_TIMEOUT = CI ? 30_000 : 15_000;
+const SLOW_STATUS_TIMEOUT = CI ? 60_000 : 30_000;
+// Matches playwright.config.ts `use.viewport`: worker-fixture contexts are
+// created via browser.newContext(), which does not inherit config options.
+// 1280x720 keeps the software-rasterizer pixel cost down on CI (T11).
+const VIEWPORT = { width: 1280, height: 720 };
+
 const waitForAppReady = async (page: Page): Promise<void> => {
   await page.goto(viewerUrl);
   // Waiting for 'Ready' in #statusText is racy: the F4 grid hack (500 ms
@@ -32,7 +44,7 @@ const waitForAppReady = async (page: Page): Promise<void> => {
   await page.waitForFunction(
     () => /\d+ FPS/.test(document.querySelector('#perfInfo')?.textContent || ''),
     undefined,
-    { timeout: 60_000 },
+    { timeout: CI ? 120_000 : 60_000 },
   );
 };
 
@@ -47,11 +59,11 @@ const waitForModelReady = async (page: Page): Promise<void> => {
         && elementText !== '0 elements';
     },
     undefined,
-    { timeout: 180_000 },
+    { timeout: CI ? 300_000 : 180_000 },
   );
 };
 
-const waitForStatus = async (page: Page, text: string, timeout = 20_000): Promise<void> => {
+const waitForStatus = async (page: Page, text: string, timeout = STATE_TIMEOUT): Promise<void> => {
   await page.waitForFunction(
     (expected) => (document.querySelector('#statusText')?.textContent || '').includes(expected),
     text,
@@ -125,14 +137,17 @@ const waitForCameraDirection = async (
   await expect
     .poll(
       async () => dotProduct(await getCameraDirection(page), normalizeVector(expected)),
-      { timeout: 15_000 },
+      { timeout: CAMERA_POLL_TIMEOUT },
     )
     .toBeGreaterThanOrEqual(threshold);
 };
 
 const waitForCameraMove = async (page: Page, before: CameraPosition): Promise<void> => {
   await expect
-    .poll(async () => cameraChanged(before, await getCameraPosition(page)), { timeout: 15_000 })
+    .poll(
+      async () => cameraChanged(before, await getCameraPosition(page)),
+      { timeout: CAMERA_POLL_TIMEOUT },
+    )
     .toBeTruthy();
 };
 
@@ -221,7 +236,7 @@ const ensureSingleSelection = async (page: Page): Promise<void> => {
   await page.waitForFunction(
     () => (document.querySelector('#selectionCount')?.textContent || '').startsWith('1 selected'),
     undefined,
-    { timeout: 20_000 },
+    { timeout: STATE_TIMEOUT },
   );
 };
 
@@ -241,12 +256,20 @@ const test = base.extend<NonNullable<unknown>, WorkerFixtures>({
     async ({ browser }, use) => {
       const context = await browser.newContext({
         acceptDownloads: true,
-        viewport: { width: 1600, height: 1000 },
+        viewport: VIEWPORT,
       });
       const page = await context.newPage();
       await waitForAppReady(page);
       await page.setInputFiles('#fileInput', ifcPath);
       await waitForModelReady(page);
+      // T11: drop the shared page to the cheapest visual style once the model
+      // is in. The default outlines+gloss preset starves rAF on the CI
+      // runner's SwiftShader, which makes Playwright's element-stability
+      // actionability check time out on every click. Tests that exercise
+      // visual styles set their own style explicitly and stay valid.
+      await page.evaluate(async () => {
+        await (window as any).__viewer.setVisualStyle('basic', false, false);
+      });
       await use(page);
       await context.close();
     },
@@ -393,10 +416,10 @@ test.describe('properties panel', () => {
     await page.waitForFunction(
       () => document.querySelectorAll('#panel-properties [data-prop-row]:not([hidden])').length > 20,
       undefined,
-      { timeout: 20_000 },
+      { timeout: STATE_TIMEOUT },
     );
 
-    await page.setViewportSize({ width: 1600, height: 500 });
+    await page.setViewportSize({ width: VIEWPORT.width, height: 500 });
     await waitForLayoutSettle(page);
     await page.evaluate(() => {
       const closedSections = Array.from(document.querySelectorAll<HTMLElement>('.prop-section:not([open]) .prop-section-summary'));
@@ -405,7 +428,7 @@ test.describe('properties panel', () => {
     await page.waitForFunction(
       () => document.querySelectorAll('#panel-properties [data-prop-row]:not([hidden])').length > 40,
       undefined,
-      { timeout: 20_000 },
+      { timeout: STATE_TIMEOUT },
     );
     const propertiesScrollState = await page.evaluate(() => {
       const sections = document.querySelector('#propSections');
@@ -433,7 +456,7 @@ test.describe('properties panel', () => {
     expect(dockBounds.y + dockBounds.height).toBeLessThanOrEqual(viewport.height);
 
     // Restore the shared fixture page for subsequent describe blocks.
-    await page.setViewportSize({ width: 1600, height: 1000 });
+    await page.setViewportSize(VIEWPORT);
     await waitForLayoutSettle(page);
     await page.click('.tab-btn[data-tab="explorer"]');
   });
@@ -505,6 +528,12 @@ test.describe('models panel', () => {
 
     await page.selectOption('#visualStyleSelect', 'color-pen-shadows');
     await waitForStatus(page, 'Visual style: Color Pen Shadows');
+
+    // T11: return the shared fixture page to the cheap style right after the
+    // heavy-preset assertion so the rest of the suite is not render-starved
+    // on the CI runner's SwiftShader.
+    await page.selectOption('#visualStyleSelect', 'basic');
+    await waitForStatus(page, 'Visual style: Basic');
 
     const gridWasChecked = await page.locator('#toggleGrid').isChecked();
     await page.click('#toggleGrid');
@@ -583,10 +612,10 @@ test.describe('viewpoints, issues & state persistence', () => {
     await page.click('.tab-btn[data-tab="viewpoints"]');
     await page.fill('#viewpointName', 'QA View');
     await page.click('#btnSaveViewpoint');
-    await waitForStatus(page, 'Saved viewpoint: QA View', 30_000);
+    await waitForStatus(page, 'Saved viewpoint: QA View', SLOW_STATUS_TIMEOUT);
     await page.locator('[data-viewpoint-id]').first().click();
     await page.click('#btnApplySelectedViewpoint');
-    await waitForStatus(page, 'Applied viewpoint: QA View', 30_000);
+    await waitForStatus(page, 'Applied viewpoint: QA View', SLOW_STATUS_TIMEOUT);
 
     await ensureSingleSelection(page);
     await page.click('.tab-btn[data-tab="issues"]');
@@ -623,7 +652,7 @@ test.describe('viewpoints, issues & state persistence', () => {
     await page.waitForFunction(
       () => !(document.querySelector('#viewpointList')?.textContent || '').includes('QA View'),
       undefined,
-      { timeout: 20_000 },
+      { timeout: STATE_TIMEOUT },
     );
 
     await page.click('.tab-btn[data-tab="issues"]');
@@ -633,19 +662,19 @@ test.describe('viewpoints, issues & state persistence', () => {
     await page.waitForFunction(
       () => !(document.querySelector('#issuesList')?.textContent || '').includes('QA Issue'),
       undefined,
-      { timeout: 20_000 },
+      { timeout: STATE_TIMEOUT },
     );
 
     const importContext = await browser.newContext({
       acceptDownloads: true,
-      viewport: { width: 1600, height: 1000 },
+      viewport: VIEWPORT,
     });
     const importPage = await importContext.newPage();
 
     try {
       await waitForAppReady(importPage);
       await importPage.setInputFiles('#importStateInput', exportedStatePath);
-      await waitForStatus(importPage, 'Viewer data imported', 30_000);
+      await waitForStatus(importPage, 'Viewer data imported', SLOW_STATUS_TIMEOUT);
 
       await importPage.click('.tab-btn[data-tab="viewpoints"]');
       await expect(importPage.locator('#viewpointList')).toContainText('QA View');
