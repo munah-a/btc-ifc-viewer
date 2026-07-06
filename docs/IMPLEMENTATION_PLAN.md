@@ -354,10 +354,28 @@ Title Case buttons, `—` for empty values, tabular numerics.)*
 - **One review pass per wave**: code-review workflow (find→adversarially verify) on the wave branch
   diff before PR; fix-forward; no repeated full reviews.
 
-**Git/CI protocol** — branch `wave/N-<slug>` per wave; conventional commits per task
-(`fix: F1 unwrap ItemAttribute in search (docs/AUDIT.md#F1)`); PR to `main` per wave with the wave's
-checkbox list in the body; CI (W0.8) must be green; **user merges** (deploy fires on main). PO never
-force-pushes or merges without explicit approval.
+**Git/CI protocol (revised 2026-07-06 — GitHub Actions minutes are costly; local CI is the gate)**
+- Branch `wave/N-<slug>` per wave; conventional commits per task (`fix: F1 … (docs/AUDIT.md#F1)`).
+- **Local CI after every task** — the WO runs `npm run ci:local` (the exact GitHub sequence: `npm ci`
+  clean-install → typecheck → lint → test:unit → audit → build → e2e). The e2e step reproduces the
+  GitHub runner's software-WebGL path (`CI=1` + SwiftShader flags) so render-starvation-class issues
+  (T11) and lockfile drift (the PR #7 lockfile miss) are caught locally, NOT on GitHub. Fast gates
+  (typecheck/lint/unit/build) run after each task; the full SwiftShader e2e runs at least at wave-end
+  and after any task that touches the render loop, load path, or DOM.
+- **Do NOT push until the wave is done and `ci:local` is fully green.** No work-in-progress pushes —
+  every push to a PR branch spends GitHub minutes. One wave = one push = one GitHub CI run (ideal).
+- At wave-end: push once → open PR → the single GitHub CI run confirms → **user merges**. GitHub CI is
+  a *confirmation* of local green, not the discovery mechanism. If it still fails, that's a
+  local/CI-parity gap — fix `ci:local` to reproduce it before re-pushing.
+- `deploy.yml` builds + deploys on merge to main and must NOT re-run the full e2e (the merged PR was
+  already green) — keeps merge cost to build-only. PO never force-pushes or merges without approval.
+
+**Usage-limit discipline (user directive 2026-07-06)** — at ~97% of the usage limit, PAUSE: stop
+spawning/driving agents, write state to the Status Log, and `ScheduleWakeup` past the stated reset
+time; resume when the limit refreshes. Never let a WO or task agent crash into the limit mid-task
+(it loses uncommitted work and wastes tokens on the dead turn) — the PO watches for limit-proximity
+signals and parks proactively. When an agent DOES report a limit hit, do not retry immediately;
+schedule past the reset.
 
 ## 7. Deferred backlog (W6 — designed-for, not scheduled)
 
