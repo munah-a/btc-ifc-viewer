@@ -15,6 +15,17 @@ import { expect, test, type Page } from '@playwright/test';
 
 const ifcPath = path.join(process.cwd(), 'e2e', 'fixtures', 'school_str.ifc');
 
+// Browser/GL-driver-emitted diagnostics — NOT application console calls. The
+// WebGL layer logs a "GPU stall due to ReadPixels" performance hint whenever
+// the canvas is read back (screenshot export, viewpoint snapshots — both are
+// deliberate features); it fires on SwiftShader (CI) and some real GPUs alike
+// and the app cannot suppress it without globally monkey-patching console (the
+// AUDIT A5 anti-pattern we are removing). The gate stays strict for every other
+// error/warning; only this exact driver-performance class is ignored.
+const isEnvironmentalNoise = (text: string): boolean =>
+  /GL Driver Message \(OpenGL, Performance/i.test(text)
+  || /GPU stall due to ReadPixels/i.test(text);
+
 const waitForStatus = async (page: Page, text: string, timeout = 30_000): Promise<void> => {
   await page.waitForFunction(
     (expected) => (document.querySelector('#statusText')?.textContent || '').includes(expected),
@@ -41,7 +52,7 @@ test.describe('console cleanliness (§4 program acceptance)', () => {
     const violations: string[] = [];
     page.on('console', (message) => {
       const type = message.type();
-      if (type === 'error' || type === 'warning') {
+      if ((type === 'error' || type === 'warning') && !isEnvironmentalNoise(message.text())) {
         violations.push(`console.${type}: ${message.text()}`);
       }
     });

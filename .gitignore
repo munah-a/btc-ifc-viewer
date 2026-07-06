@@ -11,3 +11,5 @@ test-results/
 public/web-ifc.wasm
 public/worker.mjs
 e2e-serve.log
+ci-local-e2e.log
+ci-console-clean.log
