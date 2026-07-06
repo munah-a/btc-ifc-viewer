@@ -4188,9 +4188,15 @@ class ViewerApp {
       setVisualStyle: (style: string): Promise<void> =>
         this.setVisualStyle(this.parseVisualStyle(style), false, false),
       clickCanvasAt: async (clientX: number, clientY: number): Promise<TestItemRef | null> => {
+        // ThatOpen's raycaster expects the pick position in normalized device
+        // coordinates ([-1,1], y-up) — the same shape SimpleMouse.position
+        // returns — NOT CSS pixels. Convert here.
         const rect = this.dom.viewerContainer.getBoundingClientRect();
-        const position = new THREE.Vector2(clientX - rect.left, clientY - rect.top);
-        return this.pickAndSelect(position);
+        const ndc = new THREE.Vector2(
+          ((clientX - rect.left) / rect.width) * 2 - 1,
+          -((clientY - rect.top) / rect.height) * 2 + 1,
+        );
+        return this.pickAndSelect(ndc);
       },
     };
     return Object.freeze(api);

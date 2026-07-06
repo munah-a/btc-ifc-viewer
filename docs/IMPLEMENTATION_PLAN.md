@@ -38,16 +38,19 @@ Repo (post-W2 layout)
 ├─ src/
 │  ├─ main.ts                 # full-app entry (thin)
 │  ├─ embed.ts                # embed entry (thin)           [W4]
-│  ├─ core/                   # DOM-free; unit-tested
-│  │  ├─ viewer-core.ts       # engine bootstrap, world, render loop, on-demand mode
-│  │  ├─ model-registry.ts    # load-by-file / load-by-url, identity, metadata (kills A6/A10)
-│  │  ├─ model-id-map.ts      # set algebra (pure, moved from viewer.ts:259-303)
-│  │  ├─ property-engine/     # unwrap/flatten/classify (pure, from viewer.ts:3838-4404)
-│  │  ├─ persistence.ts       # versioned state schema, validate/apply (kills A7)
-│  │  ├─ fragments-model.ts   # FragmentsModelLike typed boundary (kills A8)
+│  ├─ core/                   # DOM-free; unit-tested (W2 status in brackets)
+│  │  ├─ viewer-core.ts       # engine bootstrap/world/render loop  [W2: DEFERRED — still in viewer.ts]
+│  │  ├─ model-registry.ts    # load identity/metadata (kills A6/A10)          [done W1.4]
+│  │  ├─ model-id-map.ts      # set algebra (pure)                              [done W2.1]
+│  │  ├─ property-engine/     # unwrap/flatten/classify/sections (pure)        [done W2.1]
+│  │  ├─ view-cube.ts         # pure view-cube geometry helpers                [done W2.1]
+│  │  ├─ persistence.ts       # versioned state schema, validate/apply (A7)    [done W1.6]
+│  │  ├─ fragments-model.ts   # FragmentsModelLike typed boundary (A8)         [done W2.2]
+│  │  ├─ test-api.ts          # frozen window.__viewerTestApi contract (T6)    [done W2.5]
+│  │  ├─ errors.ts / ifc-format.ts / markup.ts / units.ts   # pure helpers     [done W1]
 │  │  └─ url-state.ts         # viewpoint/camera <-> URL hash codec        [W4]
-│  ├─ tools/                  # measure, section, xray, edges, viewcube — Tool interface
-│  ├─ ui/                     # panel controllers on delegation pattern; new design DOM [W3]
+│  ├─ tools/                  # measure/section/xray/edges/viewcube — Tool iface [W2: DEFERRED]
+│  ├─ ui/                     # panel controllers (delegation applied in-place W2.4; files [W3]/deferred)
 │  ├─ index.html / embed.html
 │  └─ styles/                 # design tokens + components from .dc.html   [W3]
 ├─ api/                       # Vercel functions                           [W4]
@@ -89,7 +92,7 @@ late W3.
 |------|-------|----------------------|--------|
 | W0 | Pipeline & safety net | CI green & gating deploys; assets self-hosted; artifact ≤ ~7MB; `tsc`/lint/e2e all pass | ✅ done (gate verified by PO in live browser 2026-07-06; CI first exercised on the wave PR) |
 | W1 | Correctness — confirmed bugs | All F1–F11 + A1/A6/A7/A9/A10 + U4 fixed with regression tests; A15 & U11 partial (W1.8 slice — completed in W5.3/W3.4) | ✅ **merged to main** (PR #14, GitHub CI green 24m, 2026-07-06) |
-| W2 | Modularization & unit tests | Layout of §2 (minus embed/api); viewer.ts < ~800-line orchestrator; Vitest suite; e2e still green | 🔄 in progress (WO agent, wave/2-modularization) |
+| W2 | Modularization & unit tests | Layout of §2 (minus embed/api); viewer.ts < ~800-line orchestrator; Vitest suite; e2e still green | 🔄 pure-module extraction + boundary/cleanups done, e2e 18/18 green, 75 unit tests; **viewer.ts still ~4.2k (viewer-core/tools/ui class extraction DEFERRED — behavior-risk)** — see Status Log |
 | W3 | Rebrand & responsive/a11y | New design shipped; U1–U11 fixed; both themes pass contrast; e2e updated + tablet viewport test | ☐ ready (design handoff in repo) |
 | W4 | Embed & sharing platform | /embed live on Vercel with upload→TTL→cleanup loop; GLB export; oEmbed; frame-ancestors; costs within the W4.3 envelope | ☐ not started |
 | W5 | Performance & field readiness | Split chunks (initial JS ≤ ~350KB gzip shell); IndexedDB model cache; on-demand render; PWA offline shell | ☐ not started |
@@ -234,18 +237,44 @@ evidence. The PO re-verifies in the live browser before opening each wave PR.
 
 ### Wave 2 — Modularization & unit tests *(behavior-preserving; e2e green throughout)*
 
-- [ ] W2.1 Extract **pure** modules first (Vitest harness exists since W0.2), tests written against
+- [x] W2.1 Extract **pure** modules first (Vitest harness exists since W0.2), tests written against
   extracted code: `core/model-id-map.ts`, `core/property-engine/` (A4/T7 — highest-value tests:
   unwrap, flatten caps, classification, unit resolution — port the W1.9 tests), `core/persistence.ts`.
-- [ ] W2.2 Extract `core/model-registry.ts` (already reshaped in W1.4) + `core/fragments-model.ts`
+  > Done: `core/model-id-map.ts` (6 helpers, 11 tests) + `core/property-engine/` (types/values/
+  > flatten/facts/sections + barrel, 22 tests — units injected per F5, storey lookup passed in).
+  > `core/persistence.ts` was already extracted+used in W1.6 (verified sole normalizer). Also added
+  > `core/view-cube.ts` (3 pure geometry helpers, 6 tests) beyond the original list.
+- [x] W2.2 Extract `core/model-registry.ts` (already reshaped in W1.4) + `core/fragments-model.ts`
   typed boundary (A8; isolate `_controls` access in one commented function).
-- [ ] W2.3 Extract `core/viewer-core.ts` (engine bootstrap/lifecycle; scoped warn-filter per A5;
+  > Done: `core/fragments-model.ts` defines `FragmentsModelLike` (~13 members actually used) +
+  > `getClipperPlaneGizmoHelper()` isolating the single `_controls` reach. Replaced all ~5 `model:any`
+  > sites; any-count in viewer.ts 17→~9 (remainder: debounce generic, A5 abort patch, raycaster/
+  > importer/material — out of A8 scope). `model-registry.ts` already in use since W1.4.
+- [~] W2.3 Extract `core/viewer-core.ts` (engine bootstrap/lifecycle; scoped warn-filter per A5;
   destroy wired to HMR dispose) and `tools/*` (measure/section/xray/edges/viewcube; A12 dedup).
-- [ ] W2.4 `ui/` controllers: one per panel, delegation pattern everywhere (A11), expanded-state
+  > **Partial (cleanups done; class extraction deferred).** Done: A5 scoped warn-filter (install/
+  > uninstall paired, restored in destroy) + `import.meta.hot.dispose(()=>destroy())` wiring; A12
+  > dedup (setHomeView→fitToModel, 3 axis section handlers→toggleSectionPlane); A16 collapse (deleted
+  > the permanently-no-op resetModelColors/restoreOriginalLighting pair + dead flags); pure view-cube
+  > geometry → `core/view-cube.ts`. **NOT done: `core/viewer-core.ts` + `tools/*` class extraction** —
+  > the engine/tools are deeply `this`-coupled (world/renderer/clipper/fragments/dom + ~20 flags);
+  > a behavior-preserving class split is a large, high-risk refactor left as a follow-up (see Status
+  > Log deviation). Engine bootstrap/tools remain in viewer.ts.
+- [~] W2.4 `ui/` controllers: one per panel, delegation pattern everywhere (A11), expanded-state
   preserved across re-renders. viewer.ts becomes an <~800-line composition root with guarded bootstrap.
-- [ ] W2.5 Frozen `window.__viewerTestApi` (T6) replacing raw `__viewer`; migrate e2e to it; add
+  > **Partial (A11 satisfied in-place; controllers not extracted to `ui/`).** Done: delegation
+  > everywhere — model-browser/federation/dock were already delegated; converted viewpoint + issue
+  > lists from per-item listeners (also an A5 leak) to one delegated listener each; added
+  > `renderPreservingDetails()` + `data-node-key` on all model-browser `<details>` so expanded state
+  > survives re-renders. **NOT done: separate `ui/` controller files** and the <~800-line composition
+  > root — viewer.ts is ~4.2k lines (see deviation). Deferred with the W2.3 class extraction.
+- [x] W2.5 Frozen `window.__viewerTestApi` (T6) replacing raw `__viewer`; migrate e2e to it; add
   canvas-click selection + keyboard-shortcut + 2-model federation tests.
-- [ ] W2.6 Update plan + Status Log; record final module map in §2 if it drifted.
+  > Done: `core/test-api.ts` (frozen `ViewerTestApi` v1 contract, VITE_E2E-only); both e2e specs
+  > fully migrated off raw `__viewer`/`__world`; refactored onViewerClick→pickAndSelect(position?) for
+  > coordinate picks; added canvas-click (grid-scan) + keyboard-shortcut tests; the 2-model federation
+  > test still holds through the API. e2e 16→18 tests.
+- [x] W2.6 Update plan + Status Log; record final module map in §2 if it drifted.
 
 ### Wave 3 — Rebrand, responsive & accessibility
 *(Design handoff at `BIM Viewer UIUX Branding-handoff/…/project/` — read `BTC IFC Viewer.dc.html`

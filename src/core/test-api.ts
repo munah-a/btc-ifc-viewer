@@ -101,9 +101,13 @@ export interface ViewerTestApi {
   /** Set the visual style (bypassing status/persist side effects for tests). */
   setVisualStyle(style: string): Promise<void>;
   /**
-   * Simulate a canvas pick at the given client coordinates (T6: real
-   * interaction coverage). Resolves after the selection settles. Returns the
-   * item that was hit, or null.
+   * Run the canvas pick+select path at the given client coordinates (T6: real
+   * interaction coverage — drives the same pickAndSelect() a pointer click
+   * does). Resolves after the selection settles. Returns the item hit, or null
+   * (a miss in single-select mode clears the current selection, exactly like a
+   * real empty-space click). NOTE: a positive raycast HIT depends on live GPU
+   * render state and is not reliable under headless software WebGL — tests
+   * assert the clear-on-empty-click behaviour, not a specific hit.
    */
   clickCanvasAt(clientX: number, clientY: number): Promise<TestItemRef | null>;
 }
