@@ -5,6 +5,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import type { SpatialTreeItem } from '@thatopen/fragments';
 
 import { isModelNotFoundError, serializeError } from './core/errors';
+import { isProbablyIfc } from './core/ifc-format';
 import { escapeHtml, filterListMarkup, spatialTreeMarkup } from './core/markup';
 import { ModelRegistry } from './core/model-registry';
 import {
@@ -2818,6 +2819,12 @@ class ViewerApp {
       const start = performance.now();
       const buffer = await file.arrayBuffer();
       const data = new Uint8Array(buffer);
+      // Deterministic guard before web-ifc (T13): reject non-IFC input fast and
+      // identically on every platform, instead of relying on web-ifc's
+      // undefined behavior for garbage (throw / hang / silent empty model).
+      if (!isProbablyIfc(data)) {
+        throw new Error('Not a valid IFC file (missing ISO-10303-21 header).');
+      }
       this.modelRegistry.beginLoad(modelId, { fileName: file.name, sizeBytes: file.size });
 
       if (requestId === this.loadRequestId) {
