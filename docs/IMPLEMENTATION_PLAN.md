@@ -125,8 +125,10 @@ and to the final program exit):**
    selection (single/multi/canvas-click), measurement (length/area), hide/isolate/show, x-ray/edges,
    visual styles, search, filters, viewpoints, issues, **EN⇄DE language switch (C7)**, and **the
    full-session persistence round-trip (C8): save a session with ≥2 models + modifications, reload,
-   and confirm models + all modifications restore**. All with zero console errors/warnings. This is
-   both a per-gate check (W3.5+ where relevant) and the final loop-exit confirmation.
+   and confirm models + all modifications restore**. All with zero console errors/warnings. Runs
+   **ONCE after all features are implemented** (not per intermediate gate — user directive 2026-07-06)
+   as the final loop-exit confirmation; per-wave gates keep only their lean checks + a PO smoke of
+   what changed.
 Wave orchestrators must include a console-capture + viewport sweep + interactive sweep in their gate
 evidence. The PO re-verifies in the live browser before opening each wave PR, and produces the
 rebrand screenshot set for user sign-off (criterion 4).
@@ -413,8 +415,18 @@ Title Case buttons, `—` for empty values, tabular numerics.)*
   Full e2e runs at task-batch boundaries and wave gates, not per micro-edit.
 - **Structured outputs** for every fan-out agent (schema), so WOs synthesize without re-reading work.
 - **Batch related edits** into one agent (all four A1 escape sites = one agent, not four).
-- **One review pass per wave**: code-review workflow (find→adversarially verify) on the wave branch
-  diff before PR; fix-forward; no repeated full reviews.
+- **Review depth serves code quality, not a fixed budget (user directive 2026-07-06).** The old
+  "one review pass per wave" cap is LIFTED — code quality must be top-class. Run the code-review
+  workflow (find → adversarially verify) on each wave's diff, and run *additional* passes wherever the
+  change is large, subtle, or safety-critical (e.g. the W3.5 decomposition, W4 API/persistence): a
+  fresh-context reviewer, an adversarial "try to break it" pass, and a re-review after fixes are all
+  fair game. Token efficiency still applies to *discovery* (no re-scanning known code) — spend the
+  saved tokens on review rigor, not repetition of settled findings.
+- **Comprehensive feature verification runs ONCE at the end** (user directive 2026-07-06), not every
+  gate. Per-wave gates keep the lean checks (ci:local green, console-clean, no regressions, PO smoke
+  of what that wave changed). The full multi-model + section/properties/selection/measurement +
+  EN⇄DE + C8 persistence-round-trip sweep (criterion 5) happens after ALL features are implemented,
+  as the loop-exit confirmation. Saves re-running the whole sweep per intermediate wave.
 
 **Git/CI protocol (revised 2026-07-06 — GitHub Actions minutes are costly; local CI is the gate)**
 - Branch `wave/N-<slug>` per wave; conventional commits per task (`fix: F1 … (docs/AUDIT.md#F1)`).
@@ -489,3 +501,4 @@ schedule past the reset.
 | 2026-07-06 | PO (Claude, Opus) | **W3 accepted after PO live-browser verification.** Rebrand delivered: Precision Architect shell (topbar/tool-rail/glass overlays/panel+tabstrip/statusbar), self-hosted Inter/Outfit + inline-SVG icons (no font CDN — U5 + C1), U1 mobile bottom-sheet/5-tab/FAB + tablet drawer, U6/U7/U8 a11y, native `<dialog>` confirm, both themes WCAG AA. Gates: ci:fast green, SwiftShader e2e **21/21** (18 behavior + mobile-reachability + axe 2/2 + new A17 guard), console-clean. **PO live-verify found & fixed A17** (High, pre-existing): Fit/Section read an empty bbox until fragments geometry streamed → "No model to section" right after load (also hurt weak GPUs/C6); fixed to use the data-driven fragments `.box`. **viewer.ts still ~4.4k — decomposition carved into a dedicated pass (W3.5) before W4**, since it was deferred twice inside feature waves and W4's embed entry needs `core/viewer-core.ts`. Next: push W3 once → fast CI → merge → run W3.5 decomposition pass. |
 | 2026-07-06 | PO (Claude, Opus) | **W3 rebrand VISUALLY SIGNED OFF by user** ("Rebrand looks good") — acceptance criterion 4 satisfied, including the 2 deviations (view-cube removed; desktop bg-picker/style-select relocated). Sign-off gallery: 10 shots (desktop/tablet/phone × dark/light). Two issues found & fixed during the screenshot review: **A18** (real bug — all icons rendered 0×0/invisible; `setIcon` DOMParser+adoption → `innerHTML`; guard `e2e/icons.spec.ts`) and a capture-scaffold theme-timing fix (screenshots froze mid-transition; no app change). Pending: local e2e gate (in flight) + merge. |
 | 2026-07-06 | PO (Claude, Opus) | **W3 merged to main** (PR #16; user-signed-off rebrand, GitHub CI green, local e2e 22/22). main=`130c90c`. Branched `wave/3.5-decomposition`; launching the dedicated decomposition WO (Opus): extract engine→`core/viewer-core.ts`, tools→`tools/*`, panels→`ui/*`; viewer.ts **4380→<~800** orchestrator. Behavior-preserving — the 22-test e2e (SwiftShader) + `__viewerTestApi` are the safety net; commit per module. Then W4 embed (which reuses viewer-core). |
+| 2026-07-06 | PO (Claude, Opus) | Process tweaks (user directive): (1) review cap lifted — code quality is top priority, so run additional/adversarial review passes on large/subtle waves (decomposition, API, persistence), not just one; discovery stays token-lean. (2) Comprehensive feature verification (criterion 5) moved to a single END-of-program sweep (multi-model, section/props/selection/measure, EN⇄DE, C8 persistence round-trip) rather than per intermediate gate; per-wave gates keep lean checks + targeted PO smoke. |
