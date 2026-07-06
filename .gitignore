@@ -18,3 +18,4 @@ ci-*.log
 
 # e2e run logs (transient)
 e2e-*.log
+docs/design/shots/
