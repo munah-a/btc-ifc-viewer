@@ -16,3 +16,6 @@ ci-console-clean.log
 
 # Local Claude Code tooling config
 .claude/
+
+# e2e run logs (transient)
+e2e-*.log

@@ -596,6 +596,8 @@ class ViewerApp {
     this.bindDockEvents();
     this.bindModelBrowserEvents();
     this.bindFederationTreeEvents();
+    this.bindViewpointListEvents();
+    this.bindIssueListEvents();
 
     this.dom.btnModeOrbit.addEventListener('click', () => this.applyNavigationMode('Orbit'));
     this.dom.btnModePlan.addEventListener('click', () => this.applyNavigationMode('Plan'));
@@ -990,6 +992,42 @@ class ViewerApp {
       const input = target.closest<HTMLInputElement>('input[data-model-id][data-transform]');
       if (!input) return;
       this.applyTransformInput(input);
+    });
+  }
+
+  /** A11: delegated viewpoint-row selection (bound once; survives re-renders). */
+  private bindViewpointListEvents(): void {
+    const rowId = (event: Event): string | null => {
+      const row = (event.target as HTMLElement).closest<HTMLElement>('[data-viewpoint-id]');
+      return row?.dataset.viewpointId || null;
+    };
+    this.dom.viewpointList.addEventListener('click', (event) => {
+      const id = rowId(event);
+      if (id === null) return;
+      this.selectedViewpointId = id;
+      this.updateViewpointList();
+    });
+    this.dom.viewpointList.addEventListener('dblclick', (event) => {
+      const id = rowId(event);
+      if (id === null) return;
+      this.selectedViewpointId = id;
+      this.fireAndForget(this.applySelectedViewpoint(), 'Apply viewpoint');
+    });
+  }
+
+  /** A11: delegated issue-row selection (bound once; survives re-renders). */
+  private bindIssueListEvents(): void {
+    const rowId = (event: Event): string | null => {
+      const row = (event.target as HTMLElement).closest<HTMLElement>('[data-issue-id]');
+      return row?.dataset.issueId || null;
+    };
+    this.dom.issuesList.addEventListener('click', (event) => {
+      const id = rowId(event);
+      if (id !== null) this.selectIssue(id, false);
+    });
+    this.dom.issuesList.addEventListener('dblclick', (event) => {
+      const id = rowId(event);
+      if (id !== null) this.selectIssue(id, true);
     });
   }
 
@@ -1575,8 +1613,11 @@ class ViewerApp {
       `
       : `<span>${escapeHtml(node.label)}</span>`;
 
+    const spatialKey = node.localId !== null
+      ? `spatial:${escapedModelId}:id:${node.localId}`
+      : `spatial:${escapedModelId}:${depth}:${escapeHtml(node.category)}:${escapeHtml(node.label)}`;
     return `
-      <details class="browser-node">
+      <details class="browser-node" data-node-key="${spatialKey}">
         <summary class="browser-summary">
           <span class="browser-twist material-icons-round">chevron_right</span>
           ${labelMarkup}
@@ -1605,7 +1646,7 @@ class ViewerApp {
 
         if (!index) {
           return `
-            <details class="browser-node is-model" open>
+            <details class="browser-node is-model" data-node-key="model:${escapedModelId}" open>
               <summary class="browser-summary">
                 <span class="browser-twist material-icons-round">chevron_right</span>
                 <button
@@ -1666,7 +1707,7 @@ class ViewerApp {
               : '';
 
             return `
-              <details class="browser-node">
+              <details class="browser-node" data-node-key="class:${escapedModelId}:${escapeHtml(levelName)}:${escapeHtml(className)}">
                 <summary class="browser-summary">
                   <span class="browser-twist material-icons-round">chevron_right</span>
                   <button
@@ -1691,7 +1732,7 @@ class ViewerApp {
           }).join('');
 
           return `
-            <details class="browser-node">
+            <details class="browser-node" data-node-key="level:${escapedModelId}:${escapeHtml(levelName)}">
               <summary class="browser-summary">
                 <span class="browser-twist material-icons-round">chevron_right</span>
                 <button
@@ -1727,7 +1768,7 @@ class ViewerApp {
           : '';
 
         return `
-          <details class="browser-node is-model" open>
+          <details class="browser-node is-model" data-node-key="model:${escapedModelId}" open>
             <summary class="browser-summary">
               <span class="browser-twist material-icons-round">chevron_right</span>
               <button
@@ -1756,7 +1797,7 @@ class ViewerApp {
                 <span class="browser-count">${levelEntries.length} lvls</span>
               </div>
 
-              <details class="browser-node" ${levelEntries.length > 0 ? 'open' : ''}>
+              <details class="browser-node" data-node-key="group:${escapedModelId}:levels" ${levelEntries.length > 0 ? 'open' : ''}>
                 <summary class="browser-summary">
                   <span class="browser-twist material-icons-round">chevron_right</span>
                   <span>Levels</span>
@@ -1768,7 +1809,7 @@ class ViewerApp {
                 </div>
               </details>
 
-              <details class="browser-node">
+              <details class="browser-node" data-node-key="group:${escapedModelId}:spatial">
                 <summary class="browser-summary">
                   <span class="browser-twist material-icons-round">chevron_right</span>
                   <span>Spatial Structure</span>
@@ -1785,7 +1826,29 @@ class ViewerApp {
       })
       .join('');
 
-    this.dom.modelBrowserTree.innerHTML = modelMarkup;
+    this.renderPreservingDetails(this.dom.modelBrowserTree, modelMarkup);
+  }
+
+  /**
+   * A11: replaces a container's innerHTML while preserving the open/closed
+   * state of any `<details data-node-key>` the user toggled. Without this a
+   * full re-render (e.g. after a model loads) would collapse every expanded
+   * tree node back to its markup default. Nodes present after the render but
+   * absent from the snapshot keep their markup default (fresh nodes).
+   */
+  private renderPreservingDetails(container: HTMLElement, markup: string): void {
+    const openState = new Map<string, boolean>();
+    container.querySelectorAll<HTMLDetailsElement>('details[data-node-key]').forEach((node) => {
+      const key = node.dataset.nodeKey;
+      if (key) openState.set(key, node.open);
+    });
+
+    container.innerHTML = markup;
+
+    container.querySelectorAll<HTMLDetailsElement>('details[data-node-key]').forEach((node) => {
+      const key = node.dataset.nodeKey;
+      if (key && openState.has(key)) node.open = openState.get(key)!;
+    });
   }
 
   private renderFederatedTree(): void {
@@ -3421,17 +3484,8 @@ class ViewerApp {
         `;
       })
       .join('');
-
-    this.dom.viewpointList.querySelectorAll<HTMLElement>('[data-viewpoint-id]').forEach((element) => {
-      element.addEventListener('click', () => {
-        this.selectedViewpointId = element.dataset.viewpointId || null;
-        this.updateViewpointList();
-      });
-      element.addEventListener('dblclick', () => {
-        this.selectedViewpointId = element.dataset.viewpointId || null;
-        this.fireAndForget(this.applySelectedViewpoint(), 'Apply viewpoint');
-      });
-    });
+    // A11: row click/dblclick handled by delegation bound once in
+    // bindViewpointListEvents() — no per-item listeners to leak on re-render.
   }
 
   private createIssueFromCurrentContext(): void {
@@ -3569,19 +3623,8 @@ class ViewerApp {
         `;
       })
       .join('');
-
-    this.dom.issuesList.querySelectorAll<HTMLElement>('[data-issue-id]').forEach((element) => {
-      element.addEventListener('click', () => {
-        const id = element.dataset.issueId;
-        if (!id) return;
-        this.selectIssue(id, false);
-      });
-      element.addEventListener('dblclick', () => {
-        const id = element.dataset.issueId;
-        if (!id) return;
-        this.selectIssue(id, true);
-      });
-    });
+    // A11: row click/dblclick handled by delegation bound once in
+    // bindIssueListEvents() — no per-item listeners to leak on re-render.
   }
 
   private selectIssue(issueId: string, focusView: boolean): void {
