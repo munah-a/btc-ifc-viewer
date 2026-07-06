@@ -1,0 +1,294 @@
+/* ════════════════════════════════════════════════════════════
+   BTC IFC Viewer — chromeless embed stylesheet (W4.1)
+   Reuses the Precision Architect tokens + self-hosted fonts (C1: no CDN).
+   Full-bleed canvas with glass overlays (fit + fullscreen), a poster
+   (click-to-activate), loading/error states, and a BTC badge.
+   ════════════════════════════════════════════════════════════ */
+
+@import '../assets/fonts/fonts.css';
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--on-surface);
+  background: var(--surface);
+}
+
+.embed-shell {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background: var(--surface);
+}
+
+.embed-viewer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  outline: none;
+}
+
+.embed-viewer canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* ── Icons (hydrated inline SVG) ── */
+[data-icon] svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+  fill: currentColor;
+}
+
+/* ── Poster / click-to-activate ── */
+.embed-poster {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-3);
+  border: none;
+  cursor: pointer;
+  color: var(--on-surface);
+  background:
+    radial-gradient(120% 120% at 50% 30%, var(--surface-container-low), var(--surface));
+  font-family: var(--font-body);
+  transition: background var(--transition-normal);
+}
+
+.embed-poster:hover,
+.embed-poster:focus-visible {
+  background:
+    radial-gradient(120% 120% at 50% 30%, var(--surface-container), var(--surface));
+  outline: none;
+}
+
+.embed-poster-icon svg {
+  width: 56px;
+  height: 56px;
+  color: var(--primary);
+}
+
+.embed-poster-title {
+  font-family: var(--font-display);
+  font-size: var(--title-md);
+  font-weight: 600;
+}
+
+.embed-poster-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-4);
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: var(--body-sm);
+  font-weight: 600;
+}
+
+.embed-poster-play svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ── Loading ── */
+.embed-loading {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+}
+
+.embed-loading-card {
+  width: min(280px, 70vw);
+  padding: var(--spacing-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-container);
+  box-shadow: var(--shadow-ambient);
+  text-align: center;
+}
+
+.embed-loading-title {
+  display: block;
+  font-size: var(--body-sm);
+  margin-bottom: var(--spacing-3);
+  color: var(--on-surface-variant);
+}
+
+.embed-loading-bar {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--surface-container-highest);
+  overflow: hidden;
+}
+
+.embed-loading-fill {
+  height: 100%;
+  width: 8%;
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  transition: width var(--transition-normal);
+}
+
+/* ── Error / expired ── */
+.embed-error {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-3);
+  padding: var(--spacing-6);
+  text-align: center;
+  background: var(--surface);
+}
+
+.embed-error-icon svg {
+  width: 40px;
+  height: 40px;
+  color: var(--on-surface-variant);
+}
+
+.embed-error-msg {
+  max-width: 32ch;
+  font-size: var(--body-md);
+  color: var(--on-surface-variant);
+}
+
+/* ── Buttons / links ── */
+.embed-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-2) var(--spacing-4);
+  border-radius: var(--radius-full);
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: var(--body-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.embed-btn:hover {
+  filter: brightness(1.05);
+}
+
+/* ── Glass controls (fit + fullscreen) ── */
+.glass {
+  background: var(--glass-bg);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 60%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: var(--shadow-ambient);
+}
+
+.embed-controls {
+  position: absolute;
+  top: var(--spacing-3);
+  right: var(--spacing-3);
+  z-index: 20;
+  display: flex;
+  gap: var(--spacing-1);
+  padding: var(--spacing-1);
+  border-radius: var(--radius-md);
+}
+
+.embed-glass-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--on-surface);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.embed-glass-btn:hover,
+.embed-glass-btn:focus-visible {
+  background: color-mix(in srgb, var(--on-surface) 12%, transparent);
+  outline: none;
+}
+
+/* ── BTC badge + open-in-viewer ── */
+.embed-badge {
+  position: absolute;
+  bottom: var(--spacing-3);
+  left: var(--spacing-3);
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  padding: var(--spacing-1) var(--spacing-3) var(--spacing-1) var(--spacing-2);
+  border-radius: var(--radius-full);
+  background: var(--glass-bg);
+  border: 1px solid color-mix(in srgb, var(--outline-variant) 60%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  text-decoration: none;
+  color: var(--on-surface);
+  box-shadow: var(--shadow-ambient);
+  transition: filter var(--transition-fast);
+}
+
+.embed-badge:hover {
+  filter: brightness(1.08);
+}
+
+.embed-badge-logo {
+  height: 16px;
+  width: auto;
+  display: block;
+}
+
+/* The logo-white.svg suits dark theme; on light theme swap to the dark ink via a filter. */
+:root[data-theme='light'] .embed-badge-logo {
+  filter: invert(1) brightness(0.4);
+}
+
+.embed-badge-open {
+  font-size: var(--label-md);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* On very small embeds, hide the badge label to keep the canvas clear. */
+@media (max-width: 360px) {
+  .embed-badge-open {
+    display: none;
+  }
+}
+
+[hidden] {
+  display: none !important;
+}

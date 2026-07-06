@@ -267,6 +267,20 @@ export const en = {
   'mobileSheet.lightTheme': 'Light theme',
   'mobileSheet.style': 'Style',
 
+  // ---- chromeless embed (W4.1: embed.html + share dialog copy) ----
+  'embed.posterTitle': '3D model',
+  'embed.activate': 'Click to load the 3D view',
+  'embed.activateAria': 'Load the interactive 3D view',
+  'embed.loading': 'Loading model…',
+  'embed.fit': 'Fit to view',
+  'embed.fullscreen': 'Toggle fullscreen',
+  'embed.controlsAria': 'Viewer controls',
+  'embed.openInViewer': 'Open in viewer',
+  'embed.errorGeneric': 'This model could not be loaded.',
+  'embed.errorExpired': 'This embed has expired and is no longer available.',
+  'embed.errorNoModel': 'No model was specified for this embed.',
+  'embed.errorNetwork': 'The model could not be fetched. Check the link or your connection.',
+
   // ---- static shell (index.html data-i18n / data-i18n-attr) ----
   'shell.skipNav': 'Skip to viewer',
   'shell.eyebrow': 'IFC viewer',
@@ -636,6 +650,20 @@ export const de: Record<MessageKey, string> = {
   'mobileSheet.grid': 'Raster',
   'mobileSheet.lightTheme': 'Helles Design',
   'mobileSheet.style': 'Stil',
+
+  // ---- chromeless embed ----
+  'embed.posterTitle': '3D-Modell',
+  'embed.activate': 'Klicken, um die 3D-Ansicht zu laden',
+  'embed.activateAria': 'Interaktive 3D-Ansicht laden',
+  'embed.loading': 'Modell wird geladen…',
+  'embed.fit': 'An Ansicht anpassen',
+  'embed.fullscreen': 'Vollbild umschalten',
+  'embed.controlsAria': 'Viewer-Steuerung',
+  'embed.openInViewer': 'Im Viewer öffnen',
+  'embed.errorGeneric': 'Dieses Modell konnte nicht geladen werden.',
+  'embed.errorExpired': 'Diese Einbettung ist abgelaufen und nicht mehr verfügbar.',
+  'embed.errorNoModel': 'Für diese Einbettung wurde kein Modell angegeben.',
+  'embed.errorNetwork': 'Das Modell konnte nicht abgerufen werden. Prüfen Sie den Link oder Ihre Verbindung.',
 
   // ---- static shell ----
   'shell.skipNav': 'Zum Viewer springen',

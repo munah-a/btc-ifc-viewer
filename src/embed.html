@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#14151b" />
+  <!-- CSP mirrors index.html (A1) — self-hosted wasm/worker/fonts/icons, no
+       runtime CDN (C1). connect-src allows https: here so the embed can CORS-fetch
+       a .frag from the Blob CDN (a cross-origin model URL in ?m=). frame-ancestors
+       is set for /embed* in vercel.json (W4.6), not here (<meta> ignores it). -->
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' data: blob: https:; worker-src 'self' blob:" />
+  <title>BTC IFC Viewer — Embed</title>
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <!-- oEmbed discovery: paste-a-link boards find our provider endpoint. The
+       href is rewritten at runtime by embed.ts to include the current page URL. -->
+  <link id="oembedLink" rel="alternate" type="application/json+oembed"
+    href="/api/oembed?format=json" title="BTC IFC Viewer" />
+  <!-- Open Graph / Twitter card meta for link unfurls (W4.3). -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="BTC IFC Viewer" />
+  <meta property="og:title" content="BTC IFC Viewer — 3D model" />
+  <meta property="og:description" content="Interactive 3D IFC/BIM model, viewable in the browser. No install." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="stylesheet" href="./styles/embed.css" />
+</head>
+
+<body>
+  <div id="btc-embed-root" class="embed-shell">
+    <!-- 3D canvas mount -->
+    <div id="embed-viewer" class="embed-viewer" tabindex="0" aria-label="3D model viewer"></div>
+
+    <!-- Poster / click-to-activate (WebGL context budget on boards with many
+         embeds — the engine is not created until the user activates). -->
+    <button id="embedPoster" class="embed-poster" type="button"
+      data-i18n-attr="aria-label:embed.activateAria">
+      <span class="embed-poster-icon" data-icon="view_in_ar" aria-hidden="true"></span>
+      <span class="embed-poster-title" id="embedPosterTitle" data-i18n="embed.posterTitle">3D model</span>
+      <span class="embed-poster-cta">
+        <span class="embed-poster-play" data-icon="play_circle" aria-hidden="true"></span>
+        <span data-i18n="embed.activate">Click to load the 3D view</span>
+      </span>
+    </button>
+
+    <!-- Loading overlay -->
+    <div id="embedLoading" class="embed-loading" hidden>
+      <div class="embed-loading-card">
+        <span class="embed-loading-title" id="embedLoadingText" data-i18n="embed.loading">Loading model…</span>
+        <div class="embed-loading-bar"><div id="embedLoadingFill" class="embed-loading-fill"></div></div>
+      </div>
+    </div>
+
+    <!-- Error / expired state -->
+    <div id="embedError" class="embed-error" hidden>
+      <span class="embed-error-icon" data-icon="error_outline" aria-hidden="true"></span>
+      <p class="embed-error-msg" id="embedErrorMsg" data-i18n="embed.errorGeneric">This model could not be loaded.</p>
+      <a id="embedErrorOpen" class="embed-btn" href="/" target="_blank" rel="noopener"
+        data-i18n="embed.openInViewer">Open in viewer</a>
+    </div>
+
+    <!-- Chromeless controls (glass) — fit + fullscreen only -->
+    <div class="embed-controls glass" role="group" data-i18n-attr="aria-label:embed.controlsAria" hidden
+      id="embedControls">
+      <button id="embedFit" class="embed-glass-btn" type="button" data-icon="fit_screen"
+        data-i18n-attr="title:embed.fit,aria-label:embed.fit"></button>
+      <button id="embedFullscreen" class="embed-glass-btn" type="button" data-icon="fullscreen"
+        data-i18n-attr="title:embed.fullscreen,aria-label:embed.fullscreen"></button>
+    </div>
+
+    <!-- BTC badge + open-in-viewer link (bottom-left) -->
+    <a id="embedBadge" class="embed-badge" href="/" target="_blank" rel="noopener"
+      data-i18n-attr="title:embed.openInViewer">
+      <img class="embed-badge-logo" src="./assets/logo-white.svg" alt="BIM Tech Consulting" />
+      <span class="embed-badge-open" data-i18n="embed.openInViewer">Open in viewer</span>
+    </a>
+  </div>
+
+  <script type="module" src="./embed.ts"></script>
+</body>
+
+</html>
