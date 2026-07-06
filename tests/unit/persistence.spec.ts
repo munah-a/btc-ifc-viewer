@@ -134,6 +134,15 @@ describe('normalizePersistedState (AUDIT A7 — W1.6)', () => {
     expect(issue?.comments[0]?.author).toBe('QA');
   });
 
+  it('carries a valid language and drops an invalid/absent one (C7)', () => {
+    expect(normalizePersistedState({ version: 1 })?.language).toBeUndefined();
+    expect(normalizePersistedState({ version: 1, language: 'de' })?.language).toBe('de');
+    expect(normalizePersistedState({ version: 1, language: 'en' })?.language).toBe('en');
+    // Invalid string coerces to the 'en' default; non-string stays undefined.
+    expect(normalizePersistedState({ version: 1, language: 'fr' })?.language).toBe('en');
+    expect(normalizePersistedState({ version: 1, language: 42 })?.language).toBeUndefined();
+  });
+
   it('round-trips a well-formed state unchanged in the fields that matter', () => {
     const input = {
       version: 1,

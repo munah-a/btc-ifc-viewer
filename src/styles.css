@@ -292,6 +292,19 @@ button {
   color: var(--on-primary-fixed);
 }
 
+/* Language toggle: shows the active language code (EN / DE) as text rather
+   than an icon. Sentence-case brand rule doesn't apply to a locale code. */
+.topbar-lang-toggle {
+  font-family: var(--font-display, inherit);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.lang-code {
+  font-variant-numeric: tabular-nums;
+}
+
 /* ════════════════ MAIN ════════════════ */
 .app-main {
   flex: 1;

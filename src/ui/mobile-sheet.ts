@@ -24,24 +24,30 @@ export interface MobileSheetActions {
   setVisualStyle: (value: string) => void;
 }
 
-const STYLE_OPTIONS: ReadonlyArray<readonly [string, string]> = [
-  ['basic', 'Basic'],
-  ['pen', 'Pen'],
-  ['color-pen', 'Color pen'],
-  ['color-shadows', 'Color shadows'],
-  ['color-pen-shadows', 'Color pen shadows'],
-];
+/** Already-translated labels for the sheet (C7); passed in by the orchestrator. */
+export interface MobileSheetLabels {
+  xray: string;
+  edges: string;
+  grid: string;
+  lightTheme: string;
+  style: string;
+  /** Visual-style option label for a given style value. */
+  styleOption(value: string): string;
+}
+
+const STYLE_VALUES: readonly string[] = ['basic', 'pen', 'color-pen', 'color-shadows', 'color-pen-shadows'];
 
 export function buildMobileSheet(
   sheetBody: HTMLElement,
   state: MobileSheetState,
   actions: MobileSheetActions,
+  labels: MobileSheetLabels,
 ): void {
   const toggles: Array<{ icon: IconName; label: string; on: boolean; onClick: () => void }> = [
-    { icon: 'blur_on', label: 'X-ray', on: state.xrayEnabled, onClick: actions.toggleXray },
-    { icon: 'border_style', label: 'Edges', on: state.edgesEnabled, onClick: actions.toggleEdges },
-    { icon: 'grid_on', label: 'Grid', on: state.gridVisible, onClick: actions.toggleGrid },
-    { icon: state.themeMode === 'dark' ? 'dark_mode' : 'light_mode', label: 'Light theme', on: state.themeMode === 'light', onClick: actions.toggleTheme },
+    { icon: 'blur_on', label: labels.xray, on: state.xrayEnabled, onClick: actions.toggleXray },
+    { icon: 'border_style', label: labels.edges, on: state.edgesEnabled, onClick: actions.toggleEdges },
+    { icon: 'grid_on', label: labels.grid, on: state.gridVisible, onClick: actions.toggleGrid },
+    { icon: state.themeMode === 'dark' ? 'dark_mode' : 'light_mode', label: labels.lightTheme, on: state.themeMode === 'light', onClick: actions.toggleTheme },
   ];
   sheetBody.replaceChildren();
   for (const t of toggles) {
@@ -67,15 +73,15 @@ export function buildMobileSheet(
   field.className = 'sheet-toggle';
   field.style.gap = '10px';
   const styleLabel = document.createElement('span');
-  styleLabel.textContent = 'Style';
+  styleLabel.textContent = labels.style;
   styleLabel.style.flex = '1';
   const select = document.createElement('select');
   select.className = 'text-input';
   select.style.width = 'auto';
-  for (const [value, label] of STYLE_OPTIONS) {
+  for (const value of STYLE_VALUES) {
     const option = document.createElement('option');
     option.value = value;
-    option.textContent = label;
+    option.textContent = labels.styleOption(value);
     if (value === state.visualStyle) option.selected = true;
     select.append(option);
   }

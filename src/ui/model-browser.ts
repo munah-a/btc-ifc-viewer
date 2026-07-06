@@ -39,6 +39,34 @@ const TREE_ICON: Record<string, IconName> = {
 export const treeIco = (name: string, cls = 'browser-ico'): string =>
   `<span class="${cls}">${icon(TREE_ICON[name] ?? 'deployed_code', 16)}</span>`;
 
+/**
+ * Already-translated model-browser labels (C7). The caller passes these +
+ * interpolating helpers so this pure builder never imports the i18n catalog.
+ * `title`/select verbs are localized; IFC class ids and element names are model
+ * data and stay verbatim (only escaped).
+ */
+export interface BrowserLabels {
+  hidden: string; // "(Hidden)" suffix (space-prefixed at use site)
+  building: string;
+  noElements: string;
+  noClasses: string;
+  default: string;
+  levels: string;
+  spatialStructure: string;
+  noLevelsDetected: string;
+  noSpatialData: string;
+  select: string; // "Select" verb for the title attr
+  isolate: string; // "Isolate" verb for the title attr
+  isolateLevel: string; // "Isolate level" verb prefix
+  fitCamera: string; // "Fit camera to model"
+  selectFullModel: string;
+  elementFallback(id: number): string; // "Element {id}"
+  moreNodes(count: number): string;
+  moreElements(count: number): string;
+  moreLevels(count: number): string;
+  levelsShort(count: number): string; // "{count} lvls"
+}
+
 /** Intersection of a class set and a level set within one model index. */
 export function getClassIdsForModelLevel(
   modelIndices: Map<string, ModelIndex>,
@@ -85,6 +113,7 @@ function renderSpatialBrowserNode(
   index: ModelIndex,
   node: BrowserTreeNode,
   depth: number,
+  labels: BrowserLabels,
 ): string {
   const hasChildren = node.children.length > 0;
   const escapedModelId = escapeHtml(modelId);
@@ -101,7 +130,7 @@ function renderSpatialBrowserNode(
           data-browser-action="select-item"
           data-model-id="${escapedModelId}"
           data-local-id="${node.localId}"
-          title="Select ${escapeHtml(node.label)}"
+          title="${escapeHtml(labels.select)} ${escapeHtml(node.label)}"
         >
           ${escapeHtml(node.label)}
         </span>
@@ -119,10 +148,10 @@ function renderSpatialBrowserNode(
 
   const visibleChildren = node.children.slice(0, MAX_BROWSER_SPATIAL_CHILDREN);
   const childrenMarkup = visibleChildren
-    .map((child) => renderSpatialBrowserNode(modelId, index, child, depth + 1))
+    .map((child) => renderSpatialBrowserNode(modelId, index, child, depth + 1, labels))
     .join('');
   const moreMarkup = node.children.length > MAX_BROWSER_SPATIAL_CHILDREN
-    ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${node.children.length - MAX_BROWSER_SPATIAL_CHILDREN} more nodes</span><span class="browser-count">+</span></div>`
+    ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${escapeHtml(labels.moreNodes(node.children.length - MAX_BROWSER_SPATIAL_CHILDREN))}</span><span class="browser-count">+</span></div>`
     : '';
 
   const labelMarkup = isStoreyNode
@@ -132,7 +161,7 @@ function renderSpatialBrowserNode(
         data-browser-action="isolate-level"
         data-model-id="${escapedModelId}"
         data-level="${escapeHtml(node.label)}"
-        title="Isolate ${escapeHtml(node.label)}"
+        title="${escapeHtml(labels.isolate)} ${escapeHtml(node.label)}"
       >
         ${escapeHtml(node.label)}
       </span>
@@ -164,6 +193,7 @@ function renderSpatialBrowserNode(
 export function buildModelBrowserMarkup(
   federatedModels: Map<string, FederatedModelRecord>,
   modelIndices: Map<string, ModelIndex>,
+  labels: BrowserLabels,
 ): string | null {
   if (federatedModels.size === 0) return null;
 
@@ -172,7 +202,7 @@ export function buildModelBrowserMarkup(
       const modelId = String(record.modelId);
       const escapedModelId = escapeHtml(modelId);
       const index = modelIndices.get(modelId);
-      const visibilitySuffix = record.visible ? '' : ' (Hidden)';
+      const visibilitySuffix = record.visible ? '' : ` (${escapeHtml(labels.hidden)})`;
 
       if (!index) {
         return `
@@ -183,7 +213,7 @@ export function buildModelBrowserMarkup(
                 class="browser-action"
                 data-browser-action="select-model"
                 data-model-id="${escapedModelId}"
-                title="Select full model"
+                title="${escapeHtml(labels.selectFullModel)}"
               >
                 ${escapeHtml(record.fileName)}${visibilitySuffix}
               </span>
@@ -192,7 +222,7 @@ export function buildModelBrowserMarkup(
             <div class="browser-children">
               <div class="browser-leaf">
                 ${treeIco('hourglass_top')}
-                <span>Building model tree...</span>
+                <span>${escapeHtml(labels.building)}</span>
                 <span class="browser-count">-</span>
               </div>
             </div>
@@ -212,7 +242,7 @@ export function buildModelBrowserMarkup(
           });
           const visibleIds = classIds.slice(0, MAX_BROWSER_ELEMENTS_PER_CLASS);
           const elementsMarkup = visibleIds.map((localId) => {
-            const label = index.itemNames.get(localId) ?? `Element ${localId}`;
+            const label = index.itemNames.get(localId) ?? labels.elementFallback(localId);
             return `
               <div class="browser-leaf">
                 ${treeIco('view_in_ar')}
@@ -221,7 +251,7 @@ export function buildModelBrowserMarkup(
                   data-browser-action="select-item"
                   data-model-id="${escapedModelId}"
                   data-local-id="${localId}"
-                  title="Select ${escapeHtml(label)}"
+                  title="${escapeHtml(labels.select)} ${escapeHtml(label)}"
                 >
                   ${escapeHtml(label)}
                 </span>
@@ -231,7 +261,7 @@ export function buildModelBrowserMarkup(
           }).join('');
           const hiddenCount = classIds.length - visibleIds.length;
           const moreElementsMarkup = hiddenCount > 0
-            ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${hiddenCount} more elements</span><span class="browser-count">+</span></div>`
+            ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${escapeHtml(labels.moreElements(hiddenCount))}</span><span class="browser-count">+</span></div>`
             : '';
 
           return `
@@ -244,14 +274,14 @@ export function buildModelBrowserMarkup(
                   data-model-id="${escapedModelId}"
                   data-level="${escapeHtml(levelName)}"
                   data-class="${escapeHtml(className)}"
-                  title="Isolate ${escapeHtml(className)} in ${escapeHtml(levelName)}"
+                  title="${escapeHtml(labels.isolate)} ${escapeHtml(className)} · ${escapeHtml(levelName)}"
                 >
                   ${escapeHtml(className)}
                 </span>
                 <span class="browser-count">${classIds.length}</span>
               </summary>
               <div class="browser-children">
-                ${elementsMarkup || `<div class="browser-leaf">${treeIco('hide_source')}<span>No elements</span><span class="browser-count">0</span></div>`}
+                ${elementsMarkup || `<div class="browser-leaf">${treeIco('hide_source')}<span>${escapeHtml(labels.noElements)}</span><span class="browser-count">0</span></div>`}
                 ${moreElementsMarkup}
               </div>
             </details>
@@ -267,30 +297,30 @@ export function buildModelBrowserMarkup(
                 data-browser-action="isolate-level"
                 data-model-id="${escapedModelId}"
                 data-level="${escapeHtml(levelName)}"
-                title="Isolate level ${escapeHtml(levelName)}"
+                title="${escapeHtml(labels.isolateLevel)} ${escapeHtml(levelName)}"
               >
                 ${escapeHtml(levelName)}
               </span>
               <span class="browser-count">${ids.size}</span>
             </summary>
             <div class="browser-children">
-              ${classMarkup || `<div class="browser-leaf">${treeIco('category')}<span>No classes</span><span class="browser-count">0</span></div>`}
+              ${classMarkup || `<div class="browser-leaf">${treeIco('category')}<span>${escapeHtml(labels.noClasses)}</span><span class="browser-count">0</span></div>`}
             </div>
           </details>
         `;
       }).join('');
 
       const levelMoreMarkup = levelEntries.length > MAX_BROWSER_LEVELS
-        ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${levelEntries.length - MAX_BROWSER_LEVELS} more levels</span><span class="browser-count">+</span></div>`
+        ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${escapeHtml(labels.moreLevels(levelEntries.length - MAX_BROWSER_LEVELS))}</span><span class="browser-count">+</span></div>`
         : '';
 
       const spatialRootNodes = index.spatialRoot?.children?.length ? index.spatialRoot.children : (index.spatialRoot ? [index.spatialRoot] : []);
       const spatialVisible = spatialRootNodes.slice(0, MAX_BROWSER_SPATIAL_CHILDREN);
       const spatialMarkup = spatialVisible
-        .map((node) => renderSpatialBrowserNode(modelId, index, node, 0))
+        .map((node) => renderSpatialBrowserNode(modelId, index, node, 0, labels))
         .join('');
       const spatialMoreMarkup = spatialRootNodes.length > MAX_BROWSER_SPATIAL_CHILDREN
-        ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${spatialRootNodes.length - MAX_BROWSER_SPATIAL_CHILDREN} more nodes</span><span class="browser-count">+</span></div>`
+        ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${escapeHtml(labels.moreNodes(spatialRootNodes.length - MAX_BROWSER_SPATIAL_CHILDREN))}</span><span class="browser-count">+</span></div>`
         : '';
 
       return `
@@ -301,7 +331,7 @@ export function buildModelBrowserMarkup(
               class="browser-action"
               data-browser-action="select-model"
               data-model-id="${escapedModelId}"
-              title="Select full model"
+              title="${escapeHtml(labels.selectFullModel)}"
             >
               ${escapeHtml(record.fileName)}${visibilitySuffix}
             </span>
@@ -314,21 +344,21 @@ export function buildModelBrowserMarkup(
                 class="browser-action"
                 data-browser-action="fit-model"
                 data-model-id="${escapedModelId}"
-                title="Fit camera to model"
+                title="${escapeHtml(labels.fitCamera)}"
               >
-                Default
+                ${escapeHtml(labels.default)}
               </span>
-              <span class="browser-count">${levelEntries.length} lvls</span>
+              <span class="browser-count">${escapeHtml(labels.levelsShort(levelEntries.length))}</span>
             </div>
 
             <details class="browser-node" data-node-key="group:${escapedModelId}:levels" ${levelEntries.length > 0 ? 'open' : ''}>
               <summary class="browser-summary">
                 ${treeIco('chevron_right', 'browser-twist')}
-                <span>Levels</span>
+                <span>${escapeHtml(labels.levels)}</span>
                 <span class="browser-count">${levelEntries.length}</span>
               </summary>
               <div class="browser-children">
-                ${levelMarkup || `<div class="browser-leaf">${treeIco('folder_open')}<span>No levels detected</span><span class="browser-count">-</span></div>`}
+                ${levelMarkup || `<div class="browser-leaf">${treeIco('folder_open')}<span>${escapeHtml(labels.noLevelsDetected)}</span><span class="browser-count">-</span></div>`}
                 ${levelMoreMarkup}
               </div>
             </details>
@@ -336,11 +366,11 @@ export function buildModelBrowserMarkup(
             <details class="browser-node" data-node-key="group:${escapedModelId}:spatial">
               <summary class="browser-summary">
                 ${treeIco('chevron_right', 'browser-twist')}
-                <span>Spatial Structure</span>
+                <span>${escapeHtml(labels.spatialStructure)}</span>
                 <span class="browser-count">${spatialRootNodes.length}</span>
               </summary>
               <div class="browser-children">
-                ${spatialMarkup || `<div class="browser-leaf">${treeIco('account_tree')}<span>No spatial tree data</span><span class="browser-count">-</span></div>`}
+                ${spatialMarkup || `<div class="browser-leaf">${treeIco('account_tree')}<span>${escapeHtml(labels.noSpatialData)}</span><span class="browser-count">-</span></div>`}
                 ${spatialMoreMarkup}
               </div>
             </details>

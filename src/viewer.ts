@@ -33,6 +33,16 @@ import {
   type PropertySectionData,
 } from './core/property-engine';
 import { getClipperPlaneGizmoHelper, type FragmentsModelLike } from './core/fragments-model';
+import {
+  t,
+  setLanguage,
+  getLanguage,
+  initLanguage,
+  hydrateI18n,
+  onLanguageChange,
+  formatDateTime,
+  type Language,
+} from './core/i18n';
 import { bootstrapEngine, createFpsMonitor, ShaderWarningFilter } from './core/viewer-core';
 import type { TestItemRef, ViewerTestApi } from './core/test-api';
 import { getViewCubeAxes, getViewCubeNavigationDistance, resolveViewCubeCameraUp } from './core/view-cube';
@@ -55,6 +65,7 @@ import { buildIssueCommentsMarkup, buildIssueListMarkup } from './ui/issues-pane
 import {
   buildModelBrowserMarkup,
   getClassIdsForModelLevel,
+  type BrowserLabels,
 } from './ui/model-browser';
 import { buildPropertySectionsMarkup } from './ui/properties-panel';
 import { buildViewpointListMarkup } from './ui/viewpoints-panel';
@@ -185,14 +196,62 @@ class ViewerApp {
   private gizmoDragging = false;
   private propertyFilterText = '';
   private activeView: 'orbit' | 'front' | 'top' = 'orbit';
+  private activeTab = 'explorer';
   // A5: scoped console.warn filter (install/uninstall paired; restored in
   // destroy() rather than leaving console.warn permanently monkey-patched).
   private readonly shaderWarningFilter = new ShaderWarningFilter();
 
   constructor() {
+    // C7: resolve the persisted language (default EN) and localize the static
+    // shell before any panels render, so first paint is already in-language.
+    initLanguage();
     hydrateIcons(document);
+    hydrateI18n(document);
+    this.syncLanguageUi(getLanguage());
     this.patchEventListenersWithAbort();
     this.bindUiEvents();
+    // Re-render JS-built panels + counters whenever the language changes
+    // (hydrateI18n handles the static [data-i18n] shell; this covers the
+    // dynamically-generated markup that hydrateI18n cannot reach).
+    onLanguageChange((language) => this.onLanguageChanged(language));
+  }
+
+  /** Reflects the active language on the toggle control (shows EN / DE). */
+  private syncLanguageUi(language: Language): void {
+    this.dom.langCode.textContent = language.toUpperCase();
+  }
+
+  /**
+   * Called after setLanguage(): the static shell was already re-hydrated by the
+   * i18n module; here we re-render everything built in JS (panels, counters,
+   * status label, view/mode labels, tab title) so nothing stays stale, and we
+   * persist the choice into the viewer state (C8 restore).
+   */
+  private onLanguageChanged(language: Language): void {
+    this.syncLanguageUi(language);
+    this.renderModelBrowser();
+    this.renderFederatedTree();
+    this.updateCounters();
+    this.updateTopbarModel();
+    this.renderClassFilters();
+    this.renderLevelFilters();
+    this.updateViewpointList();
+    this.updateIssuesList();
+    this.updateIssueComments();
+    void this.updatePropertiesPanel();
+    this.updateActiveTabTitle();
+    this.applyNavigationMode(this.navigationMode);
+    this.setActiveView(this.activeView);
+    this.syncMeasureHint();
+    this.syncMobileSheet();
+    // Refresh the current status line into the new language where we can.
+    this.setStatus(t('status.languageChanged'));
+    this.persistLocalState();
+  }
+
+  /** Toggles EN⇄DE (the top-bar language control). */
+  private toggleLanguage(): void {
+    setLanguage(getLanguage() === 'en' ? 'de' : 'en');
   }
 
   /**
@@ -275,7 +334,7 @@ class ViewerApp {
 
   async init(): Promise<void> {
     try {
-      this.setStatus('Initializing BTC IFC Viewer...');
+      this.setStatus(t('status.initializing'));
       this.shaderWarningFilter.install();
       await this.initEngine();
       await this.restoreLocalState();
@@ -288,11 +347,11 @@ class ViewerApp {
       this.updateIssuesList();
       this.updateIssueComments();
       this.updateViewpointList();
-      this.setStatus('Ready - load IFC model(s)');
+      this.setStatus(t('status.ready'));
       this.startFpsMonitor();
     } catch (error) {
-      this.showToast(`Initialization failed: ${serializeError(error)}`, 'error', 8000);
-      this.setStatus(`Initialization failed: ${serializeError(error)}`);
+      this.showToast(t('status.initFailed', { error: serializeError(error) }), 'error', 8000);
+      this.setStatus(t('status.initFailed', { error: serializeError(error) }));
       console.error(error);
     }
   }
@@ -372,12 +431,12 @@ class ViewerApp {
     });
     this.dom.btnClearSections.addEventListener('click', () => {
       this.clearSections();
-      this.setStatus('Sections cleared');
+      this.setStatus(t('status.sectionsCleared'));
     });
     this.dom.sectionPos.addEventListener('input', () => this.onSectionSliderInput());
     this.dom.btnClearSectionSlider.addEventListener('click', () => {
       this.clearSections();
-      this.setStatus('Sections cleared');
+      this.setStatus(t('status.sectionsCleared'));
     });
 
     // Tool rail — measure
@@ -385,7 +444,7 @@ class ViewerApp {
     this.dom.btnMeasureArea.addEventListener('click', () => this.setMeasureMode(this.measureMode === 'area' ? 'none' : 'area'));
     this.dom.btnClearMeasurements.addEventListener('click', () => {
       this.clearMeasurements();
-      this.setStatus('Measurements cleared');
+      this.setStatus(t('status.measurementsCleared'));
     });
     this.dom.btnCancelMeasure.addEventListener('click', () => this.setMeasureMode('none'));
 
@@ -405,6 +464,7 @@ class ViewerApp {
 
     // Theme toggle (F8: per-theme background memory)
     this.dom.btnThemeToggle.addEventListener('click', () => this.toggleTheme());
+    this.dom.btnLangToggle.addEventListener('click', () => this.toggleLanguage());
 
     // Search — live on input (design has no explicit Go button)
     const runSearch = debounce(() => {
@@ -418,7 +478,7 @@ class ViewerApp {
       this.dom.btnClearSearch.hidden = true;
       this.dom.elementResults.replaceChildren();
       this.dom.searchResultsGroup.hidden = true;
-      this.setStatus('Search cleared');
+      this.setStatus(t('status.searchCleared'));
     });
 
     // Filters — chip toggles apply immediately
@@ -467,8 +527,8 @@ class ViewerApp {
       if (files.length === 0) return;
       const ifcFiles = files.filter((file) => file.name.toLowerCase().endsWith('.ifc'));
       if (ifcFiles.length === 0) {
-        this.showToast('Only IFC files are supported', 'warning');
-        this.setStatus('Only IFC files are supported');
+        this.showToast(t('toast.onlyIfc'), 'warning');
+        this.setStatus(t('toast.onlyIfc'));
         return;
       }
       this.fireAndForget(this.loadIfcFiles(ifcFiles), 'Load IFC files');
@@ -479,26 +539,26 @@ class ViewerApp {
   private isolateSelection(): void {
     const selectionMap = this.getValidModelIdMap(this.selectedItems);
     if (isMapEmpty(selectionMap)) {
-      this.setStatus('No selection to isolate');
+      this.setStatus(t('status.noSelectionToIsolate'));
       return;
     }
     this.fireAndForget((async () => {
       await this.hider.isolate(cloneMap(selectionMap));
       await this.updateVisibilityCount();
-      this.setStatus('Selection isolated');
+      this.setStatus(t('status.selectionIsolated'));
     })(), 'Isolate selection');
   }
 
   private hideSelection(): void {
     const selectionMap = this.getValidModelIdMap(this.selectedItems);
     if (isMapEmpty(selectionMap)) {
-      this.setStatus('No selection to hide');
+      this.setStatus(t('status.noSelectionToHide'));
       return;
     }
     this.fireAndForget((async () => {
       await this.hider.set(false, cloneMap(selectionMap));
       await this.updateVisibilityCount();
-      this.setStatus('Selection hidden');
+      this.setStatus(t('status.selectionHidden'));
     })(), 'Hide selection');
   }
 
@@ -507,7 +567,7 @@ class ViewerApp {
       await this.hider.set(true);
       this.clearFilterChecks();
       await this.updateVisibilityCount();
-      this.setStatus('Visibility reset');
+      this.setStatus(t('status.visibilityReset'));
     })(), 'Reset visibility');
   }
 
@@ -517,7 +577,7 @@ class ViewerApp {
     this.applyXRay();
     this.fireAndForget(this.fragments.core.update(true), 'Toggle x-ray');
     this.persistLocalState();
-    this.setStatus(this.xrayEnabled ? 'X-ray enabled' : 'X-ray disabled');
+    this.setStatus(this.xrayEnabled ? t('status.xrayEnabled') : t('status.xrayDisabled'));
     this.syncMobileSheet();
   }
 
@@ -526,7 +586,7 @@ class ViewerApp {
     this.setRailPressed(this.dom.btnWireframe, this.edgesEnabled);
     this.applyEdges();
     this.persistLocalState();
-    this.setStatus(this.edgesEnabled ? 'Edge overlay enabled' : 'Edge overlay disabled');
+    this.setStatus(this.edgesEnabled ? t('status.edgesEnabled') : t('status.edgesDisabled'));
     this.syncMobileSheet();
   }
 
@@ -534,7 +594,7 @@ class ViewerApp {
     this.issuePinMode = !this.issuePinMode;
     this.setRailPressed(this.dom.btnIssuePinMode, this.issuePinMode);
     this.dom.viewerHint.hidden = !this.issuePinMode;
-    this.setStatus(this.issuePinMode ? 'Issue pin mode active' : 'Issue pin mode disabled');
+    this.setStatus(this.issuePinMode ? t('status.issuePinEnabled') : t('status.issuePinDisabled'));
   }
 
   private toggleTheme(): void {
@@ -555,7 +615,7 @@ class ViewerApp {
 
   private onSectionSliderInput(): void {
     const pct = Number(this.dom.sectionPos.value);
-    this.dom.sectionPosLabel.textContent = `${pct}%`;
+    this.dom.sectionPosLabel.textContent = t('label.percent', { value: pct });
     this.setSectionPosition(pct);
   }
 
@@ -809,6 +869,14 @@ class ViewerApp {
         setVisualStyle: (value: string) =>
           this.fireAndForget(this.setVisualStyle(this.parseVisualStyle(value), true, true, true), 'Set visual style'),
       },
+      {
+        xray: t('mobileSheet.xray'),
+        edges: t('mobileSheet.edges'),
+        grid: t('mobileSheet.grid'),
+        lightTheme: t('mobileSheet.lightTheme'),
+        style: t('mobileSheet.style'),
+        styleOption: (value) => this.getVisualStyleLabel(this.parseVisualStyle(value)),
+      },
     );
   }
 
@@ -850,9 +918,9 @@ class ViewerApp {
             const record = this.federatedModels.get(modelId);
             if (!record) return;
             const confirmed = await this.confirm(
-              `Unload ${record.fileName}? Saved issues and viewpoints stay, but its elements leave the viewer.`,
-              'Unload',
-              'Cancel',
+              t('confirm.unloadModel', { name: record.fileName }),
+              t('confirm.unload'),
+              t('confirm.cancel'),
             );
             if (!confirmed) return;
             await this.unloadModel(modelId);
@@ -880,7 +948,7 @@ class ViewerApp {
       this.applyModelOpacity(modelId, opacity);
       const card = opacityInput.closest<HTMLElement>('.federated-opacity');
       const valueLabel = card?.querySelector<HTMLElement>('[data-opacity-value]');
-      if (valueLabel) valueLabel.textContent = `${Math.round(this.clamp(opacity, 0, 1) * 100)}%`;
+      if (valueLabel) valueLabel.textContent = t('label.percent', { value: Math.round(this.clamp(opacity, 0, 1) * 100) });
     });
 
     this.dom.federationTree.addEventListener('change', (event) => {
@@ -1015,7 +1083,7 @@ class ViewerApp {
       this.updateModelOffsetsFromObject(model);
       this.renderModelBrowser();
       this.renderFederatedTree();
-      this.setStatus(`Gizmo updated: ${model.fileName}`);
+      this.setStatus(t('status.gizmoUpdated', { name: model.fileName }));
     });
 
     await this.updateVisibilityCount();
@@ -1091,7 +1159,7 @@ class ViewerApp {
     await this.updateVisibilityCount();
     await this.fragments.core.update(true);
     this.dom.emptyState.hidden = this.federatedModels.size > 0;
-    this.setStatus(`Model unloaded: ${record.fileName}`);
+    this.setStatus(t('status.modelUnloaded', { name: record.fileName }));
   }
 
   private async onModelAdded(modelId: string, model: FragmentsModelLike): Promise<void> {
@@ -1156,7 +1224,7 @@ class ViewerApp {
     this.renderLevelFilters();
 
     this.refreshIssueMarkers();
-    this.setStatus(`Model loaded: ${fileName}`);
+    this.setStatus(t('status.modelLoaded', { name: fileName }));
   }
 
   private async indexModel(modelId: string, model: FragmentsModelLike): Promise<void> {
@@ -1170,7 +1238,7 @@ class ViewerApp {
     }
     const sorted = [...classes].sort((a, b) => a.localeCompare(b));
     // A1: escaped by the pure markup builder.
-    this.dom.classFilterList.innerHTML = filterChipMarkup(sorted, 'class', 'No classes detected');
+    this.dom.classFilterList.innerHTML = filterChipMarkup(sorted, 'class', t('empty.noClasses'));
   }
 
   private renderLevelFilters(): void {
@@ -1180,7 +1248,7 @@ class ViewerApp {
     }
     const sorted = [...levels].sort((a, b) => a.localeCompare(b));
     // A1: escaped by the pure markup builder.
-    this.dom.levelFilterList.innerHTML = filterChipMarkup(sorted, 'level', 'No levels detected');
+    this.dom.levelFilterList.innerHTML = filterChipMarkup(sorted, 'level', t('empty.noLevels'));
   }
 
   private clearFilterChecks(): void {
@@ -1195,7 +1263,7 @@ class ViewerApp {
   private updateElementCounter(): void {
     let total = 0;
     for (const model of this.federatedModels.values()) total += model.elementCount;
-    this.dom.elementCount.textContent = `${total} elements`;
+    this.dom.elementCount.textContent = t('label.elements', { count: total });
     this.updateTopbarModel();
   }
 
@@ -1208,13 +1276,13 @@ class ViewerApp {
     if (models.length === 0) {
       const empty = document.createElement('span');
       empty.className = 'topbar-model-empty';
-      empty.textContent = 'No model loaded';
+      empty.textContent = t('empty.noModelLoaded');
       this.dom.topbarModel.append(empty);
       return;
     }
     const name = document.createElement('span');
     name.className = 'topbar-model-name';
-    name.textContent = models.length === 1 ? models[0].fileName : `${models.length} models`;
+    name.textContent = models.length === 1 ? models[0].fileName : t('label.models', { count: models.length });
     this.dom.topbarModel.append(name);
     for (const model of models.slice(0, 4)) {
       const chip = document.createElement('span');
@@ -1227,10 +1295,35 @@ class ViewerApp {
     }
   }
 
+  /** Builds the already-translated label bundle for the model-browser tree. */
+  private browserLabels(): BrowserLabels {
+    return {
+      hidden: t('tree.hidden'),
+      building: t('tree.building'),
+      noElements: t('tree.noElements'),
+      noClasses: t('tree.noClasses'),
+      default: t('tree.default'),
+      levels: t('tree.levels'),
+      spatialStructure: t('tree.spatialStructure'),
+      noLevelsDetected: t('tree.noLevelsDetected'),
+      noSpatialData: t('tree.noSpatialData'),
+      select: t('tree.select'),
+      isolate: t('tree.isolate'),
+      isolateLevel: t('tree.isolateLevel'),
+      fitCamera: t('fed.fitCamera'),
+      selectFullModel: t('fed.selectFullModel'),
+      elementFallback: (id) => t('label.elementFallback', { id }),
+      moreNodes: (count) => t('tree.moreNodes', { count }),
+      moreElements: (count) => t('tree.moreElements', { count }),
+      moreLevels: (count) => t('tree.moreLevels', { count }),
+      levelsShort: (count) => t('tree.levelsShort', { count }),
+    };
+  }
+
   private renderModelBrowser(): void {
-    const markup = buildModelBrowserMarkup(this.federatedModels, this.modelIndices);
+    const markup = buildModelBrowserMarkup(this.federatedModels, this.modelIndices, this.browserLabels());
     if (markup === null) {
-      this.dom.modelBrowserTree.innerHTML = '<div class="tree-item">No models loaded yet</div>';
+      this.dom.modelBrowserTree.innerHTML = `<div class="tree-item">${escapeHtml(t('empty.noModelsYet'))}</div>`;
       return;
     }
     this.renderPreservingDetails(this.dom.modelBrowserTree, markup);
@@ -1259,9 +1352,27 @@ class ViewerApp {
   }
 
   private renderFederatedTree(): void {
-    const markup = buildFederationTreeMarkup(this.federatedModels, this.modelIndices, this.activeGizmoModelId);
+    const markup = buildFederationTreeMarkup(this.federatedModels, this.modelIndices, this.activeGizmoModelId, {
+      show: t('fed.show'),
+      hide: t('fed.hide'),
+      noStoreys: t('fed.noStoreys'),
+      opacity: t('fed.opacity'),
+      offsetXyz: t('fed.offsetXyz'),
+      rotationXyz: t('fed.rotationXyz'),
+      select: t('fed.select'),
+      gizmo: t('fed.gizmo'),
+      fit: t('fed.fit'),
+      reset: t('fed.reset'),
+      unload: t('fed.unload'),
+      selectFullModel: t('fed.selectFullModel'),
+      fitCamera: t('fed.fitCamera'),
+      unloadTitle: t('fed.unloadTitle'),
+      elements: (count) => t('label.elements', { count }),
+      isolateLevel: (level) => t('fed.isolateLevel', { level }),
+      levelsCount: (count) => t('fed.levelsCount', { count }),
+    });
     if (markup === null) {
-      this.dom.federationTree.innerHTML = '<div class="tree-item">No models loaded yet</div>';
+      this.dom.federationTree.innerHTML = `<div class="tree-item">${escapeHtml(t('empty.noModelsYet'))}</div>`;
       return;
     }
     this.dom.federationTree.innerHTML = markup;
@@ -1281,7 +1392,7 @@ class ViewerApp {
     this.gridVisible = visible;
     if (this.gridHelper) this.gridHelper.visible = visible;
     this.setRailPressed(this.dom.btnToggleGrid, visible);
-    if (updateStatus) this.setStatus(visible ? 'Grid enabled' : 'Grid hidden');
+    if (updateStatus) this.setStatus(visible ? t('status.gridEnabled') : t('status.gridHidden'));
   }
 
   private setBackgroundColor(color: string, updateStatus: boolean): void {
@@ -1303,7 +1414,7 @@ class ViewerApp {
       post.basePass.clearColor = threeColor;
       post.basePass.clearAlpha = 1;
     }
-    if (updateStatus) this.setStatus(`Background color set to ${normalized}`);
+    if (updateStatus) this.setStatus(t('status.backgroundSet', { color: normalized }));
   }
 
   private syncVisualSettingsUi(): void {
@@ -1330,18 +1441,40 @@ class ViewerApp {
   private getVisualStyleLabel(style: VisualStyle): string {
     switch (style) {
       case 'basic':
-        return 'Basic';
+        return t('style.basic');
       case 'pen':
-        return 'Pen';
+        return t('style.pen');
       case 'color-pen':
-        return 'Color Pen';
+        return t('style.colorPen');
       case 'color-shadows':
-        return 'Color Shadows';
+        return t('style.colorShadows');
       case 'color-pen-shadows':
-        return 'Color Pen Shadows';
+        return t('style.colorPenShadows');
       default:
-        return 'Color Pen Shadows';
+        return t('style.colorPenShadows');
     }
+  }
+
+  /** Localized display for a stored issue priority enum (value stays English). */
+  private localizeIssuePriority(priority: string): string {
+    const keys: Record<string, Parameters<typeof t>[0]> = {
+      Critical: 'shell.prioCritical',
+      High: 'shell.prioHigh',
+      Medium: 'shell.prioMedium',
+      Low: 'shell.prioLow',
+    };
+    return keys[priority] ? t(keys[priority]) : priority;
+  }
+
+  /** Localized display for a stored issue status enum (value stays English). */
+  private localizeIssueStatus(status: string): string {
+    const keys: Record<string, Parameters<typeof t>[0]> = {
+      Open: 'shell.statusOpen',
+      'In Progress': 'shell.statusInProgress',
+      Resolved: 'shell.statusResolved',
+      Closed: 'shell.statusClosed',
+    };
+    return keys[status] ? t(keys[status]) : status;
   }
 
   private getPostproductionRenderer(): OBCF.PostproductionRenderer | null {
@@ -1432,7 +1565,7 @@ class ViewerApp {
     }
 
     if (persist) this.persistLocalState();
-    if (updateStatus) this.setStatus(`Visual style: ${this.getVisualStyleLabel(resolvedStyle)}`);
+    if (updateStatus) this.setStatus(t('status.visualStyle', { style: this.getVisualStyleLabel(resolvedStyle) }));
   }
 
   private clamp(value: number, min: number, max: number): number {
@@ -1457,14 +1590,14 @@ class ViewerApp {
       console.debug(`Suppressed model-not-found race during "${context}":`, error);
       this.pruneSelectedItems();
       if (context !== 'Camera update') {
-        this.setStatus('Model synchronization updated. Please reselect element if needed.');
+        this.setStatus(t('status.modelSyncUpdated'));
       }
       return;
     }
     // U4: every unexpected async failure surfaces as an error toast, not just
     // 11px status text (which is hidden on phones).
-    this.showToast(`${context} failed: ${message}`, 'error');
-    this.setStatus(`${context} failed: ${message}`);
+    this.showToast(t('status.contextFailed', { context, message }), 'error');
+    this.setStatus(t('status.contextFailed', { context, message }));
     console.error(error);
   }
 
@@ -1492,14 +1625,14 @@ class ViewerApp {
   private async selectWholeModel(modelId: string): Promise<void> {
     const index = this.modelIndices.get(modelId);
     if (!index || index.allIds.size === 0) {
-      this.setStatus('Model index not ready yet');
+      this.setStatus(t('status.modelIndexNotReady'));
       return;
     }
     clearMap(this.selectedItems);
     this.selectedItems[modelId] = new Set(index.allIds);
     await this.refreshSelectionVisuals();
     await this.zoomToItems(this.selectedItems);
-    this.setStatus(`Selected full model (${index.allIds.size} elements)`);
+    this.setStatus(t('status.selectedFullModel', { count: index.allIds.size }));
   }
 
   private toggleModelVisibility(modelId: string): void {
@@ -1514,7 +1647,7 @@ class ViewerApp {
     this.fireAndForget(this.updateVisibilityCount(), 'Update visibility');
     this.renderModelBrowser();
     this.renderFederatedTree();
-    this.setStatus(`${model.visible ? 'Shown' : 'Hidden'}: ${model.fileName}`);
+    this.setStatus(model.visible ? t('status.modelShown', { name: model.fileName }) : t('status.modelHidden', { name: model.fileName }));
   }
 
   private applyModelOpacity(modelId: string, opacity: number): void {
@@ -1530,13 +1663,13 @@ class ViewerApp {
     const model = this.federatedModels.get(modelId);
     if (!model || !this.transformControls) return;
     if (!model.visible) {
-      this.setStatus('Show the model before enabling gizmo');
+      this.setStatus(t('status.showModelBeforeGizmo'));
       return;
     }
 
     if (this.activeGizmoModelId === modelId && this.transformControlsHelper?.visible) {
       this.detachModelGizmo();
-      this.setStatus('Model gizmo detached');
+      this.setStatus(t('status.gizmoDetached'));
       return;
     }
 
@@ -1546,7 +1679,7 @@ class ViewerApp {
     this.transformControls.enabled = true;
     if (this.transformControlsHelper) this.transformControlsHelper.visible = true;
     this.renderFederatedTree();
-    this.setStatus(`Model gizmo active: ${model.fileName} (W move, E rotate, R reset transform)`);
+    this.setStatus(t('status.gizmoActive', { name: model.fileName }));
   }
 
   private detachModelGizmo(): void {
@@ -1609,7 +1742,7 @@ class ViewerApp {
     }
 
     this.applyModelTransform(model);
-    this.setStatus(`Updated transform: ${model.fileName}`);
+    this.setStatus(t('status.transformUpdated', { name: model.fileName }));
   }
 
   private applyModelTransform(model: FederatedModelRecord): void {
@@ -1640,7 +1773,7 @@ class ViewerApp {
     this.applyModelTransform(model);
     this.renderModelBrowser();
     this.renderFederatedTree();
-    this.setStatus(`Reset transform: ${model.fileName}`);
+    this.setStatus(t('status.transformReset', { name: model.fileName }));
   }
 
   private fitToModelById(modelId: string): void {
@@ -1660,34 +1793,34 @@ class ViewerApp {
     const index = this.modelIndices.get(modelId);
     const ids = index?.levels.get(level);
     if (!ids || ids.size === 0) {
-      this.setStatus(`No elements found for level ${level}`);
+      this.setStatus(t('status.noElementsForLevel', { level }));
       return;
     }
     const map = this.getValidModelIdMap({ [modelId]: new Set(ids) });
     if (isMapEmpty(map)) {
-      this.setStatus(`Level ${level} is not available for current loaded model IDs`);
+      this.setStatus(t('status.levelUnavailable', { level }));
       return;
     }
     await this.hider.isolate(map);
     await this.updateVisibilityCount();
-    this.setStatus(`Isolated ${level}`);
+    this.setStatus(t('status.isolatedLevel', { level }));
   }
 
   private async isolateClassForModelLevel(modelId: string, level: string, className: string): Promise<void> {
     const ids = getClassIdsForModelLevel(this.modelIndices, modelId, level, className);
     if (ids.size === 0) {
-      this.setStatus(`No ${className} elements found in ${level}`);
+      this.setStatus(t('status.noClassInLevel', { class: className, level }));
       return;
     }
 
     const map = this.getValidModelIdMap({ [modelId]: ids });
     if (isMapEmpty(map)) {
-      this.setStatus(`${className} in ${level} is not available for current loaded model IDs`);
+      this.setStatus(t('status.classInLevelUnavailable', { class: className, level }));
       return;
     }
     await this.hider.isolate(map);
     await this.updateVisibilityCount();
-    this.setStatus(`Isolated ${className} in ${level}`);
+    this.setStatus(t('status.isolatedClassInLevel', { class: className, level }));
   }
 
   private collectCheckedValues(container: HTMLElement): string[] {
@@ -1731,7 +1864,7 @@ class ViewerApp {
     if (selectedClasses.length === 0 && selectedLevels.length === 0) {
       await this.hider.set(true);
       await this.updateVisibilityCount();
-      this.setStatus('No filters selected. Showing all elements');
+      this.setStatus(t('status.noFiltersSelected'));
       return;
     }
 
@@ -1747,15 +1880,15 @@ class ViewerApp {
     // F11: a disjoint class∩level combination used to silently hide the
     // entire model — warn and keep the current visibility instead.
     if (isMapEmpty(effectiveMap)) {
-      this.showToast('No elements match the selected class and level filters — nothing was hidden', 'warning');
-      this.setStatus('Selected filters have no elements in common');
+      this.showToast(t('toast.filtersNothingHidden'), 'warning');
+      this.setStatus(t('status.filtersNoCommon'));
       return;
     }
 
     await this.hider.set(false);
     await this.hider.set(true, effectiveMap);
     await this.updateVisibilityCount();
-    this.setStatus('Filters applied');
+    this.setStatus(t('status.filtersApplied'));
   }
 
   private async searchElements(term: string): Promise<void> {
@@ -1790,8 +1923,8 @@ class ViewerApp {
         const data = (itemsData[i] || {}) as Record<string, unknown>;
         // F1: fragments v3.3 returns {value,type} ItemAttribute objects —
         // unwrap to primitives before they reach escapeHtml/rendering.
-        const name = readPrimitiveValue(data.Name) || `Element ${localId}`;
-        const type = readPrimitiveValue(data.ObjectType) || readPrimitiveValue(data.PredefinedType) || 'Item';
+        const name = readPrimitiveValue(data.Name) || t('label.elementFallback', { id: localId });
+        const type = readPrimitiveValue(data.ObjectType) || readPrimitiveValue(data.PredefinedType) || t('label.itemFallback');
         const globalId = readPrimitiveValue(data.GlobalId) || '-';
         results.push({ modelId, localId, name, type, globalId });
       }
@@ -1800,7 +1933,7 @@ class ViewerApp {
     const capped = results.slice(0, 180);
     // U6: real <button> rows (keyboard-reachable), delegated selection.
     this.dom.elementResults.innerHTML = capped.length === 0
-      ? '<div class="list-empty">No matches</div>'
+      ? `<div class="list-empty">${escapeHtml(t('empty.noMatches'))}</div>`
       : capped
           .map((result) => `
         <button type="button" class="result-row" data-model-id="${escapeHtml(result.modelId)}" data-local-id="${result.localId}">
@@ -1820,19 +1953,19 @@ class ViewerApp {
       });
     });
 
-    this.setStatus(`Search found ${results.length} matches`);
+    this.setStatus(t('status.searchMatches', { count: results.length }));
   }
 
   private async loadIfcFiles(files: File[]): Promise<void> {
     const ifcFiles = files.filter((file) => file.name.toLowerCase().endsWith('.ifc'));
     if (ifcFiles.length === 0) {
-      this.showToast('Only IFC files are supported', 'warning');
-      this.setStatus('Only IFC files are supported');
+      this.showToast(t('toast.onlyIfc'), 'warning');
+      this.setStatus(t('toast.onlyIfc'));
       return;
     }
     if (this.isModelLoading) {
-      this.showToast('A model is already loading. Please wait...', 'warning');
-      this.setStatus('A model is already loading. Please wait...');
+      this.showToast(t('status.modelAlreadyLoading'), 'warning');
+      this.setStatus(t('status.modelAlreadyLoading'));
       return;
     }
 
@@ -1855,7 +1988,7 @@ class ViewerApp {
     if (batchTotal > 1 && this.modelObjects.length > 0) this.fitToModel();
 
     if (failedFiles.length === 0) {
-      this.setStatus(batchTotal > 1 ? `Loaded ${batchTotal} IFC models` : 'Model loaded successfully');
+      this.setStatus(batchTotal > 1 ? t('status.batchLoaded', { count: batchTotal }) : t('status.modelLoadedOk'));
       return;
     }
 
@@ -1863,8 +1996,8 @@ class ViewerApp {
     this.lastFailedLoadFiles = failedFiles;
     const failedNames = failedFiles.map((file) => file.name).join(', ');
     const summary = failedFiles.length === batchTotal
-      ? `Failed to load ${failedNames}`
-      : `Loaded ${batchTotal - failedFiles.length}/${batchTotal} IFC files — failed: ${failedNames}`;
+      ? t('status.batchFailedAll', { names: failedNames })
+      : t('status.batchFailedSome', { ok: batchTotal - failedFiles.length, total: batchTotal, names: failedNames });
     this.showToast(summary, 'error', 6000);
     this.showLoadError(lastError ? `${summary} (${lastError})` : summary);
     this.setStatus(summary);
@@ -1892,7 +2025,7 @@ class ViewerApp {
     batchTotal = 1,
   ): Promise<{ success: boolean; error?: string }> {
     if (this.isModelLoading) {
-      this.setStatus('A model is already loading. Please wait...');
+      this.setStatus(t('status.modelAlreadyLoading'));
       return { success: false, error: 'A model is already loading' };
     }
 
@@ -1907,11 +2040,11 @@ class ViewerApp {
     this.dom.loadingOverlay.classList.remove('is-error');
     this.dom.loadingErrorActions.hidden = true;
     this.dom.loadingText.textContent = batchTotal > 1
-      ? `Parsing IFC ${batchIndex}/${batchTotal}…`
-      : 'Parsing IFC…';
+      ? t('load.parsingBatch', { index: batchIndex, total: batchTotal })
+      : t('load.parsing');
     this.dom.loadingProgress.style.width = '8%';
     this.dom.loadingPct.textContent = '8%';
-    this.setStatus('Loading model...');
+    this.setStatus(t('status.loadingModel'));
 
     let timeoutHandle: number | undefined;
     // Metadata is keyed by the id passed to ifcLoader.load — it becomes
@@ -1930,12 +2063,12 @@ class ViewerApp {
       // identically on every platform, instead of relying on web-ifc's
       // undefined behavior for garbage (throw / hang / silent empty model).
       if (!isProbablyIfc(data)) {
-        throw new Error('Not a valid IFC file (missing ISO-10303-21 header).');
+        throw new Error(t('status.notValidIfc'));
       }
       this.modelRegistry.beginLoad(modelId, { fileName: file.name, sizeBytes: file.size });
 
       if (requestId === this.loadRequestId) {
-        this.dom.loadingText.textContent = 'Converting IFC to fragments…';
+        this.dom.loadingText.textContent = t('load.converting');
         this.dom.loadingProgress.style.width = '25%';
         this.dom.loadingPct.textContent = '25%';
       }
@@ -1951,7 +2084,7 @@ class ViewerApp {
             const percentage = Math.round(25 + progress * 70);
             this.dom.loadingProgress.style.width = `${percentage}%`;
             this.dom.loadingPct.textContent = `${percentage}%`;
-            this.dom.loadingText.textContent = 'Building spatial index…';
+            this.dom.loadingText.textContent = t('load.buildingIndex');
           },
         },
       });
@@ -1992,9 +2125,9 @@ class ViewerApp {
       if (requestId !== this.loadRequestId) return { success: true };
 
       // A15: dedicated slot — the FPS monitor owns perfInfo.
-      this.dom.loadInfo.textContent = `Loaded in ${elapsed}s | ${(file.size / 1024 / 1024).toFixed(1)}MB`;
+      this.dom.loadInfo.textContent = t('label.loadInfo', { seconds: elapsed, size: (file.size / 1024 / 1024).toFixed(1) });
       this.dom.loadingProgress.style.width = '100%';
-      this.setStatus('Model loaded successfully');
+      this.setStatus(t('status.modelLoadedOk'));
 
       setTimeout(() => {
         if (requestId === this.loadRequestId) {
@@ -2015,7 +2148,7 @@ class ViewerApp {
 
       this.dom.loadingOverlay.hidden = true;
       this.dom.emptyState.hidden = this.modelObjects.length > 0;
-      this.setStatus(`Failed to load IFC: ${message}`);
+      this.setStatus(t('status.loadFailed', { message }));
       return { success: false, error: message };
     } finally {
       if (requestId === this.loadRequestId) {
@@ -2120,14 +2253,14 @@ class ViewerApp {
     this.dom.btnFront.classList.toggle('is-active', view === 'front');
     this.dom.btnTop.classList.toggle('is-active', view === 'top');
     this.dom.viewLabel.textContent =
-      view === 'orbit' ? 'Orbit · perspective' : view === 'front' ? 'Front · orthographic' : 'Top · orthographic';
+      view === 'orbit' ? t('label.viewOrbit') : view === 'front' ? t('label.viewFront') : t('label.viewTop');
   }
 
   private applySelectionMode(mode: SelectionMode): void {
     this.selectionMode = mode;
     this.setRailPressed(this.dom.btnSelectSingle, mode === 'single');
     this.setRailPressed(this.dom.btnSelectMulti, mode === 'multi');
-    this.setStatus(mode === 'single' ? 'Single-selection mode' : 'Multi-selection mode');
+    this.setStatus(mode === 'single' ? t('status.selectionModeSingle') : t('status.selectionModeMulti'));
     this.persistLocalState();
   }
 
@@ -2147,13 +2280,21 @@ class ViewerApp {
     this.areaMeasurement.enabled = mode === 'area';
     this.setRailPressed(this.dom.btnMeasureLength, mode === 'length');
     this.setRailPressed(this.dom.btnMeasureArea, mode === 'area');
-    // Measure hint overlay
-    this.dom.measureHint.hidden = mode === 'none';
-    if (mode !== 'none') {
+    this.syncMeasureHint();
+    this.setStatus(
+      mode === 'none'
+        ? t('status.measureDisabled')
+        : t('status.measureEnabled', { mode: t(mode === 'length' ? 'measure.length' : 'measure.area') }),
+    );
+  }
+
+  /** Shows/localizes the measure-hint overlay for the current mode. */
+  private syncMeasureHint(): void {
+    this.dom.measureHint.hidden = this.measureMode === 'none';
+    if (this.measureMode !== 'none') {
       this.dom.measureHintText.textContent =
-        mode === 'area' ? 'Area — click points, double-click to close' : 'Length — click two points';
+        this.measureMode === 'area' ? t('label.measureAreaHint') : t('label.measureLengthHint');
     }
-    this.setStatus(mode === 'none' ? 'Measure mode disabled' : `${mode === 'length' ? 'Length' : 'Area'} measurement enabled`);
   }
 
   private clearMeasurements(): void {
@@ -2200,12 +2341,12 @@ class ViewerApp {
   private addSectionPlane(normal: THREE.Vector3): void {
     const bbox = this.getModelBoundingBox();
     if (!bbox || bbox.isEmpty()) {
-      this.setStatus('No model to section');
+      this.setStatus(t('status.noModelToSection'));
       return;
     }
     const center = bbox.getCenter(new THREE.Vector3());
     this.createClipPlane(normal, center);
-    this.setStatus('Section plane added');
+    this.setStatus(t('status.sectionPlaneAdded'));
   }
 
   /** A12: shared toggle for the X/Y/Z axis section buttons. */
@@ -2224,7 +2365,7 @@ class ViewerApp {
       button === this.dom.btnSectionX ? 'Section X' : button === this.dom.btnSectionY ? 'Section Y' : 'Section Z';
     this.dom.sectionLabel.textContent = this.activeSectionLabel;
     this.dom.sectionPos.value = '50';
-    this.dom.sectionPosLabel.textContent = '50%';
+    this.dom.sectionPosLabel.textContent = t('label.percent', { value: 50 });
     this.dom.sectionSlider.hidden = false;
   }
 
@@ -2240,7 +2381,7 @@ class ViewerApp {
   private createSectionBox(): void {
     const bbox = this.getModelBoundingBox();
     if (!bbox || bbox.isEmpty()) {
-      this.setStatus('No model to section');
+      this.setStatus(t('status.noModelToSection'));
       return;
     }
     this.clearSections(false);
@@ -2248,7 +2389,7 @@ class ViewerApp {
     for (const { normal, point } of sectionBoxPlanes(bbox)) {
       this.clipper.createFromNormalAndCoplanarPoint(this.world, normal, point);
     }
-    this.setStatus('Section box created');
+    this.setStatus(t('status.sectionBoxCreated'));
   }
 
   private clearSections(updateStatus = true): void {
@@ -2260,7 +2401,7 @@ class ViewerApp {
     this.activeSectionNormal = null;
     this.activeSectionBox = null;
     this.dom.sectionSlider.hidden = true;
-    if (updateStatus) this.setStatus('Sections cleared');
+    if (updateStatus) this.setStatus(t('status.sectionsCleared'));
   }
 
   private applyXRay(): void {
@@ -2337,7 +2478,7 @@ class ViewerApp {
       if (result.point) this.pendingIssuePoint = result.point.clone();
       if (this.selectionMode === 'single') await this.selectSingleItem(modelId, localId, false);
       this.activateTab('issues');
-      this.setStatus('Issue point captured. Fill issue form and create issue');
+      this.setStatus(t('status.issuePointCaptured'));
       return { modelId, localId };
     }
 
@@ -2410,7 +2551,21 @@ class ViewerApp {
   }
 
   private renderPropertySections(sections: PropertySectionData[]): void {
-    this.dom.propSections.innerHTML = buildPropertySectionsMarkup(sections);
+    // Localize the section headings by their stable id (C7). The property engine
+    // stays pure/English; only the displayed title is swapped here.
+    const titleKeys = {
+      identity: 'prop.identity',
+      type: 'prop.type',
+      dimensions: 'prop.dimensions',
+      location: 'prop.location',
+      levels: 'prop.levels',
+      materials: 'prop.materials',
+      quantities: 'prop.quantities',
+      relations: 'prop.relations',
+      raw: 'prop.raw',
+    } as const;
+    const localized = sections.map((section) => ({ ...section, title: t(titleKeys[section.id]) }));
+    this.dom.propSections.innerHTML = buildPropertySectionsMarkup(localized);
   }
 
   private applyPropertiesFilter(): void {
@@ -2466,7 +2621,7 @@ class ViewerApp {
     ].find((entry) => entry.length > 0) || '-';
 
     const nameValue = toPropertyString(data.Name, '');
-    const displayName = nameValue || `Element ${firstSelection.localId}`;
+    const displayName = nameValue || t('label.elementFallback', { id: firstSelection.localId });
     const storey = this.modelIndices.get(firstSelection.modelId)?.itemToLevel.get(firstSelection.localId) || '—';
     this.dom.propType.textContent = typeValue;
     this.dom.propName.textContent = displayName;
@@ -2476,7 +2631,7 @@ class ViewerApp {
 
     // Selection chip (glass overlay, top-left).
     const count = countMapItems(this.selectedItems);
-    this.dom.selChipName.textContent = count > 1 ? `${count} elements selected` : displayName;
+    this.dom.selChipName.textContent = count > 1 ? t('status.elementsSelected', { count }) : displayName;
     this.dom.selChipMeta.textContent = count > 1 ? typeValue : `${typeValue} · ${storey}`;
     this.dom.selectionChip.hidden = false;
 
@@ -2519,7 +2674,7 @@ class ViewerApp {
 
     this.dom.propsEmpty.hidden = true;
     this.dom.propsContent.hidden = false;
-    this.setStatus(`${countMapItems(this.selectedItems)} element(s) selected`);
+    this.setStatus(t('status.elementsSelected', { count: countMapItems(this.selectedItems) }));
   }
 
   private async zoomToItems(modelIdMap: OBC.ModelIdMap): Promise<void> {
@@ -2546,7 +2701,7 @@ class ViewerApp {
   private async saveViewpoint(): Promise<void> {
     const name = this.dom.viewpointName.value.trim();
     if (!name) {
-      this.setStatus('Enter a viewpoint name');
+      this.setStatus(t('status.enterViewpointName'));
       return;
     }
 
@@ -2586,18 +2741,18 @@ class ViewerApp {
     this.updateViewpointList();
     this.persistLocalState();
     this.dom.viewpointName.value = '';
-    this.setStatus(`Saved viewpoint: ${name}`);
+    this.setStatus(t('status.viewpointSaved', { name }));
   }
 
   private async applySelectedViewpoint(): Promise<void> {
     if (!this.selectedViewpointId) {
-      this.setStatus('Select a viewpoint first');
+      this.setStatus(t('status.selectViewpointFirst'));
       return;
     }
 
     const viewpoint = this.viewpoints.find((entry) => entry.id === this.selectedViewpointId);
     if (!viewpoint) {
-      this.setStatus('Selected viewpoint not found');
+      this.setStatus(t('status.viewpointNotFound'));
       return;
     }
 
@@ -2642,44 +2797,48 @@ class ViewerApp {
     this.applyEdges();
 
     await this.updateVisibilityCount();
-    this.setStatus(`Applied viewpoint: ${viewpoint.name}`);
+    this.setStatus(t('status.viewpointApplied', { name: viewpoint.name }));
   }
 
   private async deleteSelectedViewpoint(): Promise<void> {
     if (!this.selectedViewpointId) {
-      this.setStatus('Select a viewpoint first');
+      this.setStatus(t('status.selectViewpointFirst'));
       return;
     }
 
-    const confirmed = await this.confirm('Delete this viewpoint? This cannot be undone.', 'Delete', 'Cancel');
+    const confirmed = await this.confirm(t('confirm.deleteViewpoint'), t('confirm.delete'), t('confirm.cancel'));
     if (!confirmed) return;
 
     this.viewpoints = this.viewpoints.filter((entry) => entry.id !== this.selectedViewpointId);
     this.selectedViewpointId = this.viewpoints[0]?.id ?? null;
     this.updateViewpointList();
     this.persistLocalState();
-    this.showToast('Viewpoint deleted', 'success');
-    this.setStatus('Viewpoint deleted');
+    this.showToast(t('status.viewpointDeleted'), 'success');
+    this.setStatus(t('status.viewpointDeleted'));
   }
 
   private updateViewpointList(): void {
     // A11: row + action clicks handled by delegation bound once in
     // bindViewpointListEvents() — no per-item listeners to leak on re-render.
-    const markup = buildViewpointListMarkup(this.viewpoints, this.selectedViewpointId);
+    const markup = buildViewpointListMarkup(this.viewpoints, this.selectedViewpointId, {
+      apply: t('vp.apply'),
+      deleteTitle: t('vp.deleteTitle'),
+      formatDate: (iso) => formatDateTime(iso),
+    });
     this.dom.viewpointList.innerHTML = markup
-      ?? '<div class="list-empty">No viewpoints yet. Save one before creating issues for better traceability.</div>';
+      ?? `<div class="list-empty">${escapeHtml(t('empty.noViewpoints'))}</div>`;
   }
 
   private createIssueFromCurrentContext(): void {
     const title = this.dom.issueTitle.value.trim();
     if (!title) {
-      this.setStatus('Issue title is required');
+      this.setStatus(t('status.issueTitleRequired'));
       return;
     }
 
     const selectedCount = countMapItems(this.selectedItems);
     if (selectedCount === 0 && !this.pendingIssuePoint && !this.lastHitPoint) {
-      this.setStatus('Select element(s) or use issue pin mode to capture a point');
+      this.setStatus(t('status.issueNeedsContext'));
       return;
     }
 
@@ -2726,7 +2885,7 @@ class ViewerApp {
     this.dom.btnIssuePinMode.classList.remove('active');
 
     this.persistLocalState();
-    this.setStatus('Issue created');
+    this.setStatus(t('status.issueCreated'));
   }
 
   /**
@@ -2756,7 +2915,7 @@ class ViewerApp {
     markerElement.type = 'button';
     markerElement.className = `issue-marker issue-${issue.status.toLowerCase().replace(/\s+/g, '-')}`;
     markerElement.textContent = issue.priority[0];
-    markerElement.title = `${issue.title} (${issue.status})`;
+    markerElement.title = t('label.issueMarker', { title: issue.title, status: this.localizeIssueStatus(issue.status) });
 
     markerElement.addEventListener('click', (event) => {
       event.stopPropagation();
@@ -2785,8 +2944,14 @@ class ViewerApp {
   private updateIssuesList(): void {
     // A11: row + action clicks handled by delegation bound once in
     // bindIssueListEvents() — no per-item listeners to leak on re-render.
-    const markup = buildIssueListMarkup(this.issues, this.activeIssueId);
-    this.dom.issuesList.innerHTML = markup ?? '<div class="list-empty">No issues yet.</div>';
+    const markup = buildIssueListMarkup(this.issues, this.activeIssueId, {
+      linked: (count, models) => t('issue.linked', { count, models }),
+      noLink: t('issue.noLink'),
+      localizePriority: (priority) => this.localizeIssuePriority(priority),
+      localizeStatus: (status) => this.localizeIssueStatus(status),
+      deleteTitle: t('issue.deleteTitle'),
+    });
+    this.dom.issuesList.innerHTML = markup ?? `<div class="list-empty">${escapeHtml(t('empty.noIssues'))}</div>`;
   }
 
   private selectIssue(issueId: string, focusView: boolean): void {
@@ -2833,16 +2998,16 @@ class ViewerApp {
     this.dom.btnDeleteIssue.hidden = false;
     this.dom.issueCommentsGroup.hidden = false;
     this.activateTab('issues');
-    this.setStatus(`Selected issue: ${issue.title}`);
+    this.setStatus(t('status.selectedIssue', { title: issue.title }));
   }
 
   private async deleteSelectedIssue(): Promise<void> {
     if (!this.activeIssueId) {
-      this.setStatus('Select an issue first');
+      this.setStatus(t('status.selectIssueFirst'));
       return;
     }
 
-    const confirmed = await this.confirm('Delete this issue? This cannot be undone.', 'Delete', 'Cancel');
+    const confirmed = await this.confirm(t('confirm.deleteIssue'), t('confirm.delete'), t('confirm.cancel'));
     if (!confirmed) return;
 
     const issue = this.issues.find((entry) => entry.id === this.activeIssueId);
@@ -2854,19 +3019,19 @@ class ViewerApp {
     this.updateIssuesList();
     this.updateIssueComments();
     this.persistLocalState();
-    this.showToast('Issue deleted', 'success');
-    this.setStatus('Issue deleted');
+    this.showToast(t('status.issueDeleted'), 'success');
+    this.setStatus(t('status.issueDeleted'));
   }
 
   private addCommentToActiveIssue(): void {
     if (!this.activeIssueId) {
-      this.setStatus('Select an issue first');
+      this.setStatus(t('status.selectIssueFirst'));
       return;
     }
 
     const text = this.dom.issueCommentInput.value.trim();
     if (!text) {
-      this.setStatus('Comment cannot be empty');
+      this.setStatus(t('status.commentEmpty'));
       return;
     }
 
@@ -2884,14 +3049,14 @@ class ViewerApp {
     this.dom.issueCommentInput.value = '';
     this.updateIssueComments();
     this.persistLocalState();
-    this.setStatus('Comment added');
+    this.setStatus(t('status.commentAdded'));
   }
 
   private updateIssueComments(): void {
     const issue = this.issues.find((entry) => entry.id === this.activeIssueId);
-    const markup = buildIssueCommentsMarkup(issue);
+    const markup = buildIssueCommentsMarkup(issue, t('empty.noComments'), (iso) => formatDateTime(iso));
     this.dom.issueComments.innerHTML = markup
-      ?? '<div class="comment-item">Select an issue to view comments</div>';
+      ?? `<div class="comment-item">${escapeHtml(t('empty.selectIssueForComments'))}</div>`;
   }
 
   /**
@@ -2933,11 +3098,11 @@ class ViewerApp {
       .then((blob) => {
         const name = `bim-view-${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
         downloadBlob(name, blob);
-        this.setStatus('Screenshot exported');
+        this.setStatus(t('status.screenshotExported'));
       })
       .catch((error: unknown) => {
-        this.showToast(`Screenshot export failed: ${serializeError(error)}`, 'error');
-        this.setStatus(`Screenshot export failed: ${serializeError(error)}`);
+        this.showToast(t('status.screenshotFailed', { error: serializeError(error) }), 'error');
+        this.setStatus(t('status.screenshotFailed', { error: serializeError(error) }));
       });
   }
 
@@ -2946,7 +3111,7 @@ class ViewerApp {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const name = `viewer-state-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
     downloadBlob(name, blob);
-    this.setStatus('Viewer data exported');
+    this.setStatus(t('status.stateExported'));
   }
 
   private async importViewerState(file: File): Promise<void> {
@@ -2958,10 +3123,10 @@ class ViewerApp {
       if (!state) throw new Error('Unsupported or invalid viewer state file');
       await this.applyPersistedState(state);
       this.persistLocalState();
-      this.setStatus('Viewer data imported');
+      this.setStatus(t('status.stateImported'));
     } catch (error) {
-      this.showToast(`Import failed: ${serializeError(error)}`, 'error');
-      this.setStatus(`Import failed: ${serializeError(error)}`);
+      this.showToast(t('status.importFailed', { error: serializeError(error) }), 'error');
+      this.setStatus(t('status.importFailed', { error: serializeError(error) }));
     }
   }
 
@@ -3005,6 +3170,7 @@ class ViewerApp {
       backgroundColor: this.backgroundColor,
       backgroundByTheme: { ...this.backgroundByTheme },
       theme: this.themeMode,
+      language: getLanguage(),
       viewpoints,
       issues,
     };
@@ -3022,10 +3188,10 @@ class ViewerApp {
           viewpoints: payload.viewpoints.map((viewpoint) => ({ ...viewpoint, snapshot: undefined })),
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(stripped));
-        this.setStatus('Local state saved without thumbnails (storage quota)');
+        this.setStatus(t('status.savedWithoutThumbnails'));
       } catch (retryError) {
-        this.showToast(`Unable to persist local state: ${serializeError(retryError)}`, 'error');
-        this.setStatus(`Unable to persist local state: ${serializeError(retryError)}`);
+        this.showToast(t('status.persistFailed', { error: serializeError(retryError) }), 'error');
+        this.setStatus(t('status.persistFailed', { error: serializeError(retryError) }));
       }
     }
   }
@@ -3038,8 +3204,8 @@ class ViewerApp {
       if (!state) return;
       await this.applyPersistedState(state);
     } catch (error) {
-      this.showToast(`Failed to restore local state: ${serializeError(error)}`, 'error');
-      this.setStatus(`Failed to restore local state: ${serializeError(error)}`);
+      this.showToast(t('status.restoreFailed', { error: serializeError(error) }), 'error');
+      this.setStatus(t('status.restoreFailed', { error: serializeError(error) }));
     }
   }
 
@@ -3049,6 +3215,10 @@ class ViewerApp {
    * Expects a state produced by normalizePersistedState.
    */
   private async applyPersistedState(state: PersistedViewerState): Promise<void> {
+    // C7: restore the UI language first so any status text produced below is
+    // already localized. setLanguage no-ops when unchanged, and re-hydrates +
+    // re-renders (harmless during boot). Only applied when the state carries one.
+    if (state.language) setLanguage(state.language);
     this.selectionMode = state.selectionMode;
     this.navigationMode = state.navigationMode;
     this.visualStyle = this.parseVisualStyle(state.visualStyle ?? 'color-pen-shadows');
@@ -3091,6 +3261,7 @@ class ViewerApp {
 
   /** U7: real tab activation — aria-selected + roving tabindex + panel title. */
   private activateTab(tab: string): void {
+    this.activeTab = tab;
     this.dom.tabStripButtons.forEach((button) => {
       const active = button.dataset.tab === tab;
       button.classList.toggle('is-active', active);
@@ -3102,15 +3273,21 @@ class ViewerApp {
       panel.classList.toggle('is-active', active);
       panel.hidden = !active;
     });
-    const titles: Record<string, string> = {
-      explorer: 'Explorer',
-      models: 'Federated models',
-      properties: 'Properties',
-      viewpoints: 'Viewpoints',
-      issues: 'Issues',
-      help: 'Help',
-    };
-    this.dom.panelTitle.textContent = titles[tab] ?? 'Explorer';
+    this.updateActiveTabTitle();
+  }
+
+  /** Sets the side-panel title from the active tab (re-run on language change). */
+  private updateActiveTabTitle(): void {
+    const titleKeys = {
+      explorer: 'panel.explorer',
+      models: 'panel.models',
+      properties: 'panel.properties',
+      viewpoints: 'panel.viewpoints',
+      issues: 'panel.issues',
+      help: 'panel.help',
+    } as const;
+    const key = titleKeys[this.activeTab as keyof typeof titleKeys] ?? 'panel.explorer';
+    this.dom.panelTitle.textContent = t(key);
   }
 
   private async updateVisibilityCount(): Promise<void> {
@@ -3121,11 +3298,11 @@ class ViewerApp {
       if (model && !model.visible) continue;
       visibleCount += ids.length;
     }
-    this.dom.visibleCount.textContent = `${visibleCount} visible`;
+    this.dom.visibleCount.textContent = t('label.visible', { count: visibleCount });
   }
 
   private updateCounters(): void {
-    this.dom.selectionCount.textContent = `${countMapItems(this.selectedItems)} selected`;
+    this.dom.selectionCount.textContent = t('label.selected', { count: countMapItems(this.selectedItems) });
   }
 
   private onKeyDown(event: KeyboardEvent): void {
@@ -3146,7 +3323,7 @@ class ViewerApp {
       if (this.activeGizmoModelId) this.detachModelGizmo();
       if (this.dom.root.classList.contains('sheet-open')) this.closeSheet();
       else if (this.isSmallScreen() && this.dom.root.classList.contains('panel-open')) this.closePanel();
-      this.setStatus('Active tool canceled');
+      this.setStatus(t('status.toolCanceled'));
       return;
     }
 
@@ -3181,7 +3358,7 @@ class ViewerApp {
       case 'e':
         if (this.activeGizmoModelId) {
           this.transformControls?.setMode('rotate');
-          this.setStatus('Gizmo mode: rotate');
+          this.setStatus(t('status.gizmoModeRotate'));
         } else {
           this.dom.btnWireframe.click();
         }
@@ -3189,13 +3366,13 @@ class ViewerApp {
       case 'w':
         if (this.activeGizmoModelId) {
           this.transformControls?.setMode('translate');
-          this.setStatus('Gizmo mode: translate');
+          this.setStatus(t('status.gizmoModeTranslate'));
         }
         break;
       case 'r':
         if (this.activeGizmoModelId) {
           this.resetModelOffsets(this.activeGizmoModelId);
-          this.setStatus('Gizmo: model transform reset');
+          this.setStatus(t('status.gizmoTransformReset'));
         }
         break;
       case 'i':
