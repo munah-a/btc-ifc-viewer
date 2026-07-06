@@ -18,6 +18,14 @@ import {
   type VisualStyle,
 } from './core/persistence';
 import { DEFAULT_MODEL_UNITS, resolveModelUnits, unitSuffixForLabel, type ModelUnits } from './core/units';
+import {
+  clearMap,
+  cloneMap,
+  countMapItems,
+  intersectMaps,
+  isMapEmpty,
+  toSetMap,
+} from './core/model-id-map';
 
 type MeasureMode = 'none' | 'length' | 'area';
 type CubeFaceKey = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom';
@@ -220,52 +228,6 @@ const LEVEL_KEYWORDS = ['storey', 'level', 'floor', 'roof', 'sub level', 'contai
 const MATERIAL_KEYWORDS = ['material', 'layer', 'constituent', 'finish', 'grade', 'profile'];
 const TYPE_KEYWORDS = ['type', 'family', 'assembly', 'classification', 'reference'];
 const RELATION_KEYWORDS = ['association', 'opening', 'void', 'fills', 'defines', 'typed', 'connected', 'decomposes', 'group'];
-
-const toSetMap = (plain: Record<string, number[] | Set<number>>): OBC.ModelIdMap => {
-  const result: OBC.ModelIdMap = {};
-  for (const [modelId, ids] of Object.entries(plain)) {
-    const set = ids instanceof Set ? ids : new Set(ids);
-    if (set.size > 0) result[modelId] = set;
-  }
-  return result;
-};
-
-const cloneMap = (map: OBC.ModelIdMap): OBC.ModelIdMap => {
-  const copy: OBC.ModelIdMap = {};
-  for (const [modelId, ids] of Object.entries(map)) copy[modelId] = new Set(ids);
-  return copy;
-};
-
-const clearMap = (map: OBC.ModelIdMap): void => {
-  for (const key of Object.keys(map)) delete map[key];
-};
-
-const isMapEmpty = (map: OBC.ModelIdMap): boolean => {
-  for (const ids of Object.values(map)) {
-    if (ids.size > 0) return false;
-  }
-  return true;
-};
-
-const countMapItems = (map: OBC.ModelIdMap): number => {
-  let count = 0;
-  for (const ids of Object.values(map)) count += ids.size;
-  return count;
-};
-
-const intersectMaps = (a: OBC.ModelIdMap, b: OBC.ModelIdMap): OBC.ModelIdMap => {
-  const result: OBC.ModelIdMap = {};
-  for (const [modelId, idsA] of Object.entries(a)) {
-    const idsB = b[modelId];
-    if (!idsB) continue;
-    const intersection = new Set<number>();
-    for (const id of idsA) {
-      if (idsB.has(id)) intersection.add(id);
-    }
-    if (intersection.size > 0) result[modelId] = intersection;
-  }
-  return result;
-};
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 

@@ -13,3 +13,6 @@ public/worker.mjs
 e2e-serve.log
 ci-local-e2e.log
 ci-console-clean.log
+
+# Local Claude Code tooling config
+.claude/
