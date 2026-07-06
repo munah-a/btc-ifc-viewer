@@ -2,16 +2,15 @@
 import * as OBC from '@thatopen/components';
 import * as OBCF from '@thatopen/components-front';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
-import type { SpatialTreeItem } from '@thatopen/fragments';
 
 import { isModelNotFoundError, serializeError } from './core/errors';
 import { isProbablyIfc } from './core/ifc-format';
 import { escapeHtml, filterChipMarkup } from './core/markup';
+import { buildModelIndex } from './core/model-index';
 import { ModelRegistry } from './core/model-registry';
 import {
   normalizePersistedState,
   type NavigationMode,
-  type PersistedIssue,
   type PersistedViewerState,
   type SavedViewpoint,
   type SelectionMode,
@@ -28,71 +27,41 @@ import {
 } from './core/model-id-map';
 import {
   buildPropertySections,
-  extractStoreyNameFromItemData,
-  getModelTreeItemLabel,
   readPrimitiveValue,
   toPropertyString,
   type GeometryProbe,
   type PropertySectionData,
 } from './core/property-engine';
 import { getClipperPlaneGizmoHelper, type FragmentsModelLike } from './core/fragments-model';
+import { bootstrapEngine, createFpsMonitor, ShaderWarningFilter } from './core/viewer-core';
 import type { TestItemRef, ViewerTestApi } from './core/test-api';
 import { getViewCubeAxes, getViewCubeNavigationDistance, resolveViewCubeCameraUp } from './core/view-cube';
-import { hydrateIcons, icon, setIcon, type IconName } from './ui/icons';
+import { buildEdgeOverlays } from './tools/edges';
+import { sectionBoxPlanes, sectionPlanePoint } from './tools/section';
+import { computeXrayOpacity } from './tools/xray';
+import type {
+  FederatedModelRecord,
+  IssueRecord,
+  MeasureMode,
+  ModelIndex,
+  SearchResult,
+  TransformVector3,
+} from './core/viewer-types';
+import { createDomCache, type ViewerDom } from './ui/dom-cache';
+import { buildMobileSheet as buildMobileSheetView } from './ui/mobile-sheet';
+import { hydrateIcons, setIcon, type IconName } from './ui/icons';
+import { buildFederationTreeMarkup } from './ui/federation-panel';
+import { buildIssueCommentsMarkup, buildIssueListMarkup } from './ui/issues-panel';
+import {
+  buildModelBrowserMarkup,
+  getClassIdsForModelLevel,
+} from './ui/model-browser';
+import { buildPropertySectionsMarkup } from './ui/properties-panel';
+import { buildViewpointListMarkup } from './ui/viewpoints-panel';
 
-type MeasureMode = 'none' | 'length' | 'area';
-
-// Persisted shapes (SavedViewpoint, PersistedIssue, PersistedViewerState) live
-// in core/persistence.ts (A7); the runtime issue record adds the marker handle.
-interface IssueRecord extends PersistedIssue {
-  markerId?: string;
-}
-
-interface SearchResult {
-  modelId: string;
-  localId: number;
-  name: string;
-  type: string;
-  globalId: string;
-}
-
-interface ModelIndex {
-  modelId: string;
-  allIds: Set<number>;
-  classes: Map<string, Set<number>>;
-  levels: Map<string, Set<number>>;
-  itemToLevel: Map<number, string>;
-  itemNames: Map<number, string>;
-  spatialRoot: BrowserTreeNode | null;
-}
-
-interface BrowserTreeNode {
-  category: string;
-  localId: number | null;
-  label: string;
-  geometryCount: number;
-  children: BrowserTreeNode[];
-}
-
-interface TransformVector3 {
-  x: number;
-  y: number;
-  z: number;
-}
-
-interface FederatedModelRecord {
-  modelId: string;
-  fileName: string;
-  sizeBytes: number;
-  elementCount: number;
-  visible: boolean;
-  opacity: number;
-  object: THREE.Object3D;
-  basePosition: TransformVector3;
-  baseRotation: TransformVector3;
-  offsetPosition: TransformVector3;
-  offsetRotation: TransformVector3;
-}
+// Shared runtime types (ModelIndex, BrowserTreeNode, FederatedModelRecord,
+// IssueRecord, SearchResult, MeasureMode) live in core/viewer-types.ts so the
+// extracted ui/* panel controllers can import them without pulling in the engine.
 
 const STORAGE_KEY = 'bim_for_field_viewer_state_v1';
 const DEFAULT_BACKGROUND_COLOR = '#0b1220';
@@ -102,11 +71,7 @@ const DEFAULT_LIGHT_BACKGROUND_COLOR = '#c6d5e8';
 const VIEWPOINT_THUMBNAIL_MAX_DIM = 320;
 const VIEWPOINT_THUMBNAIL_JPEG_QUALITY = 0.72;
 const MAX_PERSISTED_SNAPSHOT_CHARS = 150_000;
-const MAX_BROWSER_LEVELS = 120;
-const MAX_BROWSER_CLASSES_PER_LEVEL = 28;
-const MAX_BROWSER_ELEMENTS_PER_CLASS = 26;
-const MAX_BROWSER_SPATIAL_DEPTH = 7;
-const MAX_BROWSER_SPATIAL_CHILDREN = 80;
+// Model-browser tree caps (MAX_BROWSER_*) live in ui/model-browser.ts.
 // The interactive 3D view-cube widget was replaced (W3, design) by the glass
 // view-control buttons (fit / orbit-home / front / top). The camera-direction
 // math is retained: preset views + the anchor basis power the buttons and the
@@ -141,167 +106,16 @@ const debounce = <T extends (...args: any[]) => void>(fn: T, ms: number): T => {
   }) as unknown as T;
 };
 
-const required = <T extends HTMLElement>(id: string): T => {
-  const element = document.getElementById(id);
-  if (!element) throw new Error(`Missing required DOM element #${id}`);
-  return element as T;
-};
-
-// Maps the tree's decorative glyph names to the inline SVG icon set (U5/A2:
-// no Material Symbols font). Unmapped names fall back to a neutral node icon.
-const TREE_ICON: Record<string, IconName> = {
-  chevron_right: 'chevron_right',
-  view_in_ar: 'view_in_ar',
-  subdirectory_arrow_right: 'chevron_right',
-  more_horiz: 'more_horiz',
-  hourglass_top: 'more_horiz',
-  hide_source: 'visibility_off',
-  category: 'deployed_code',
-  folder_open: 'account_tree',
-  account_tree: 'account_tree',
-  my_location: 'center_focus_strong',
-  deployed_code: 'deployed_code',
-};
-const treeIco = (name: string, cls = 'browser-ico'): string =>
-  `<span class="${cls}">${icon(TREE_ICON[name] ?? 'deployed_code', 16)}</span>`;
 
 class ViewerApp {
   private readonly abortController = new AbortController();
-  private fpsAnimationFrameId: number | null = null;
+  private fpsMonitor: { stop: () => void } | null = null;
 
   private get signal(): AbortSignal {
     return this.abortController.signal;
   }
 
-  private readonly dom = {
-    root: required<HTMLDivElement>('btc-viewer-root'),
-    viewerContainer: required<HTMLDivElement>('viewer-container'),
-    // Top bar
-    topbarModel: required<HTMLDivElement>('topbarModel'),
-    btnUpload: required<HTMLButtonElement>('btnUpload'),
-    btnUploadEmpty: required<HTMLButtonElement>('btnUploadEmpty'),
-    fileInput: required<HTMLInputElement>('fileInput'),
-    btnExportScreenshot: required<HTMLButtonElement>('btnExportScreenshot'),
-    btnExportState: required<HTMLButtonElement>('btnExportState'),
-    btnImportState: required<HTMLButtonElement>('btnImportState'),
-    importStateInput: required<HTMLInputElement>('importStateInput'),
-    btnThemeToggle: required<HTMLButtonElement>('btnThemeToggle'),
-    btnPanelToggle: required<HTMLButtonElement>('btnPanelToggle'),
-    // Overlays
-    emptyState: required<HTMLDivElement>('emptyState'),
-    loadingOverlay: required<HTMLDivElement>('loadingOverlay'),
-    loadingText: required<HTMLDivElement>('loadingText'),
-    loadingPct: required<HTMLSpanElement>('loadingPct'),
-    loadingProgress: required<HTMLDivElement>('loadingProgress'),
-    loadingErrorActions: required<HTMLDivElement>('loadingErrorActions'),
-    btnRetryLoad: required<HTMLButtonElement>('btnRetryLoad'),
-    btnDismissLoadError: required<HTMLButtonElement>('btnDismissLoadError'),
-    viewerHint: required<HTMLDivElement>('viewerHint'),
-    navPill: required<HTMLDivElement>('navPill'),
-    measureHint: required<HTMLDivElement>('measureHint'),
-    measureHintText: required<HTMLSpanElement>('measureHintText'),
-    btnCancelMeasure: required<HTMLButtonElement>('btnCancelMeasure'),
-    sectionSlider: required<HTMLDivElement>('sectionSlider'),
-    sectionLabel: required<HTMLSpanElement>('sectionLabel'),
-    sectionPos: required<HTMLInputElement>('sectionPos'),
-    sectionPosLabel: required<HTMLSpanElement>('sectionPosLabel'),
-    btnClearSectionSlider: required<HTMLButtonElement>('btnClearSectionSlider'),
-    selectionChip: required<HTMLDivElement>('selectionChip'),
-    selChipName: required<HTMLDivElement>('selChipName'),
-    selChipMeta: required<HTMLDivElement>('selChipMeta'),
-    btnClearSelection: required<HTMLButtonElement>('btnClearSelection'),
-    // Status bar
-    statusText: required<HTMLSpanElement>('statusText'),
-    selectionCount: required<HTMLSpanElement>('selectionCount'),
-    elementCount: required<HTMLSpanElement>('elementCount'),
-    visibleCount: required<HTMLSpanElement>('visibleCount'),
-    loadInfo: required<HTMLSpanElement>('loadInfo'),
-    perfInfo: required<HTMLSpanElement>('perfInfo'),
-    viewLabel: required<HTMLSpanElement>('viewLabel'),
-    // View controls (rail replaces dock; cube widget removed per design)
-    btnModeOrbit: required<HTMLButtonElement>('btnModeOrbit'),
-    btnModePlan: required<HTMLButtonElement>('btnModePlan'),
-    btnModeFirstPerson: required<HTMLButtonElement>('btnModeFirstPerson'),
-    btnFitAll: required<HTMLButtonElement>('btnFitAll'),
-    btnFront: required<HTMLButtonElement>('btnFront'),
-    btnTop: required<HTMLButtonElement>('btnTop'),
-    cubeHome: required<HTMLButtonElement>('cubeHome'),
-    // Tool rail
-    btnSelectSingle: required<HTMLButtonElement>('btnSelectSingle'),
-    btnSelectMulti: required<HTMLButtonElement>('btnSelectMulti'),
-    btnIsolate: required<HTMLButtonElement>('btnIsolate'),
-    btnHide: required<HTMLButtonElement>('btnHide'),
-    btnResetVisibility: required<HTMLButtonElement>('btnResetVisibility'),
-    btnSectionX: required<HTMLButtonElement>('btnSectionX'),
-    btnSectionY: required<HTMLButtonElement>('btnSectionY'),
-    btnSectionZ: required<HTMLButtonElement>('btnSectionZ'),
-    btnSectionBox: required<HTMLButtonElement>('btnSectionBox'),
-    btnClearSections: required<HTMLButtonElement>('btnClearSections'),
-    btnMeasureLength: required<HTMLButtonElement>('btnMeasureLength'),
-    btnMeasureArea: required<HTMLButtonElement>('btnMeasureArea'),
-    btnClearMeasurements: required<HTMLButtonElement>('btnClearMeasurements'),
-    btnTransparency: required<HTMLButtonElement>('btnTransparency'),
-    btnWireframe: required<HTMLButtonElement>('btnWireframe'),
-    btnToggleGrid: required<HTMLButtonElement>('btnToggleGrid'),
-    btnIssuePinMode: required<HTMLButtonElement>('btnIssuePinMode'),
-    // Splitter + panel
-    panelSplitter: required<HTMLDivElement>('panelSplitter'),
-    panelTitle: required<HTMLSpanElement>('panelTitle'),
-    tabStripButtons: Array.from(document.querySelectorAll<HTMLButtonElement>('.tab-strip-btn')),
-    tabPanels: Array.from(document.querySelectorAll<HTMLDivElement>('.tab-panel')),
-    // Explorer
-    searchInput: required<HTMLInputElement>('searchInput'),
-    btnClearSearch: required<HTMLButtonElement>('btnClearSearch'),
-    searchResultsGroup: required<HTMLDivElement>('searchResultsGroup'),
-    elementResults: required<HTMLDivElement>('elementResults'),
-    classFilterList: required<HTMLDivElement>('classFilterList'),
-    levelFilterList: required<HTMLDivElement>('levelFilterList'),
-    modelBrowserTree: required<HTMLDivElement>('modelBrowserTree'),
-    // Models
-    federationTree: required<HTMLDivElement>('federationTree'),
-    // Properties
-    propsEmpty: required<HTMLDivElement>('propsEmpty'),
-    propsContent: required<HTMLDivElement>('propsContent'),
-    propType: required<HTMLSpanElement>('propType'),
-    propName: required<HTMLSpanElement>('propName'),
-    propGlobalId: required<HTMLSpanElement>('propGlobalId'),
-    propDescription: required<HTMLSpanElement>('propDescription'),
-    propStory: required<HTMLSpanElement>('propStory'),
-    propFilterInput: required<HTMLInputElement>('propFilterInput'),
-    propSections: required<HTMLDivElement>('propSections'),
-    btnPropsIsolate: required<HTMLButtonElement>('btnPropsIsolate'),
-    btnPropsHide: required<HTMLButtonElement>('btnPropsHide'),
-    // Viewpoints
-    viewpointName: required<HTMLInputElement>('viewpointName'),
-    btnSaveViewpoint: required<HTMLButtonElement>('btnSaveViewpoint'),
-    viewpointList: required<HTMLDivElement>('viewpointList'),
-    // Issues
-    issueTitle: required<HTMLInputElement>('issueTitle'),
-    issueDescription: required<HTMLTextAreaElement>('issueDescription'),
-    issuePriority: required<HTMLSelectElement>('issuePriority'),
-    issueStatus: required<HTMLSelectElement>('issueStatus'),
-    issueAssignee: required<HTMLInputElement>('issueAssignee'),
-    btnCreateIssue: required<HTMLButtonElement>('btnCreateIssue'),
-    btnDeleteIssue: required<HTMLButtonElement>('btnDeleteIssue'),
-    issuesList: required<HTMLDivElement>('issuesList'),
-    issueCommentsGroup: required<HTMLDivElement>('issueCommentsGroup'),
-    issueCommentInput: required<HTMLInputElement>('issueCommentInput'),
-    btnAddIssueComment: required<HTMLButtonElement>('btnAddIssueComment'),
-    issueComments: required<HTMLDivElement>('issueComments'),
-    // Mobile + sheet + scrim + confirm + toasts
-    mobileFab: required<HTMLButtonElement>('mobileFab'),
-    mobileNavButtons: Array.from(document.querySelectorAll<HTMLButtonElement>('[data-mobile-nav]')),
-    scrim: required<HTMLDivElement>('scrim'),
-    mobileSheet: required<HTMLDivElement>('mobileSheet'),
-    sheetTitle: required<HTMLSpanElement>('sheetTitle'),
-    sheetBody: required<HTMLDivElement>('sheetBody'),
-    btnCloseSheet: required<HTMLButtonElement>('btnCloseSheet'),
-    confirmDialog: required<HTMLDialogElement>('confirmDialog'),
-    confirmMessage: required<HTMLParagraphElement>('confirmMessage'),
-    confirmOk: required<HTMLButtonElement>('confirmOk'),
-    confirmCancel: required<HTMLButtonElement>('confirmCancel'),
-    toastRegion: required<HTMLDivElement>('toastRegion'),
-  };
+  private readonly dom: ViewerDom = createDomCache();
 
   private components!: OBC.Components;
   private world!: OBC.SimpleWorld<OBC.SimpleScene, OBC.OrthoPerspectiveCamera, OBCF.PostproductionRenderer>;
@@ -364,8 +178,6 @@ class ViewerApp {
   private activeIssueId: string | null = null;
   private lastPointerDown = { x: 0, y: 0 };
   private pointerDragged = false;
-  private frameCount = 0;
-  private fpsLastTs = performance.now();
   private isModelLoading = false;
   private loadRequestId = 0;
   private suppressAutoFit = false;
@@ -373,10 +185,9 @@ class ViewerApp {
   private gizmoDragging = false;
   private propertyFilterText = '';
   private activeView: 'orbit' | 'front' | 'top' = 'orbit';
-  private shaderWarningFilterInstalled = false;
-  // A5: keep the original console.warn so the filter can be uninstalled in
-  // destroy() rather than leaving console.warn permanently monkey-patched.
-  private originalConsoleWarn: typeof console.warn | null = null;
+  // A5: scoped console.warn filter (install/uninstall paired; restored in
+  // destroy() rather than leaving console.warn permanently monkey-patched).
+  private readonly shaderWarningFilter = new ShaderWarningFilter();
 
   constructor() {
     hydrateIcons(document);
@@ -424,10 +235,8 @@ class ViewerApp {
     this.abortController.abort();
 
     // 2. Cancel animation frames
-    if (this.fpsAnimationFrameId !== null) {
-      cancelAnimationFrame(this.fpsAnimationFrameId);
-      this.fpsAnimationFrameId = null;
-    }
+    this.fpsMonitor?.stop();
+    this.fpsMonitor = null;
 
     // 3. Dispose THREE.js resources
     this.edgeMaterial.dispose();
@@ -461,13 +270,13 @@ class ViewerApp {
     }
 
     // 6. Restore the patched console.warn (A5).
-    this.uninstallShaderWarningFilter();
+    this.shaderWarningFilter.uninstall();
   }
 
   async init(): Promise<void> {
     try {
       this.setStatus('Initializing BTC IFC Viewer...');
-      this.installShaderWarningFilter();
+      this.shaderWarningFilter.install();
       await this.initEngine();
       await this.restoreLocalState();
       this.syncVisualSettingsUi();
@@ -486,31 +295,6 @@ class ViewerApp {
       this.setStatus(`Initialization failed: ${serializeError(error)}`);
       console.error(error);
     }
-  }
-
-  private installShaderWarningFilter(): void {
-    if (this.shaderWarningFilterInstalled) return;
-    const originalWarn = console.warn.bind(console);
-    this.originalConsoleWarn = originalWarn;
-    console.warn = (...args: unknown[]) => {
-      const header = typeof args[0] === 'string' ? args[0] : '';
-      const payload = args
-        .map((entry) => (typeof entry === 'string' ? entry : ''))
-        .join(' ');
-      const isThreeProgramLog = header.includes('THREE.WebGLProgram: Program Info Log:');
-      const isKnownNoise = payload.includes('dyn_index_vec4_float4_int');
-      if (isThreeProgramLog && isKnownNoise) return;
-      originalWarn(...args);
-    };
-    this.shaderWarningFilterInstalled = true;
-  }
-
-  /** A5: restore the un-patched console.warn (paired with install, for destroy). */
-  private uninstallShaderWarningFilter(): void {
-    if (!this.shaderWarningFilterInstalled || !this.originalConsoleWarn) return;
-    console.warn = this.originalConsoleWarn;
-    this.originalConsoleWarn = null;
-    this.shaderWarningFilterInstalled = false;
   }
 
   private bindUiEvents(): void {
@@ -1008,53 +792,24 @@ class ViewerApp {
   }
 
   private buildMobileSheet(): void {
-    const toggles: Array<{ icon: IconName; label: string; on: boolean; onClick: () => void }> = [
-      { icon: 'blur_on', label: 'X-ray', on: this.xrayEnabled, onClick: () => this.toggleXray() },
-      { icon: 'border_style', label: 'Edges', on: this.edgesEnabled, onClick: () => this.toggleEdges() },
-      { icon: 'grid_on', label: 'Grid', on: this.gridVisible, onClick: () => { this.setGridVisible(!this.gridVisible, true); this.persistLocalState(); this.syncMobileSheet(); } },
-      { icon: this.themeMode === 'dark' ? 'dark_mode' : 'light_mode', label: 'Light theme', on: this.themeMode === 'light', onClick: () => this.toggleTheme() },
-    ];
-    this.dom.sheetBody.replaceChildren();
-    for (const t of toggles) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = `sheet-toggle${t.on ? ' is-active' : ''}`;
-      const iconSpan = document.createElement('span');
-      setIcon(iconSpan, t.icon);
-      const label = document.createElement('span');
-      label.textContent = t.label;
-      label.style.flex = '1';
-      const track = document.createElement('span');
-      track.className = 'sheet-toggle-track';
-      const knob = document.createElement('span');
-      knob.className = 'sheet-toggle-knob';
-      track.append(knob);
-      button.append(iconSpan, label, track);
-      button.addEventListener('click', t.onClick);
-      this.dom.sheetBody.append(button);
-    }
-    // Visual style selector
-    const field = document.createElement('label');
-    field.className = 'sheet-toggle';
-    field.style.gap = '10px';
-    const styleLabel = document.createElement('span');
-    styleLabel.textContent = 'Style';
-    styleLabel.style.flex = '1';
-    const select = document.createElement('select');
-    select.className = 'text-input';
-    select.style.width = 'auto';
-    for (const [value, label] of [['basic', 'Basic'], ['pen', 'Pen'], ['color-pen', 'Color pen'], ['color-shadows', 'Color shadows'], ['color-pen-shadows', 'Color pen shadows']] as const) {
-      const option = document.createElement('option');
-      option.value = value;
-      option.textContent = label;
-      if (value === this.visualStyle) option.selected = true;
-      select.append(option);
-    }
-    select.addEventListener('change', () => {
-      this.fireAndForget(this.setVisualStyle(this.parseVisualStyle(select.value), true, true, true), 'Set visual style');
-    });
-    field.append(styleLabel, select);
-    this.dom.sheetBody.append(field);
+    buildMobileSheetView(
+      this.dom.sheetBody,
+      {
+        xrayEnabled: this.xrayEnabled,
+        edgesEnabled: this.edgesEnabled,
+        gridVisible: this.gridVisible,
+        themeMode: this.themeMode,
+        visualStyle: this.visualStyle,
+      },
+      {
+        toggleXray: () => this.toggleXray(),
+        toggleEdges: () => this.toggleEdges(),
+        toggleGrid: () => { this.setGridVisible(!this.gridVisible, true); this.persistLocalState(); this.syncMobileSheet(); },
+        toggleTheme: () => this.toggleTheme(),
+        setVisualStyle: (value: string) =>
+          this.fireAndForget(this.setVisualStyle(this.parseVisualStyle(value), true, true, true), 'Set visual style'),
+      },
+    );
   }
 
   /** Keeps the More sheet's toggle states current when opened. */
@@ -1196,40 +951,30 @@ class ViewerApp {
   }
 
   private async initEngine(): Promise<void> {
-    this.components = new OBC.Components();
-    const worlds = this.components.get(OBC.Worlds);
-
-    this.world = worlds.create<OBC.SimpleScene, OBC.OrthoPerspectiveCamera, OBCF.PostproductionRenderer>();
-    this.world.scene = new OBC.SimpleScene(this.components);
-    this.world.scene.setup();
-    this.world.scene.three.background = new THREE.Color(this.backgroundColor);
-
-    this.world.renderer = new OBCF.PostproductionRenderer(this.components, this.dom.viewerContainer);
-
-    // Hook into the render loop to clear composer targets before each frame in PEN mode.
-    // PEN mode (PostproductionAspect.PEN) skips the BasePass, so the EffectComposer's
-    // read/write buffers never get cleared — causing ghost lines from previous frames.
-    this.world.renderer.onBeforeUpdate.add(() => {
-      const postRenderer = this.getPostproductionRenderer();
-      const post = postRenderer?.postproduction;
-      if (!post?.enabled || !post.composer) return;
-      // PEN = 1, PEN_SHADOWS = 2 — these use EdgeDetectionPass without a prior clear
-      const isPenStyle = post.style === OBCF.PostproductionAspect.PEN
-        || post.style === OBCF.PostproductionAspect.PEN_SHADOWS;
-      if (!isPenStyle) return;
-      const renderer = postRenderer!.three;
-      const bgColor = new THREE.Color(this.backgroundColor);
-      renderer.setClearColor(bgColor, 1);
-      renderer.setRenderTarget(post.composer.renderTarget1);
-      renderer.clear();
-      renderer.setRenderTarget(post.composer.renderTarget2);
-      renderer.clear();
-      renderer.setRenderTarget(null);
+    // Engine construction lives in core/viewer-core.ts (shared with the future
+    // /embed entry, W4). The `this`-coupled callbacks (model registration,
+    // camera->fragments update, gizmo->panel re-render) are wired here against
+    // the returned handles so behaviour matches the pre-extraction inline setup.
+    const engine = await bootstrapEngine({
+      container: this.dom.viewerContainer,
+      backgroundColor: this.backgroundColor,
+      gridVisible: this.gridVisible,
+      getBackgroundColor: () => this.backgroundColor,
+      getPostproductionRenderer: () => this.getPostproductionRenderer(),
     });
-    this.world.camera = new OBC.OrthoPerspectiveCamera(this.components);
-    await this.world.camera.controls.setLookAt(18, 18, 18, 0, 0, 0);
-
-    this.components.init();
+    this.components = engine.components;
+    this.world = engine.world;
+    this.ifcLoader = engine.ifcLoader;
+    this.fragments = engine.fragments;
+    this.clipper = engine.clipper;
+    this.hider = engine.hider;
+    this.raycaster = engine.raycaster;
+    this.lengthMeasurement = engine.lengthMeasurement;
+    this.areaMeasurement = engine.areaMeasurement;
+    this.markerManager = engine.markerManager;
+    this.transformControls = engine.transformControls;
+    this.transformControlsHelper = engine.transformControlsHelper;
+    this.gridHelper = engine.gridHelper;
 
     // Expose test/debug handles only in builds made with the explicit VITE_E2E
     // define (vite.e2e.config.ts) so e2e can exercise the real production
@@ -1239,33 +984,6 @@ class ViewerApp {
     if (import.meta.env.VITE_E2E === 'true') {
       window.__viewerTestApi = this.buildTestApi();
     }
-
-    const grids = this.components.get(OBC.Grids);
-    const grid = grids.create(this.world);
-    this.gridHelper = grid as unknown as THREE.Object3D;
-    this.gridHelper.visible = this.gridVisible;
-    if (grid.material?.uniforms?.uColor) grid.material.uniforms.uColor.value = new THREE.Color(0x25334a);
-
-    // Self-hosted runtime assets (A2/P2): web-ifc.wasm and the fragments
-    // worker are vendored from node_modules into public/ by
-    // scripts/vendor-assets.mjs (prebuild/predev) — no CDN at runtime (C1).
-    this.ifcLoader = this.components.get(OBC.IfcLoader);
-    await this.ifcLoader.setup({
-      autoSetWasm: false,
-      wasm: {
-        path: import.meta.env.BASE_URL,
-        absolute: true,
-      },
-    });
-    this.ifcLoader.settings.webIfc.CIRCLE_SEGMENTS = 24;
-
-    this.fragments = this.components.get(OBC.FragmentsManager);
-    const workerUrl = `${import.meta.env.BASE_URL}worker.mjs`;
-    const fetchedWorker = await fetch(workerUrl);
-    const workerBlob = await fetchedWorker.blob();
-    const workerFile = new File([workerBlob], 'worker.mjs', { type: 'text/javascript' });
-    this.fragments.init(URL.createObjectURL(workerFile));
-    this.fragments.core.settings.graphicsQuality = 1;
 
     this.world.camera.controls.addEventListener('update', () => {
       this.fireAndForget(this.fragments.core.update(), 'Camera update');
@@ -1277,41 +995,6 @@ class ViewerApp {
       this.fireAndForget(this.registerModel(modelId, model), 'Register model');
     });
 
-    this.fragments.core.models.materials.list.onItemSet.add(({ value: material }) => {
-      if (!('isLodMaterial' in material && (material as unknown as { isLodMaterial: boolean }).isLodMaterial)) {
-        const cast = material as THREE.Material & {
-          polygonOffset?: boolean;
-          polygonOffsetFactor?: number;
-          polygonOffsetUnits?: number;
-        };
-        cast.polygonOffset = true;
-        cast.polygonOffsetFactor = 1;
-        cast.polygonOffsetUnits = 1;
-      }
-    });
-
-    this.clipper = this.components.get(OBC.Clipper);
-    this.clipper.enabled = false;
-    this.hider = this.components.get(OBC.Hider);
-    const raycasters = this.components.get(OBC.Raycasters);
-    this.raycaster = raycasters.get(this.world);
-
-    this.lengthMeasurement = this.components.get(OBCF.LengthMeasurement);
-    this.lengthMeasurement.world = this.world;
-    this.lengthMeasurement.enabled = false;
-
-    this.areaMeasurement = this.components.get(OBCF.AreaMeasurement);
-    this.areaMeasurement.world = this.world;
-    this.areaMeasurement.enabled = false;
-
-    this.markerManager = this.components.get(OBCF.Marker);
-    this.markerManager.threshold = 64;
-    this.markerManager.autoCluster = true;
-
-    this.transformControls = new TransformControls(this.world.camera.three, this.world.renderer.three.domElement);
-    this.transformControls.setSize(0.75);
-    this.transformControls.setSpace('world');
-    this.transformControls.enabled = false;
     this.transformControls.addEventListener('dragging-changed', (event) => {
       const dragging = Boolean((event as { value?: unknown }).value);
       this.gizmoDragging = dragging;
@@ -1334,9 +1017,6 @@ class ViewerApp {
       this.renderFederatedTree();
       this.setStatus(`Gizmo updated: ${model.fileName}`);
     });
-    this.transformControlsHelper = this.transformControls.getHelper();
-    this.transformControlsHelper.visible = false;
-    this.world.scene.three.add(this.transformControlsHelper);
 
     await this.updateVisibilityCount();
   }
@@ -1480,117 +1160,7 @@ class ViewerApp {
   }
 
   private async indexModel(modelId: string, model: FragmentsModelLike): Promise<void> {
-    const itemIds = await model.getItemsIdsWithGeometry();
-    const idsSet = new Set(itemIds);
-
-    const classes = new Map<string, Set<number>>();
-    const itemClassById = new Map<number, string>();
-    const categories = await model.getItemsWithGeometryCategories();
-    for (let i = 0; i < categories.length; i += 1) {
-      const category = categories[i] ?? 'Unknown';
-      const id = itemIds[i];
-      if (typeof id !== 'number') continue;
-      if (!classes.has(category)) classes.set(category, new Set<number>());
-      classes.get(category)?.add(id);
-      itemClassById.set(id, category);
-    }
-
-    const itemNames = new Map<number, string>();
-    const itemToLevel = new Map<number, string>();
-    const levels = new Map<string, Set<number>>();
-    const spatial = await model.getSpatialStructure();
-
-    // Read element names + level assignment from ContainedInStructure relation.
-    const chunkSize = 360;
-    for (let start = 0; start < itemIds.length; start += chunkSize) {
-      const chunk = itemIds.slice(start, start + chunkSize);
-      const itemsData = await model.getItemsData(chunk, {
-        attributesDefault: true,
-        relations: {
-          ContainedInStructure: { attributes: true, relations: true },
-        },
-        relationsDefault: { attributes: false, relations: false },
-      });
-
-      for (let i = 0; i < chunk.length; i += 1) {
-        const localId = chunk[i];
-        const data = (itemsData[i] || {}) as Record<string, unknown>;
-        const category = itemClassById.get(localId) ?? 'Element';
-        itemNames.set(localId, getModelTreeItemLabel(data, localId, category));
-        const levelName = extractStoreyNameFromItemData(data);
-        if (!levelName) continue;
-        itemToLevel.set(localId, levelName);
-        if (!levels.has(levelName)) levels.set(levelName, new Set<number>());
-        levels.get(levelName)?.add(localId);
-      }
-    }
-
-    // Spatial fallback: ensure storey names are loaded and assign ungrouped items.
-    const storeyIds = new Set<number>();
-    const collectStoreys = (node: SpatialTreeItem): void => {
-      const category = (node.category ?? '').toUpperCase();
-      if (category.includes('IFCBUILDINGSTOREY') && node.localId !== null) storeyIds.add(node.localId);
-      for (const child of node.children ?? []) collectStoreys(child);
-    };
-    collectStoreys(spatial);
-
-    const unknownStoreyIds = [...storeyIds].filter((id) => !itemNames.has(id));
-    for (let start = 0; start < unknownStoreyIds.length; start += chunkSize) {
-      const chunk = unknownStoreyIds.slice(start, start + chunkSize);
-      const rows = await model.getItemsData(chunk, {
-        attributesDefault: true,
-        relationsDefault: { attributes: false, relations: false },
-      });
-      for (let i = 0; i < chunk.length; i += 1) {
-        const localId = chunk[i];
-        const data = (rows[i] || {}) as Record<string, unknown>;
-        itemNames.set(localId, getModelTreeItemLabel(data, localId, 'Storey'));
-      }
-    }
-
-    const walkSpatial = (node: SpatialTreeItem, activeStorey: string | null): void => {
-      const category = (node.category ?? '').toUpperCase();
-      let nextStorey = activeStorey;
-      if (category.includes('IFCBUILDINGSTOREY') && node.localId !== null) {
-        nextStorey = itemNames.get(node.localId) ?? `Storey ${node.localId}`;
-      }
-      if (node.localId !== null && nextStorey && idsSet.has(node.localId) && !itemToLevel.has(node.localId)) {
-        itemToLevel.set(node.localId, nextStorey);
-        if (!levels.has(nextStorey)) levels.set(nextStorey, new Set<number>());
-        levels.get(nextStorey)?.add(node.localId);
-      }
-      for (const child of node.children ?? []) walkSpatial(child, nextStorey);
-    };
-    walkSpatial(spatial, null);
-
-    // Load names for non-geometry nodes used by the browser spatial tree.
-    const spatialIds = new Set<number>();
-    this.collectSpatialTreeIds(spatial, spatialIds);
-    const missingSpatialIds = [...spatialIds].filter((id) => !itemNames.has(id));
-    for (let start = 0; start < missingSpatialIds.length; start += chunkSize) {
-      const chunk = missingSpatialIds.slice(start, start + chunkSize);
-      const rows = await model.getItemsData(chunk, {
-        attributesDefault: true,
-        relationsDefault: { attributes: false, relations: false },
-      });
-      for (let i = 0; i < chunk.length; i += 1) {
-        const localId = chunk[i];
-        const data = (rows[i] || {}) as Record<string, unknown>;
-        itemNames.set(localId, getModelTreeItemLabel(data, localId, 'Item'));
-      }
-    }
-
-    const spatialRoot = this.buildSpatialBrowserTree(spatial, itemNames, idsSet);
-
-    this.modelIndices.set(modelId, {
-      modelId: modelId,
-      allIds: new Set(itemIds),
-      classes,
-      levels,
-      itemToLevel,
-      itemNames,
-      spatialRoot,
-    });
+    this.modelIndices.set(modelId, await buildModelIndex(modelId, model));
   }
 
   private renderClassFilters(): void {
@@ -1657,328 +1227,13 @@ class ViewerApp {
     }
   }
 
-  private getClassIdsForModelLevel(modelId: string, level: string, className: string): Set<number> {
-    const index = this.modelIndices.get(modelId);
-    const levelIds = index?.levels.get(level);
-    const classIds = index?.classes.get(className);
-    if (!levelIds || !classIds) return new Set<number>();
-
-    const result = new Set<number>();
-    const source = classIds.size <= levelIds.size ? classIds : levelIds;
-    const target = source === classIds ? levelIds : classIds;
-    for (const localId of source) {
-      if (target.has(localId)) result.add(localId);
-    }
-    return result;
-  }
-
-  private getLevelClassEntries(modelId: string, level: string): Array<{ className: string; count: number }> {
-    const index = this.modelIndices.get(modelId);
-    const levelIds = index?.levels.get(level);
-    if (!index || !levelIds || levelIds.size === 0) return [];
-
-    const entries: Array<{ className: string; count: number }> = [];
-    for (const className of index.classes.keys()) {
-      const ids = this.getClassIdsForModelLevel(modelId, level, className);
-      if (ids.size === 0) continue;
-      entries.push({ className, count: ids.size });
-    }
-    entries.sort((a, b) => a.className.localeCompare(b.className));
-    return entries;
-  }
-
-  private collectSpatialTreeIds(node: SpatialTreeItem, target: Set<number>): void {
-    if (node.localId !== null) target.add(node.localId);
-    for (const child of node.children ?? []) this.collectSpatialTreeIds(child, target);
-  }
-
-  private buildSpatialBrowserTree(
-    node: SpatialTreeItem,
-    itemNames: Map<number, string>,
-    geometryIds: Set<number>,
-  ): BrowserTreeNode {
-    const localId = node.localId;
-    const category = node.category ?? 'Group';
-    const children = (node.children ?? []).map((child) => this.buildSpatialBrowserTree(child, itemNames, geometryIds));
-
-    let geometryCount = localId !== null && geometryIds.has(localId) ? 1 : 0;
-    for (const child of children) geometryCount += child.geometryCount;
-
-    const label = localId !== null
-      ? (itemNames.get(localId) ?? `${category} ${localId}`)
-      : (category || 'Structure');
-
-    return {
-      category,
-      localId,
-      label,
-      geometryCount,
-      children,
-    };
-  }
-
-  private renderSpatialBrowserNode(modelId: string, index: ModelIndex, node: BrowserTreeNode, depth: number): string {
-    const hasChildren = node.children.length > 0;
-    const escapedModelId = escapeHtml(modelId);
-    const categoryUpper = node.category.toUpperCase();
-    const isStoreyNode = categoryUpper.includes('IFCBUILDINGSTOREY') && index.levels.has(node.label);
-    const isElement = node.localId !== null && index.allIds.has(node.localId);
-    const countText = node.geometryCount > 0 ? String(node.geometryCount) : (node.localId ?? '-').toString();
-
-    if (!hasChildren || depth >= MAX_BROWSER_SPATIAL_DEPTH) {
-      const leafContent = isElement && node.localId !== null
-        ? `
-          <span
-            class="browser-action"
-            data-browser-action="select-item"
-            data-model-id="${escapedModelId}"
-            data-local-id="${node.localId}"
-            title="Select ${escapeHtml(node.label)}"
-          >
-            ${escapeHtml(node.label)}
-          </span>
-        `
-        : `<span>${escapeHtml(node.label)}</span>`;
-      const leafIcon = isElement ? 'view_in_ar' : 'subdirectory_arrow_right';
-      return `
-        <div class="browser-leaf">
-          ${treeIco(leafIcon)}
-          ${leafContent}
-          <span class="browser-count">${countText}</span>
-        </div>
-      `;
-    }
-
-    const visibleChildren = node.children.slice(0, MAX_BROWSER_SPATIAL_CHILDREN);
-    const childrenMarkup = visibleChildren
-      .map((child) => this.renderSpatialBrowserNode(modelId, index, child, depth + 1))
-      .join('');
-    const moreMarkup = node.children.length > MAX_BROWSER_SPATIAL_CHILDREN
-      ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${node.children.length - MAX_BROWSER_SPATIAL_CHILDREN} more nodes</span><span class="browser-count">+</span></div>`
-      : '';
-
-    const labelMarkup = isStoreyNode
-      ? `
-        <span
-          class="browser-action"
-          data-browser-action="isolate-level"
-          data-model-id="${escapedModelId}"
-          data-level="${escapeHtml(node.label)}"
-          title="Isolate ${escapeHtml(node.label)}"
-        >
-          ${escapeHtml(node.label)}
-        </span>
-      `
-      : `<span>${escapeHtml(node.label)}</span>`;
-
-    const spatialKey = node.localId !== null
-      ? `spatial:${escapedModelId}:id:${node.localId}`
-      : `spatial:${escapedModelId}:${depth}:${escapeHtml(node.category)}:${escapeHtml(node.label)}`;
-    return `
-      <details class="browser-node" data-node-key="${spatialKey}">
-        <summary class="browser-summary">
-          ${treeIco('chevron_right', 'browser-twist')}
-          ${labelMarkup}
-          <span class="browser-count">${countText}</span>
-        </summary>
-        <div class="browser-children">
-          ${childrenMarkup}
-          ${moreMarkup}
-        </div>
-      </details>
-    `;
-  }
-
   private renderModelBrowser(): void {
-    if (this.federatedModels.size === 0) {
+    const markup = buildModelBrowserMarkup(this.federatedModels, this.modelIndices);
+    if (markup === null) {
       this.dom.modelBrowserTree.innerHTML = '<div class="tree-item">No models loaded yet</div>';
       return;
     }
-
-    const modelMarkup = [...this.federatedModels.values()]
-      .map((record) => {
-        const modelId = String(record.modelId);
-        const escapedModelId = escapeHtml(modelId);
-        const index = this.modelIndices.get(modelId);
-        const visibilitySuffix = record.visible ? '' : ' (Hidden)';
-
-        if (!index) {
-          return `
-            <details class="browser-node is-model" data-node-key="model:${escapedModelId}" open>
-              <summary class="browser-summary">
-                ${treeIco('chevron_right', 'browser-twist')}
-                <span
-                  class="browser-action"
-                  data-browser-action="select-model"
-                  data-model-id="${escapedModelId}"
-                  title="Select full model"
-                >
-                  ${escapeHtml(record.fileName)}${visibilitySuffix}
-                </span>
-                <span class="browser-count">${record.elementCount}</span>
-              </summary>
-              <div class="browser-children">
-                <div class="browser-leaf">
-                  ${treeIco('hourglass_top')}
-                  <span>Building model tree...</span>
-                  <span class="browser-count">-</span>
-                </div>
-              </div>
-            </details>
-          `;
-        }
-
-        const levelEntries = [...index.levels.entries()].sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }));
-        const levelMarkup = levelEntries.slice(0, MAX_BROWSER_LEVELS).map(([levelName, ids]) => {
-          const classEntries = this.getLevelClassEntries(modelId, levelName).slice(0, MAX_BROWSER_CLASSES_PER_LEVEL);
-          const classMarkup = classEntries.map(({ className }) => {
-            const classIds = [...this.getClassIdsForModelLevel(modelId, levelName, className)];
-            classIds.sort((a, b) => {
-              const aName = index.itemNames.get(a) ?? `Element ${a}`;
-              const bName = index.itemNames.get(b) ?? `Element ${b}`;
-              return aName.localeCompare(bName, undefined, { numeric: true });
-            });
-            const visibleIds = classIds.slice(0, MAX_BROWSER_ELEMENTS_PER_CLASS);
-            const elementsMarkup = visibleIds.map((localId) => {
-              const label = index.itemNames.get(localId) ?? `Element ${localId}`;
-              return `
-                <div class="browser-leaf">
-                  ${treeIco('view_in_ar')}
-                  <span
-                    class="browser-action"
-                    data-browser-action="select-item"
-                    data-model-id="${escapedModelId}"
-                    data-local-id="${localId}"
-                    title="Select ${escapeHtml(label)}"
-                  >
-                    ${escapeHtml(label)}
-                  </span>
-                  <span class="browser-count">${localId}</span>
-                </div>
-              `;
-            }).join('');
-            const hiddenCount = classIds.length - visibleIds.length;
-            const moreElementsMarkup = hiddenCount > 0
-              ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${hiddenCount} more elements</span><span class="browser-count">+</span></div>`
-              : '';
-
-            return `
-              <details class="browser-node" data-node-key="class:${escapedModelId}:${escapeHtml(levelName)}:${escapeHtml(className)}">
-                <summary class="browser-summary">
-                  ${treeIco('chevron_right', 'browser-twist')}
-                  <span
-                    class="browser-action"
-                    data-browser-action="isolate-class-level"
-                    data-model-id="${escapedModelId}"
-                    data-level="${escapeHtml(levelName)}"
-                    data-class="${escapeHtml(className)}"
-                    title="Isolate ${escapeHtml(className)} in ${escapeHtml(levelName)}"
-                  >
-                    ${escapeHtml(className)}
-                  </span>
-                  <span class="browser-count">${classIds.length}</span>
-                </summary>
-                <div class="browser-children">
-                  ${elementsMarkup || `<div class="browser-leaf">${treeIco('hide_source')}<span>No elements</span><span class="browser-count">0</span></div>`}
-                  ${moreElementsMarkup}
-                </div>
-              </details>
-            `;
-          }).join('');
-
-          return `
-            <details class="browser-node" data-node-key="level:${escapedModelId}:${escapeHtml(levelName)}">
-              <summary class="browser-summary">
-                ${treeIco('chevron_right', 'browser-twist')}
-                <span
-                  class="browser-action"
-                  data-browser-action="isolate-level"
-                  data-model-id="${escapedModelId}"
-                  data-level="${escapeHtml(levelName)}"
-                  title="Isolate level ${escapeHtml(levelName)}"
-                >
-                  ${escapeHtml(levelName)}
-                </span>
-                <span class="browser-count">${ids.size}</span>
-              </summary>
-              <div class="browser-children">
-                ${classMarkup || `<div class="browser-leaf">${treeIco('category')}<span>No classes</span><span class="browser-count">0</span></div>`}
-              </div>
-            </details>
-          `;
-        }).join('');
-
-        const levelMoreMarkup = levelEntries.length > MAX_BROWSER_LEVELS
-          ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${levelEntries.length - MAX_BROWSER_LEVELS} more levels</span><span class="browser-count">+</span></div>`
-          : '';
-
-        const spatialRootNodes = index.spatialRoot?.children?.length ? index.spatialRoot.children : (index.spatialRoot ? [index.spatialRoot] : []);
-        const spatialVisible = spatialRootNodes.slice(0, MAX_BROWSER_SPATIAL_CHILDREN);
-        const spatialMarkup = spatialVisible
-          .map((node) => this.renderSpatialBrowserNode(modelId, index, node, 0))
-          .join('');
-        const spatialMoreMarkup = spatialRootNodes.length > MAX_BROWSER_SPATIAL_CHILDREN
-          ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${spatialRootNodes.length - MAX_BROWSER_SPATIAL_CHILDREN} more nodes</span><span class="browser-count">+</span></div>`
-          : '';
-
-        return `
-          <details class="browser-node is-model" data-node-key="model:${escapedModelId}" open>
-            <summary class="browser-summary">
-              ${treeIco('chevron_right', 'browser-twist')}
-              <span
-                class="browser-action"
-                data-browser-action="select-model"
-                data-model-id="${escapedModelId}"
-                title="Select full model"
-              >
-                ${escapeHtml(record.fileName)}${visibilitySuffix}
-              </span>
-              <span class="browser-count">${record.elementCount}</span>
-            </summary>
-            <div class="browser-children">
-              <div class="browser-leaf">
-                ${treeIco('my_location')}
-                <span
-                  class="browser-action"
-                  data-browser-action="fit-model"
-                  data-model-id="${escapedModelId}"
-                  title="Fit camera to model"
-                >
-                  Default
-                </span>
-                <span class="browser-count">${levelEntries.length} lvls</span>
-              </div>
-
-              <details class="browser-node" data-node-key="group:${escapedModelId}:levels" ${levelEntries.length > 0 ? 'open' : ''}>
-                <summary class="browser-summary">
-                  ${treeIco('chevron_right', 'browser-twist')}
-                  <span>Levels</span>
-                  <span class="browser-count">${levelEntries.length}</span>
-                </summary>
-                <div class="browser-children">
-                  ${levelMarkup || `<div class="browser-leaf">${treeIco('folder_open')}<span>No levels detected</span><span class="browser-count">-</span></div>`}
-                  ${levelMoreMarkup}
-                </div>
-              </details>
-
-              <details class="browser-node" data-node-key="group:${escapedModelId}:spatial">
-                <summary class="browser-summary">
-                  ${treeIco('chevron_right', 'browser-twist')}
-                  <span>Spatial Structure</span>
-                  <span class="browser-count">${spatialRootNodes.length}</span>
-                </summary>
-                <div class="browser-children">
-                  ${spatialMarkup || `<div class="browser-leaf">${treeIco('account_tree')}<span>No spatial tree data</span><span class="browser-count">-</span></div>`}
-                  ${spatialMoreMarkup}
-                </div>
-              </details>
-            </div>
-          </details>
-        `;
-      })
-      .join('');
-
-    this.renderPreservingDetails(this.dom.modelBrowserTree, modelMarkup);
+    this.renderPreservingDetails(this.dom.modelBrowserTree, markup);
   }
 
   /**
@@ -2004,115 +1259,12 @@ class ViewerApp {
   }
 
   private renderFederatedTree(): void {
-    if (this.federatedModels.size === 0) {
+    const markup = buildFederationTreeMarkup(this.federatedModels, this.modelIndices, this.activeGizmoModelId);
+    if (markup === null) {
       this.dom.federationTree.innerHTML = '<div class="tree-item">No models loaded yet</div>';
       return;
     }
-
-    const cards = [...this.federatedModels.values()]
-      .map((record) => {
-        const modelId = String(record.modelId);
-        const escapedModelId = escapeHtml(modelId);
-        const opacityPct = Math.round(this.clamp(record.opacity, 0, 1) * 100);
-        const visibilityLabel = record.visible ? 'Hide' : 'Show';
-        const visibilityStateClass = record.visible ? '' : 'is-off';
-        const gizmoStateClass = this.activeGizmoModelId === modelId ? 'is-active' : '';
-        const levels = this.modelIndices.get(record.modelId)?.levels;
-        const levelEntries = levels ? [...levels.entries()] : [];
-        const levelMarkup = levelEntries.length === 0
-          ? '<div class="federated-level-empty">No storeys found</div>'
-          : levelEntries
-            .slice(0, 80)
-            .map(([levelName, ids]) => `
-              <button
-                class="federated-level-btn"
-                type="button"
-                data-model-id="${escapedModelId}"
-                data-level="${escapeHtml(levelName)}"
-                title="Isolate level ${escapeHtml(levelName)}"
-              >
-                ${escapeHtml(levelName)} (${ids.size})
-              </button>
-            `)
-            .join('');
-
-        return `
-          <div class="federated-model">
-            <div class="federated-model-header">
-              <div class="federated-header-row">
-                <button
-                  class="federated-model-name-btn"
-                  type="button"
-                  data-model-id="${escapedModelId}"
-                  data-model-action="select-model"
-                  title="Select full model"
-                >
-                  ${escapeHtml(record.fileName)}
-                </button>
-                <button
-                  class="federated-model-btn federated-visibility-btn ${visibilityStateClass}"
-                  type="button"
-                  data-model-id="${escapedModelId}"
-                  data-model-action="toggle-visibility"
-                >
-                  ${visibilityLabel}
-                </button>
-              </div>
-              <div class="federated-model-meta">
-                ${escapedModelId} | ${record.elementCount} elements | ${this.formatModelSize(record.sizeBytes)}
-              </div>
-            </div>
-
-            <div class="federated-opacity">
-              <div class="federated-opacity-head">
-                <span>Opacity</span>
-                <span data-opacity-value>${opacityPct}%</span>
-              </div>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                value="${opacityPct}"
-                data-model-id="${escapedModelId}"
-                data-model-opacity="1"
-              />
-            </div>
-
-            <div class="federated-transform-title">Offset XYZ</div>
-            <div class="federated-transform-grid">
-              <label>X<input type="number" step="0.1" value="${record.offsetPosition.x.toFixed(2)}" data-model-id="${escapedModelId}" data-transform="px" /></label>
-              <label>Y<input type="number" step="0.1" value="${record.offsetPosition.y.toFixed(2)}" data-model-id="${escapedModelId}" data-transform="py" /></label>
-              <label>Z<input type="number" step="0.1" value="${record.offsetPosition.z.toFixed(2)}" data-model-id="${escapedModelId}" data-transform="pz" /></label>
-            </div>
-
-            <div class="federated-transform-title">Rotation XYZ (deg)</div>
-            <div class="federated-transform-grid">
-              <label>Rx<input type="number" step="1" value="${record.offsetRotation.x.toFixed(1)}" data-model-id="${escapedModelId}" data-transform="rx" /></label>
-              <label>Ry<input type="number" step="1" value="${record.offsetRotation.y.toFixed(1)}" data-model-id="${escapedModelId}" data-transform="ry" /></label>
-              <label>Rz<input type="number" step="1" value="${record.offsetRotation.z.toFixed(1)}" data-model-id="${escapedModelId}" data-transform="rz" /></label>
-            </div>
-
-            <div class="federated-model-actions">
-              <button class="federated-model-btn" type="button" data-model-id="${escapedModelId}" data-model-action="select-model">Select</button>
-              <button class="federated-model-btn ${gizmoStateClass}" type="button" data-model-id="${escapedModelId}" data-model-action="toggle-gizmo">Gizmo</button>
-              <button class="federated-model-btn" type="button" data-model-id="${escapedModelId}" data-model-action="fit">Fit</button>
-              <button class="federated-model-btn" type="button" data-model-id="${escapedModelId}" data-model-action="reset">Reset</button>
-              <button class="federated-model-btn federated-unload-btn" type="button" data-model-id="${escapedModelId}" data-model-action="unload" title="Unload model and free its memory">Unload</button>
-            </div>
-
-            <div class="federated-levels">
-              <details>
-                <summary>Levels (${levelEntries.length})</summary>
-                <div class="federated-level-list">${levelMarkup}</div>
-              </details>
-            </div>
-          </div>
-        `;
-      })
-      .join('');
-
-    this.dom.federationTree.innerHTML = cards;
+    this.dom.federationTree.innerHTML = markup;
   }
 
   private normalizeHexColor(value: string | null | undefined, fallback = DEFAULT_BACKGROUND_COLOR): string {
@@ -2281,11 +1433,6 @@ class ViewerApp {
 
     if (persist) this.persistLocalState();
     if (updateStatus) this.setStatus(`Visual style: ${this.getVisualStyleLabel(resolvedStyle)}`);
-  }
-
-  private formatModelSize(sizeBytes: number): string {
-    if (!sizeBytes || sizeBytes <= 0) return '-';
-    return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`;
   }
 
   private clamp(value: number, min: number, max: number): number {
@@ -2527,7 +1674,7 @@ class ViewerApp {
   }
 
   private async isolateClassForModelLevel(modelId: string, level: string, className: string): Promise<void> {
-    const ids = this.getClassIdsForModelLevel(modelId, level, className);
+    const ids = getClassIdsForModelLevel(this.modelIndices, modelId, level, className);
     if (ids.size === 0) {
       this.setStatus(`No ${className} elements found in ${level}`);
       return;
@@ -3084,15 +2231,7 @@ class ViewerApp {
   /** Moves the active section plane along its normal to the given percentage. */
   private setSectionPosition(pct: number): void {
     if (!this.activeSectionNormal || !this.activeSectionBox || this.activeSectionBox.isEmpty()) return;
-    const t = this.clamp(pct / 100, 0, 1);
-    const { min, max } = this.activeSectionBox;
-    const center = this.activeSectionBox.getCenter(new THREE.Vector3());
-    const point = center.clone();
-    const n = this.activeSectionNormal;
-    // Slide along the dominant axis of the normal between the bbox extremes.
-    if (Math.abs(n.x) > 0.5) point.x = min.x + (max.x - min.x) * t;
-    else if (Math.abs(n.y) > 0.5) point.y = min.y + (max.y - min.y) * t;
-    else point.z = min.z + (max.z - min.z) * t;
+    const point = sectionPlanePoint(this.activeSectionBox, this.activeSectionNormal, pct);
     this.clipper.deleteAll();
     this.createClipPlane(this.activeSectionNormal.clone(), point);
     this.fireAndForget(this.fragments.core.update(true), 'Section move');
@@ -3106,13 +2245,9 @@ class ViewerApp {
     }
     this.clearSections(false);
     this.clipper.enabled = true;
-    const { min, max } = bbox;
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(-1, 0, 0), new THREE.Vector3(max.x, 0, 0));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(1, 0, 0), new THREE.Vector3(min.x, 0, 0));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, -1, 0), new THREE.Vector3(0, max.y, 0));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, min.y, 0));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, max.z));
-    this.clipper.createFromNormalAndCoplanarPoint(this.world, new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, min.z));
+    for (const { normal, point } of sectionBoxPlanes(bbox)) {
+      this.clipper.createFromNormalAndCoplanarPoint(this.world, normal, point);
+    }
     this.setStatus('Section box created');
   }
 
@@ -3138,11 +2273,7 @@ class ViewerApp {
         continue;
       }
 
-      const baseOpacity = this.clamp(record.opacity, 0, 1);
-      const effectiveOpacity = this.xrayEnabled ? this.clamp(baseOpacity * 0.28, 0, 1) : baseOpacity;
-      const targetOpacity = effectiveOpacity >= 0.999
-        ? 1
-        : this.clamp(Number(effectiveOpacity.toFixed(3)), 0.02, 0.999);
+      const targetOpacity = computeXrayOpacity(record.opacity, this.xrayEnabled);
       const previousOpacity = this.appliedModelOpacity.get(record.modelId) ?? 1;
       if (Math.abs(previousOpacity - targetOpacity) < 0.001) continue;
 
@@ -3167,23 +2298,8 @@ class ViewerApp {
     this.edgeOverlays.length = 0;
     if (!this.edgesEnabled) return;
 
-    for (const object of this.modelObjects) {
-      if (!object.visible) continue;
-      object.traverse((child: THREE.Object3D) => {
-        const mesh = child as THREE.Mesh;
-        if (!mesh.isMesh || !mesh.geometry || !mesh.visible) return;
-        try {
-          const geometry = new THREE.EdgesGeometry(mesh.geometry, 35);
-          const lines = new THREE.LineSegments(geometry, this.edgeMaterial);
-          lines.matrixAutoUpdate = false;
-          lines.matrix.copy(mesh.matrixWorld);
-          this.world.scene.three.add(lines);
-          this.edgeOverlays.push(lines);
-        } catch {
-          // ignore invalid geometry
-        }
-      });
-    }
+    this.edgeOverlays = buildEdgeOverlays(this.modelObjects, this.edgeMaterial);
+    for (const overlay of this.edgeOverlays) this.world.scene.three.add(overlay);
   }
 
   private async onViewerClick(_event: MouseEvent): Promise<void> {
@@ -3294,23 +2410,7 @@ class ViewerApp {
   }
 
   private renderPropertySections(sections: PropertySectionData[]): void {
-    this.dom.propSections.innerHTML = sections.map((section) => `
-      <details class="prop-section" data-prop-section data-search="${escapeHtml(section.title.toLowerCase())}" ${section.defaultOpen ? 'open' : ''}>
-        <summary class="prop-section-summary">
-          ${treeIco('chevron_right', 'browser-twist')}
-          <span class="prop-section-name">${escapeHtml(section.title)}</span>
-          <span class="prop-section-count" data-prop-count>${section.rows.length}</span>
-        </summary>
-        <div class="prop-section-body">
-            ${section.rows.map((row) => `
-              <div class="prop-row" data-prop-row data-search="${escapeHtml(row.searchText)}">
-                <span class="prop-key">${escapeHtml(row.key)}</span>
-                <span class="prop-val">${escapeHtml(row.value)}</span>
-              </div>
-            `).join('')}
-        </div>
-      </details>
-    `).join('');
+    this.dom.propSections.innerHTML = buildPropertySectionsMarkup(sections);
   }
 
   private applyPropertiesFilter(): void {
@@ -3563,37 +2663,11 @@ class ViewerApp {
   }
 
   private updateViewpointList(): void {
-    if (this.viewpoints.length === 0) {
-      this.dom.viewpointList.innerHTML =
-        '<div class="list-empty">No viewpoints yet. Save one before creating issues for better traceability.</div>';
-      return;
-    }
-
-    this.dom.viewpointList.innerHTML = this.viewpoints
-      .map((entry) => {
-        const active = entry.id === this.selectedViewpointId ? ' is-active' : '';
-        const escapedId = escapeHtml(entry.id);
-        const escapedName = escapeHtml(entry.name);
-        const thumbnail = entry.snapshot
-          ? `<img class="vp-thumb" src="${escapeHtml(entry.snapshot)}" alt="" loading="lazy" />`
-          : `<span class="vp-icon">${icon('photo_camera')}</span>`;
-        return `
-          <div class="vp-row${active}" data-viewpoint-id="${escapedId}">
-            <div class="vp-row-main">
-              ${thumbnail}
-              <div class="vp-text">
-                <div class="vp-name">${escapedName}</div>
-                <div class="vp-meta">${escapeHtml(new Date(entry.createdAt).toLocaleString())}</div>
-              </div>
-              <button type="button" class="row-btn" data-viewpoint-action="apply">Apply</button>
-              <button type="button" class="icon-btn-danger" data-viewpoint-action="delete" title="Delete viewpoint" aria-label="Delete viewpoint">${icon('delete', 16)}</button>
-            </div>
-          </div>
-        `;
-      })
-      .join('');
     // A11: row + action clicks handled by delegation bound once in
     // bindViewpointListEvents() — no per-item listeners to leak on re-render.
+    const markup = buildViewpointListMarkup(this.viewpoints, this.selectedViewpointId);
+    this.dom.viewpointList.innerHTML = markup
+      ?? '<div class="list-empty">No viewpoints yet. Save one before creating issues for better traceability.</div>';
   }
 
   private createIssueFromCurrentContext(): void {
@@ -3709,43 +2783,10 @@ class ViewerApp {
   }
 
   private updateIssuesList(): void {
-    if (this.issues.length === 0) {
-      this.dom.issuesList.innerHTML = '<div class="list-empty">No issues yet.</div>';
-      return;
-    }
-
-    const prioColor: Record<string, string> = {
-      Critical: 'var(--error)',
-      High: 'var(--warning)',
-      Medium: 'var(--primary)',
-      Low: 'var(--outline)',
-    };
-    this.dom.issuesList.innerHTML = this.issues
-      .map((issue) => {
-        const active = issue.id === this.activeIssueId ? ' is-active' : '';
-        const modelCount = issue.elementsByModel ? Object.keys(issue.elementsByModel).length : (issue.localIds.length > 0 ? 1 : 0);
-        const linkedText = issue.localIds.length > 0 ? `${issue.localIds.length} linked · ${modelCount} model(s)` : 'No element link';
-        const escapedId = escapeHtml(issue.id);
-        const escapedTitle = escapeHtml(issue.title);
-        const escapedMeta = escapeHtml(`${issue.priority} · ${linkedText}`);
-        const dot = prioColor[issue.priority] ?? 'var(--outline)';
-        return `
-          <div class="issue-row${active}" data-issue-id="${escapedId}">
-            <div class="issue-head">
-              <span class="issue-prio-dot" style="background:${dot};"></span>
-              <span class="issue-title">${escapedTitle}</span>
-              <button type="button" class="icon-btn-danger" data-issue-action="delete" title="Delete issue" aria-label="Delete issue">${icon('delete', 15)}</button>
-            </div>
-            <div class="issue-meta">${escapedMeta}</div>
-            <div class="issue-status-row">
-              <span class="status-badge" style="background:var(--surface-container-high);color:var(--on-surface-variant);">${escapeHtml(issue.status)}</span>
-            </div>
-          </div>
-        `;
-      })
-      .join('');
     // A11: row + action clicks handled by delegation bound once in
     // bindIssueListEvents() — no per-item listeners to leak on re-render.
+    const markup = buildIssueListMarkup(this.issues, this.activeIssueId);
+    this.dom.issuesList.innerHTML = markup ?? '<div class="list-empty">No issues yet.</div>';
   }
 
   private selectIssue(issueId: string, focusView: boolean): void {
@@ -3848,24 +2889,9 @@ class ViewerApp {
 
   private updateIssueComments(): void {
     const issue = this.issues.find((entry) => entry.id === this.activeIssueId);
-    if (!issue) {
-      this.dom.issueComments.innerHTML = '<div class="comment-item">Select an issue to view comments</div>';
-      return;
-    }
-
-    if (issue.comments.length === 0) {
-      this.dom.issueComments.innerHTML = '<div class="comment-item">No comments</div>';
-      return;
-    }
-
-    this.dom.issueComments.innerHTML = issue.comments
-      .map((comment) => `
-        <div class="comment-item">
-          <div><strong>${escapeHtml(comment.author)}</strong> - ${new Date(comment.createdAt).toLocaleString()}</div>
-          <div>${escapeHtml(comment.text)}</div>
-        </div>
-      `)
-      .join('');
+    const markup = buildIssueCommentsMarkup(issue);
+    this.dom.issueComments.innerHTML = markup
+      ?? '<div class="comment-item">Select an issue to view comments</div>';
   }
 
   /**
@@ -4354,18 +3380,7 @@ class ViewerApp {
   }
 
   private startFpsMonitor(): void {
-    const tick = (): void => {
-      this.frameCount += 1;
-      const now = performance.now();
-      if (now - this.fpsLastTs >= 1000) {
-        const fps = this.frameCount;
-        this.frameCount = 0;
-        this.fpsLastTs = now;
-        this.dom.perfInfo.textContent = `${fps} FPS`;
-      }
-      this.fpsAnimationFrameId = requestAnimationFrame(tick);
-    };
-    this.fpsAnimationFrameId = requestAnimationFrame(tick);
+    this.fpsMonitor = createFpsMonitor(this.dom.perfInfo);
   }
 }
 
