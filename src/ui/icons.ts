@@ -164,14 +164,16 @@ export function icon(name: IconName, sizePx = 20): string {
 
 /**
  * Replaces the icon inside `el` (used for stateful toggles like theme/eye).
- * Parses the trusted static icon string once and swaps the node — avoids
- * assigning to innerHTML directly.
+ *
+ * Uses innerHTML with the trusted static icon string: the HTML parser places
+ * the <svg> in the correct SVG namespace so its width/height/fill presentation
+ * attributes render. (The prior DOMParser('image/svg+xml') + node-adoption path
+ * produced a mis-namespaced/adopted <svg> whose attributes were ignored — every
+ * icon rendered at 0×0 with black fill; see AUDIT A18.) `icon()` interpolates
+ * only static template constants (no user data), so this is not an A1 surface.
  */
-const iconParser = new DOMParser();
 export function setIcon(el: Element, name: IconName, sizePx = 20): void {
-  const doc = iconParser.parseFromString(icon(name, sizePx), 'image/svg+xml');
-  const svg = doc.documentElement;
-  el.replaceChildren(svg);
+  el.innerHTML = icon(name, sizePx);
 }
 
 /**
