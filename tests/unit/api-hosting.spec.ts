@@ -106,6 +106,14 @@ describe('api · upload validation (defensive)', () => {
     expect(res.status).toBe(413);
     expect(((await res.json()) as { error: string }).error).toBe('payload_too_large');
   });
+
+  it('rejects an oversize declared Content-Length before buffering the body (413)', async () => {
+    const req = uploadRequest(FRAG, {
+      'content-length': String(ANON_DEFAULTS.maxUploadBytes + 1),
+    });
+    const res = await handleUpload(req, storage, { host: HOST });
+    expect(res.status).toBe(413);
+  });
 });
 
 describe('api · per-owner quota (C4 seam)', () => {

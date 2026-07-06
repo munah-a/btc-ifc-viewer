@@ -95,6 +95,18 @@ export async function handleUpload(
 
   // 2) Read the raw bytes. The `.frag` is sent as the request body (octet-stream)
   //    with the file name in a header — we NEVER parse the bytes (C2).
+  //    ASSUMPTION (PO): the entitlement size cap (50 MB) can exceed Vercel's
+  //    default function request-body limit (~4.5 MB). Before production, either
+  //    raise the body limit for api/uploads OR switch large uploads to the
+  //    @vercel/blob CLIENT-upload flow (browser → Blob directly via a token
+  //    endpoint), which also avoids buffering big bodies in the function. The
+  //    early Content-Length check below rejects oversize bodies before buffering.
+  const declaredLength = Number(request.headers.get('content-length') ?? 0);
+  if (declaredLength > entitlements.maxUploadBytes) {
+    const maxMb = Math.floor(entitlements.maxUploadBytes / (1024 * 1024));
+    return error(413, 'payload_too_large', `Upload exceeds the ${maxMb} MB limit for the ${entitlements.tier} tier.`);
+  }
+
   const contentType = request.headers.get('content-type') ?? '';
   if (!contentType.includes('application/octet-stream')) {
     return error(415, 'unsupported_media_type', 'Upload the converted .frag as application/octet-stream.');
