@@ -35,6 +35,7 @@ import {
   type GeometryProbe,
   type PropertySectionData,
 } from './core/property-engine';
+import { getClipperPlaneGizmoHelper, type FragmentsModelLike } from './core/fragments-model';
 
 type MeasureMode = 'none' | 'length' | 'area';
 type CubeFaceKey = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom';
@@ -1157,7 +1158,7 @@ class ViewerApp {
    * onModelLoaded event and the awaited load path via one promise per model
    * id, and diverts late arrivals of timed-out loads to disposal.
    */
-  private registerModel(modelId: string, model: any): Promise<void> {
+  private registerModel(modelId: string, model: FragmentsModelLike): Promise<void> {
     if (this.modelRegistry.isStale(modelId)) {
       return this.disposeStaleModel(modelId);
     }
@@ -1226,14 +1227,14 @@ class ViewerApp {
     this.setStatus(`Model unloaded: ${record.fileName}`);
   }
 
-  private async onModelAdded(modelId: string, model: any): Promise<void> {
+  private async onModelAdded(modelId: string, model: FragmentsModelLike): Promise<void> {
     if (!modelId || this.federatedModels.has(modelId)) return;
 
     model.useCamera(this.world.camera.three);
     if (typeof model?.graphicsQuality === 'number') model.graphicsQuality = 1;
     this.world.scene.three.add(model.object);
 
-    const modelObject = model.object as THREE.Object3D;
+    const modelObject = model.object;
     if (!this.modelObjects.includes(modelObject)) this.modelObjects.push(modelObject);
 
     const ids = await model.getItemsIdsWithGeometry();
@@ -1292,13 +1293,13 @@ class ViewerApp {
     this.setStatus(`Model loaded: ${fileName}`);
   }
 
-  private async indexModel(modelId: string, model: any): Promise<void> {
-    const itemIds = await model.getItemsIdsWithGeometry() as number[];
+  private async indexModel(modelId: string, model: FragmentsModelLike): Promise<void> {
+    const itemIds = await model.getItemsIdsWithGeometry();
     const idsSet = new Set(itemIds);
 
     const classes = new Map<string, Set<number>>();
     const itemClassById = new Map<number, string>();
-    const categories = await model.getItemsWithGeometryCategories() as Array<string | null>;
+    const categories = await model.getItemsWithGeometryCategories();
     for (let i = 0; i < categories.length; i += 1) {
       const category = categories[i] ?? 'Unknown';
       const id = itemIds[i];
@@ -1311,7 +1312,7 @@ class ViewerApp {
     const itemNames = new Map<number, string>();
     const itemToLevel = new Map<number, string>();
     const levels = new Map<string, Set<number>>();
-    const spatial = await model.getSpatialStructure() as SpatialTreeItem;
+    const spatial = await model.getSpatialStructure();
 
     // Read element names + level assignment from ContainedInStructure relation.
     const chunkSize = 360;
@@ -2121,8 +2122,8 @@ class ViewerApp {
 
   // The model id passed to ifcLoader.load IS the fragments.list key and the
   // model.modelId (A6) — lookups are direct, no alias resolution needed.
-  private getFragmentsModel(modelId: string): any {
-    return this.fragments?.list?.get(modelId) ?? null;
+  private getFragmentsModel(modelId: string): FragmentsModelLike | null {
+    return (this.fragments?.list?.get(modelId) as FragmentsModelLike | undefined) ?? null;
   }
 
   private fireAndForget(task: Promise<unknown>, context: string): void {
@@ -2640,7 +2641,7 @@ class ViewerApp {
         }, 120000);
       });
 
-      let loadedModel: any;
+      let loadedModel: FragmentsModelLike;
       try {
         loadedModel = await Promise.race([loadPromise, timeoutPromise]);
       } catch (error) {
@@ -2955,8 +2956,8 @@ class ViewerApp {
     if (plane) {
       const renderer = this.world.renderer!.three;
       renderer.localClippingEnabled = true;
-      const gizmoHelper = (plane as any)._controls.getHelper();
-      gizmoHelper.traverse((child: THREE.Object3D) => {
+      const gizmoHelper = getClipperPlaneGizmoHelper(plane);
+      gizmoHelper?.traverse((child: THREE.Object3D) => {
         const mesh = child as THREE.Mesh;
         if (mesh.material) {
           const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
@@ -3152,14 +3153,14 @@ class ViewerApp {
   }
 
   /** Rows of the model's unit entities (IfcSIUnit/IfcConversionBasedUnit). */
-  private async fetchUnitRows(model: any): Promise<unknown[]> {
-    const categories = await model.getItemsOfCategories([/IFCSIUNIT/, /IFCCONVERSIONBASEDUNIT/]) as Record<string, number[]>;
+  private async fetchUnitRows(model: FragmentsModelLike): Promise<unknown[]> {
+    const categories = await model.getItemsOfCategories([/IFCSIUNIT/, /IFCCONVERSIONBASEDUNIT/]);
     const ids = Object.values(categories).flat();
     if (ids.length === 0) return [];
     return await model.getItemsData(ids, {
       attributesDefault: true,
       relationsDefault: { attributes: false, relations: false },
-    }) as unknown[];
+    });
   }
 
   private renderPropertySections(sections: PropertySectionData[]): void {
