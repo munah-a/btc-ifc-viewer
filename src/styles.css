@@ -1115,12 +1115,8 @@ select.text-input {
 }
 
 .browser-action {
-  border: none;
-  background: transparent;
   color: var(--on-surface);
-  font: inherit;
-  text-align: left;
-  padding: 0;
+  cursor: pointer;
   border-radius: var(--radius-sm);
 }
 

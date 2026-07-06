@@ -1728,8 +1728,7 @@ class ViewerApp {
     if (!hasChildren || depth >= MAX_BROWSER_SPATIAL_DEPTH) {
       const leafContent = isElement && node.localId !== null
         ? `
-          <button
-            type="button"
+          <span
             class="browser-action"
             data-browser-action="select-item"
             data-model-id="${escapedModelId}"
@@ -1737,7 +1736,7 @@ class ViewerApp {
             title="Select ${escapeHtml(node.label)}"
           >
             ${escapeHtml(node.label)}
-          </button>
+          </span>
         `
         : `<span>${escapeHtml(node.label)}</span>`;
       const leafIcon = isElement ? 'view_in_ar' : 'subdirectory_arrow_right';
@@ -1760,8 +1759,7 @@ class ViewerApp {
 
     const labelMarkup = isStoreyNode
       ? `
-        <button
-          type="button"
+        <span
           class="browser-action"
           data-browser-action="isolate-level"
           data-model-id="${escapedModelId}"
@@ -1769,7 +1767,7 @@ class ViewerApp {
           title="Isolate ${escapeHtml(node.label)}"
         >
           ${escapeHtml(node.label)}
-        </button>
+        </span>
       `
       : `<span>${escapeHtml(node.label)}</span>`;
 
@@ -1809,15 +1807,14 @@ class ViewerApp {
             <details class="browser-node is-model" data-node-key="model:${escapedModelId}" open>
               <summary class="browser-summary">
                 ${treeIco('chevron_right', 'browser-twist')}
-                <button
-                  type="button"
+                <span
                   class="browser-action"
                   data-browser-action="select-model"
                   data-model-id="${escapedModelId}"
                   title="Select full model"
                 >
                   ${escapeHtml(record.fileName)}${visibilitySuffix}
-                </button>
+                </span>
                 <span class="browser-count">${record.elementCount}</span>
               </summary>
               <div class="browser-children">
@@ -1847,8 +1844,7 @@ class ViewerApp {
               return `
                 <div class="browser-leaf">
                   ${treeIco('view_in_ar')}
-                  <button
-                    type="button"
+                  <span
                     class="browser-action"
                     data-browser-action="select-item"
                     data-model-id="${escapedModelId}"
@@ -1856,7 +1852,7 @@ class ViewerApp {
                     title="Select ${escapeHtml(label)}"
                   >
                     ${escapeHtml(label)}
-                  </button>
+                  </span>
                   <span class="browser-count">${localId}</span>
                 </div>
               `;
@@ -1870,8 +1866,7 @@ class ViewerApp {
               <details class="browser-node" data-node-key="class:${escapedModelId}:${escapeHtml(levelName)}:${escapeHtml(className)}">
                 <summary class="browser-summary">
                   ${treeIco('chevron_right', 'browser-twist')}
-                  <button
-                    type="button"
+                  <span
                     class="browser-action"
                     data-browser-action="isolate-class-level"
                     data-model-id="${escapedModelId}"
@@ -1880,7 +1875,7 @@ class ViewerApp {
                     title="Isolate ${escapeHtml(className)} in ${escapeHtml(levelName)}"
                   >
                     ${escapeHtml(className)}
-                  </button>
+                  </span>
                   <span class="browser-count">${classIds.length}</span>
                 </summary>
                 <div class="browser-children">
@@ -1895,8 +1890,7 @@ class ViewerApp {
             <details class="browser-node" data-node-key="level:${escapedModelId}:${escapeHtml(levelName)}">
               <summary class="browser-summary">
                 ${treeIco('chevron_right', 'browser-twist')}
-                <button
-                  type="button"
+                <span
                   class="browser-action"
                   data-browser-action="isolate-level"
                   data-model-id="${escapedModelId}"
@@ -1904,7 +1898,7 @@ class ViewerApp {
                   title="Isolate level ${escapeHtml(levelName)}"
                 >
                   ${escapeHtml(levelName)}
-                </button>
+                </span>
                 <span class="browser-count">${ids.size}</span>
               </summary>
               <div class="browser-children">
@@ -1931,29 +1925,27 @@ class ViewerApp {
           <details class="browser-node is-model" data-node-key="model:${escapedModelId}" open>
             <summary class="browser-summary">
               ${treeIco('chevron_right', 'browser-twist')}
-              <button
-                type="button"
+              <span
                 class="browser-action"
                 data-browser-action="select-model"
                 data-model-id="${escapedModelId}"
                 title="Select full model"
               >
                 ${escapeHtml(record.fileName)}${visibilitySuffix}
-              </button>
+              </span>
               <span class="browser-count">${record.elementCount}</span>
             </summary>
             <div class="browser-children">
               <div class="browser-leaf">
                 ${treeIco('my_location')}
-                <button
-                  type="button"
+                <span
                   class="browser-action"
                   data-browser-action="fit-model"
                   data-model-id="${escapedModelId}"
                   title="Fit camera to model"
                 >
                   Default
-                </button>
+                </span>
                 <span class="browser-count">${levelEntries.length} lvls</span>
               </div>
 
