@@ -1835,6 +1835,149 @@ kbd {
   justify-content: flex-end;
 }
 
+/* ════════════════ SHARE DIALOG (W4.4) ════════════════ */
+.share-dialog {
+  border: none;
+  border-radius: var(--radius-lg);
+  padding: 0;
+  background: var(--surface-container-low);
+  color: var(--on-surface);
+  box-shadow: var(--shadow-float);
+  max-width: 460px;
+  width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+}
+
+.share-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.share-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--outline-variant);
+}
+
+.share-title {
+  font-family: var(--font-display);
+  font-size: var(--title-md);
+  font-weight: 600;
+}
+
+.share-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 12px 20px 0;
+}
+
+.share-tab {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: transparent;
+  color: var(--on-surface-variant);
+  font: inherit;
+  font-size: var(--body-sm);
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.share-tab.is-active {
+  color: var(--on-surface);
+  border-bottom-color: var(--primary);
+}
+
+.share-body {
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.share-panel {
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.share-panel.is-active {
+  display: flex;
+}
+
+.share-sep {
+  height: 1px;
+  background: var(--outline-variant);
+  margin: 4px 0;
+}
+
+.share-intro {
+  font-size: var(--body-sm);
+  color: var(--on-surface-variant);
+  line-height: 1.5;
+}
+
+.share-result {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 8px;
+  padding-top: 14px;
+  border-top: 1px solid var(--outline-variant);
+}
+
+.share-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.share-copy-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.share-copy-row .text-input {
+  flex: 1;
+}
+
+.share-qr-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+}
+
+.share-qr {
+  width: 200px;
+  height: 200px;
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  padding: 8px;
+}
+
+.share-expiry {
+  font-size: var(--label-md);
+  color: var(--on-surface-variant);
+  text-align: center;
+}
+
+.share-delete {
+  color: var(--error, #d9534f);
+}
+
+.share-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-left: 20px;
+  font-size: var(--body-sm);
+  line-height: 1.5;
+  color: var(--on-surface-variant);
+}
+
 /* ════════════════ TOASTS (U4/U11) ════════════════ */
 .toast-region {
   position: fixed;

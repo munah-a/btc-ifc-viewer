@@ -17,7 +17,7 @@
     "preview": "vite preview",
     "preview:e2e": "vite preview --config vite.e2e.config.ts",
     "e2e:serve": "npm run build:e2e && npm run preview:e2e",
-    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.api.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

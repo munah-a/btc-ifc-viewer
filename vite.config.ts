@@ -1,3 +1,5 @@
+import { resolve } from 'node:path';
+
 import { defineConfig, type Plugin } from 'vite';
 
 // Dev-server-only CSP relax (A1): Vite's HMR runs over ws:// which CSP3
@@ -21,6 +23,14 @@ export default defineConfig({
     build: {
         outDir: '../dist',
         emptyOutDir: true,
+        // MPA (W4.1): the full app (index.html) + the chromeless embed
+        // (embed.html) are separate entry points sharing core/* modules.
+        rollupOptions: {
+            input: {
+                main: resolve(__dirname, 'src/index.html'),
+                embed: resolve(__dirname, 'src/embed.html'),
+            },
+        },
     },
     server: {
         port: 3001,

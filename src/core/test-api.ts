@@ -110,6 +110,12 @@ export interface ViewerTestApi {
    * assert the clear-on-empty-click behaviour, not a specific hit.
    */
   clickCanvasAt(clientX: number, clientY: number): Promise<TestItemRef | null>;
+  /**
+   * W4.5: exports the current visibility state to a binary GLB and returns
+   * `{ byteLength, valid }` (valid = well-formed GLB header) WITHOUT triggering a
+   * file download — so the e2e can assert a non-empty, valid .glb is produced.
+   */
+  exportGlbBytes(): Promise<{ byteLength: number; valid: boolean }>;
 }
 
 declare global {

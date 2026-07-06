@@ -53,6 +53,10 @@
           <span class="btn-icon" data-icon="upload_file"></span>
           <span data-i18n="shell.loadIfc">Load IFC</span>
         </button>
+        <button id="btnShare" class="btn-icon-only" type="button" data-icon="open_in_new"
+          data-i18n-attr="title:share.title,aria-label:share.title"></button>
+        <button id="btnExportGlb" class="btn-icon-only" type="button" data-icon="deployed_code"
+          data-i18n-attr="title:share.exportGlb,aria-label:share.exportGlb"></button>
         <button id="btnExportScreenshot" class="btn-icon-only" type="button" data-icon="photo_camera"
           data-i18n-attr="title:shell.exportScreenshot,aria-label:shell.exportScreenshot"></button>
         <button id="btnExportState" class="btn-icon-only" type="button" data-icon="download"
@@ -504,6 +508,84 @@
           data-i18n="confirm.ok">Confirm</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- Share dialog (W4.4: native <dialog>, focus trap + Escape + focus restore) -->
+  <dialog id="shareDialog" class="share-dialog" data-i18n-attr="aria-label:share.title">
+    <div class="share-head">
+      <span class="share-title" data-i18n="share.title">Share</span>
+      <button id="shareClose" class="btn-icon-only" type="button" data-icon="close"
+        data-i18n-attr="title:share.close,aria-label:share.close"></button>
+    </div>
+
+    <div class="share-tabs" role="tablist" data-i18n-attr="aria-label:share.title">
+      <button id="shareTabLink" class="share-tab is-active" role="tab" type="button" aria-selected="true"
+        aria-controls="sharePanelLink" data-i18n="share.tabLink">Link & embed</button>
+      <button id="shareTabPp" class="share-tab" role="tab" type="button" aria-selected="false"
+        aria-controls="sharePanelPp" tabindex="-1" data-i18n="share.tabPowerpoint">PowerPoint</button>
+    </div>
+
+    <div class="share-body">
+      <!-- LINK & EMBED -->
+      <div id="sharePanelLink" class="share-panel is-active" role="tabpanel">
+        <!-- Copy-link (offline, no upload) -->
+        <button id="shareCopyLink" class="btn btn-ghost btn-block" type="button">
+          <span class="btn-icon" data-icon="open_in_new"></span>
+          <span data-i18n="share.copyLink">Copy link to view</span>
+        </button>
+
+        <div class="share-sep"></div>
+
+        <!-- Host & embed -->
+        <div class="eyebrow" data-i18n="share.hostTitle">Host &amp; embed</div>
+        <p class="share-intro" id="shareHostIntro" data-i18n="share.hostIntro">Publish the current model to a
+          shareable link and embed.</p>
+        <button id="sharePublish" class="btn btn-primary btn-block" type="button" data-i18n="share.publish">Publish
+          &amp; create link</button>
+
+        <!-- Published result (hidden until published) -->
+        <div id="sharePublished" class="share-result" hidden>
+          <label class="share-field">
+            <span class="field-label" data-i18n="share.embedLink">Embed link</span>
+            <span class="share-copy-row">
+              <input id="shareEmbedUrl" class="text-input" type="text" readonly />
+              <button id="shareCopyEmbed" class="btn-icon-only" type="button" data-icon="download"
+                data-i18n-attr="title:share.copyLink,aria-label:share.copyLink"></button>
+            </span>
+          </label>
+          <label class="share-field">
+            <span class="field-label" data-i18n="share.iframeSnippet">Embed code (iframe)</span>
+            <textarea id="shareIframe" class="text-area" readonly rows="3"></textarea>
+          </label>
+          <button id="shareCopyIframe" class="btn btn-ghost btn-block" type="button"
+            data-i18n="share.copyIframe">Copy embed code</button>
+
+          <div class="share-qr-wrap">
+            <span class="eyebrow" data-i18n="share.qrTitle">QR code</span>
+            <canvas id="shareQr" class="share-qr" width="200" height="200"
+              data-i18n-attr="aria-label:share.qrTitle"></canvas>
+          </div>
+
+          <p class="share-expiry" id="shareExpiry"></p>
+          <button id="shareDelete" class="btn btn-ghost btn-block share-delete" type="button"
+            data-i18n="share.deleteUpload">Delete this upload</button>
+        </div>
+      </div>
+
+      <!-- POWERPOINT -->
+      <div id="sharePanelPp" class="share-panel" role="tabpanel" hidden>
+        <div class="eyebrow" data-i18n="share.ppTitle">Add this model to PowerPoint</div>
+        <ol class="share-steps">
+          <li data-i18n="share.ppWebViewer">Online (Microsoft 365): Insert → Add-ins → Web Viewer, then paste the
+            embed link.</li>
+          <li data-i18n="share.ppGlb">Offline decks: use Export GLB, then Insert → 3D Models → This Device.</li>
+        </ol>
+        <button id="sharePpGlb" class="btn btn-primary btn-block" type="button">
+          <span class="btn-icon" data-icon="deployed_code"></span>
+          <span data-i18n="share.exportGlb">Export GLB (for PowerPoint 3D)</span>
+        </button>
+      </div>
+    </div>
   </dialog>
 
   <!-- Toast region (U4/U11) -->

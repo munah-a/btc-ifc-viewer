@@ -44,6 +44,10 @@ import {
   type Language,
 } from './core/i18n';
 import { bootstrapEngine, createFpsMonitor, ShaderWarningFilter } from './core/viewer-core';
+import { exportModelsToGlb, hasActiveClipping, isValidGlb } from './core/glb-export';
+import { buildShareUrl, decodeUrlState, isAllowedModelUrl, type UrlViewpointState } from './core/url-state';
+import { UploadClient } from './core/upload-client';
+import { ShareDialogController } from './ui/share-dialog';
 import type { TestItemRef, ViewerTestApi } from './core/test-api';
 import { getViewCubeAxes, getViewCubeNavigationDistance, resolveViewCubeCameraUp } from './core/view-cube';
 import { buildEdgeOverlays } from './tools/edges';
@@ -179,6 +183,11 @@ class ViewerApp {
   // One registration promise per model id — dedupes the onModelLoaded event
   // and the awaited load path without polling.
   private readonly modelRegistrations = new Map<string, Promise<void>>();
+  // W4.4: share/host — the hosting API client, the dialog controller, and the
+  // hosted `.frag` URL per model id (set after a publish; enables deep links).
+  private readonly uploadClient = new UploadClient();
+  private shareController: ShareDialogController | null = null;
+  private readonly hostedModelUrls = new Map<string, string>();
   private lastHitPoint: THREE.Vector3 | null = null;
   private pendingIssuePoint: THREE.Vector3 | null = null;
   // U4: failed loads are kept so the overlay's Retry can replay them.
@@ -337,6 +346,7 @@ class ViewerApp {
       this.setStatus(t('status.initializing'));
       this.shaderWarningFilter.install();
       await this.initEngine();
+      this.initShareDialog();
       await this.restoreLocalState();
       this.syncVisualSettingsUi();
       this.applySelectionMode(this.selectionMode);
@@ -349,6 +359,9 @@ class ViewerApp {
       this.updateViewpointList();
       this.setStatus(t('status.ready'));
       this.startFpsMonitor();
+      // W4.2: if the app was opened with ?m=<url>, load that hosted model and
+      // apply ?vp=. Errors are surfaced via the normal load-error path.
+      this.fireAndForget(this.loadFromUrlParams(), 'Load model from URL');
     } catch (error) {
       this.showToast(t('status.initFailed', { error: serializeError(error) }), 'error', 8000);
       this.setStatus(t('status.initFailed', { error: serializeError(error) }));
@@ -377,6 +390,8 @@ class ViewerApp {
       this.hideLoadError();
     });
 
+    this.dom.btnShare.addEventListener('click', () => this.shareController?.open());
+    this.dom.btnExportGlb.addEventListener('click', () => this.fireAndForget(this.exportGlb(), 'Export GLB'));
     this.dom.btnExportScreenshot.addEventListener('click', () => this.exportScreenshot());
     this.dom.btnExportState.addEventListener('click', () => this.exportViewerState());
     this.dom.btnImportState.addEventListener('click', () => this.dom.importStateInput.click());
@@ -3106,12 +3121,194 @@ class ViewerApp {
       });
   }
 
+  /**
+   * W4.5: exports the current visibility/isolation state to a binary GLB for
+   * PowerPoint Insert → 3D Models. `onlyVisible` in the exporter honours
+   * hide/isolate; section-clipped geometry is a render-time effect and stays in
+   * the mesh, so we warn when clipping is active.
+   */
+  private async exportGlb(): Promise<void> {
+    if (this.federatedModels.size === 0) {
+      this.showToast(t('share.glbNoModel'), 'error');
+      this.setStatus(t('share.glbNoModel'));
+      return;
+    }
+    this.setStatus(t('share.glbExporting'));
+    try {
+      const buffer = await exportModelsToGlb(await this.collectExportModels());
+      const blob = new Blob([buffer], { type: 'model/gltf-binary' });
+      const name = `bim-model-${new Date().toISOString().replace(/[:.]/g, '-')}.glb`;
+      downloadBlob(name, blob);
+      if (hasActiveClipping(this.clipper.enabled, this.clipper.list.size)) {
+        this.showToast(t('share.glbClippingWarning'), 'info', 6000);
+      }
+      this.setStatus(t('share.glbExported'));
+    } catch (error) {
+      this.showToast(t('share.glbFailed', { error: serializeError(error) }), 'error');
+      this.setStatus(t('share.glbFailed', { error: serializeError(error) }));
+    }
+  }
+
+  /**
+   * Gathers each visible model + the local ids to export (all geometry ids minus
+   * hidden), so GLB export honours hide/isolate. Hidden whole-models are skipped.
+   */
+  private async collectExportModels(): Promise<{ model: FragmentsModelLike; visibleIds: number[] }[]> {
+    const hiddenMap = await this.hider.getVisibilityMap(false);
+    const result: { model: FragmentsModelLike; visibleIds: number[] }[] = [];
+    for (const [modelId, record] of this.federatedModels) {
+      if (!record.visible) continue;
+      const model = this.getFragmentsModel(modelId);
+      if (!model) continue;
+      const allIds = await model.getItemsIdsWithGeometry();
+      const hiddenList = hiddenMap[modelId] ?? [];
+      const hidden = new Set<number>(hiddenList);
+      const visibleIds = hidden.size > 0 ? allIds.filter((id) => !hidden.has(id)) : allIds;
+      if (visibleIds.length > 0) result.push({ model, visibleIds });
+    }
+    return result;
+  }
+
   private exportViewerState(): void {
     const payload = this.getPersistedState();
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const name = `viewer-state-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
     downloadBlob(name, blob);
     this.setStatus(t('status.stateExported'));
+  }
+
+  // ── W4.4/W4.2: share & host ──────────────────────────────────────────────
+
+  /** Instantiates the share-dialog controller with app-backed callbacks. */
+  private initShareDialog(): void {
+    this.shareController = new ShareDialogController(
+      {
+        dialog: this.dom.shareDialog,
+        close: this.dom.shareClose,
+        tabLink: this.dom.shareTabLink,
+        tabPp: this.dom.shareTabPp,
+        panelLink: this.dom.sharePanelLink,
+        panelPp: this.dom.sharePanelPp,
+        copyLink: this.dom.shareCopyLink,
+        publish: this.dom.sharePublish,
+        published: this.dom.sharePublished,
+        embedUrl: this.dom.shareEmbedUrl,
+        copyEmbed: this.dom.shareCopyEmbed,
+        iframe: this.dom.shareIframe,
+        copyIframe: this.dom.shareCopyIframe,
+        qr: this.dom.shareQr,
+        expiry: this.dom.shareExpiry,
+        delete: this.dom.shareDelete,
+        hostIntro: this.dom.shareHostIntro,
+        ppGlb: this.dom.sharePpGlb,
+      },
+      {
+        getFragForShare: () => this.getFragForShare(),
+        publish: async (bytes, fileName) => {
+          const result = await this.uploadClient.publish(bytes, fileName);
+          // Record the hosted URL against the first model so the "Copy link to
+          // view" deep link works after publishing a local file.
+          const firstId = [...this.federatedModels.keys()][0];
+          if (firstId) this.hostedModelUrls.set(firstId, result.fragUrl);
+          return result;
+        },
+        deleteUpload: (id, token) => this.uploadClient.remove(id, token),
+        buildCopyLink: () => this.buildCopyLink(),
+        exportGlb: () => this.exportGlb(),
+        toast: (message, type) => this.showToast(message, type),
+        status: (message) => this.setStatus(message),
+        confirm: (message) => this.confirm(message),
+      },
+    );
+    this.shareController.init();
+  }
+
+  /** The first loaded model's `.frag` bytes + name for the share/host flow. */
+  private async getFragForShare(): Promise<{ bytes: Uint8Array; fileName: string } | null> {
+    const firstId = [...this.federatedModels.keys()][0];
+    if (!firstId) return null;
+    const model = this.getFragmentsModel(firstId);
+    if (!model) return null;
+    const buffer = await model.getBuffer(false);
+    const record = this.federatedModels.get(firstId);
+    const fileName = record?.fileName ?? `${firstId}.frag`;
+    return { bytes: new Uint8Array(buffer), fileName };
+  }
+
+  /**
+   * Builds a "Copy link to view" deep link for the current model + view, or null
+   * when no hosted URL is known (a purely-local file must be published first).
+   */
+  private buildCopyLink(): string | null {
+    const firstId = [...this.federatedModels.keys()][0];
+    const hosted = firstId ? this.hostedModelUrls.get(firstId) : undefined;
+    if (!hosted) return null;
+    return buildShareUrl(`${window.location.origin}/`, {
+      modelUrl: hosted,
+      viewpoint: this.currentUrlViewpoint(),
+    });
+  }
+
+  /** Snapshots the current camera/section/toggles as a URL viewpoint (deep links). */
+  private currentUrlViewpoint(): UrlViewpointState {
+    const position = this.world.camera.three.position.clone();
+    const target = new THREE.Vector3();
+    this.world.camera.controls.getTarget(target);
+    return {
+      camera: {
+        position: { x: position.x, y: position.y, z: position.z },
+        target: { x: target.x, y: target.y, z: target.z },
+        projection: this.world.camera.projection.current,
+        mode: this.navigationMode,
+      },
+      clippingPlanes: [...this.clipper.list.values()].map((plane) => ({
+        normal: { x: plane.normal.x, y: plane.normal.y, z: plane.normal.z },
+        origin: { x: plane.origin.x, y: plane.origin.y, z: plane.origin.z },
+      })),
+      visualStyle: this.visualStyle,
+      xray: this.xrayEnabled,
+      edges: this.edgesEnabled,
+    };
+  }
+
+  /** W4.2: loads a hosted `.frag` (or `.ifc`) named in ?m= at boot, then applies ?vp=. */
+  private async loadFromUrlParams(): Promise<void> {
+    const urlState = decodeUrlState(window.location.search);
+    if (!urlState.modelUrl) return;
+    // S8: same allowlist as the embed — the full app must not auto-fetch an
+    // arbitrary attacker `?m=` URL at boot either.
+    const envHosts = (import.meta.env as Record<string, string | undefined>).VITE_ALLOWED_MODEL_HOSTS;
+    if (!isAllowedModelUrl(urlState.modelUrl, {
+      selfOrigin: window.location.origin,
+      allowedOrigins: typeof envHosts === 'string' ? envHosts.split(',').map((s) => s.trim()).filter(Boolean) : [],
+      allowVercelBlob: true,
+    })) {
+      this.showToast(t('embed.errorBlockedUrl'), 'error');
+      return;
+    }
+    try {
+      const response = await fetch(urlState.modelUrl, { mode: 'cors' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const isIfc = /\.ifc(\?|#|$)/i.test(urlState.modelUrl) || isProbablyIfc(bytes);
+      if (isIfc) {
+        const file = new File([bytes], urlState.modelUrl.split('/').pop() ?? 'model.ifc', { type: 'application/octet-stream' });
+        await this.loadIfcFile(file);
+      } else {
+        const modelId = this.modelRegistry.allocateModelId(
+          urlState.modelUrl.split('/').pop() ?? 'model.frag',
+          [...(this.fragments?.list?.keys() ?? []), ...this.federatedModels.keys()],
+        );
+        this.modelRegistry.beginLoad(modelId, { fileName: modelId, sizeBytes: bytes.byteLength });
+        await this.fragments.core.load(bytes, { modelId });
+        this.hostedModelUrls.set(modelId, urlState.modelUrl);
+      }
+      // Remember the source URL so "Copy link to view" works for the first model.
+      const firstId = [...this.federatedModels.keys()][0];
+      if (firstId && !this.hostedModelUrls.has(firstId)) this.hostedModelUrls.set(firstId, urlState.modelUrl);
+    } catch (error) {
+      this.showToast(t('status.loadFailed', { message: serializeError(error) }), 'error');
+    }
   }
 
   private async importViewerState(file: File): Promise<void> {
@@ -3551,6 +3748,12 @@ class ViewerApp {
           -((clientY - rect.top) / rect.height) * 2 + 1,
         );
         return this.pickAndSelect(ndc);
+      },
+      exportGlbBytes: async (): Promise<{ byteLength: number; valid: boolean }> => {
+        // Geometry comes from model.getItemsGeometry (CPU-side), so no render
+        // frame is required — works even under headless software WebGL.
+        const buffer = await exportModelsToGlb(await this.collectExportModels());
+        return { byteLength: buffer.byteLength, valid: isValidGlb(buffer) };
       },
     };
     return Object.freeze(api);

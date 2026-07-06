@@ -59,12 +59,15 @@ Repo (post-W2 layout)
 │  │                          #   viewpoints-panel/issues-panel/mobile-sheet/icons (delegation A11) [done W3.5]
 │  ├─ index.html / embed.html
 │  └─ styles/                 # design tokens + components from .dc.html   [W3]
-├─ api/                       # Vercel functions                           [W4]
-│  ├─ uploads.ts              # POST: validate→Blob put→KV meta(TTL)→{embedUrl, deleteToken}
+├─ api/                       # Vercel functions (framework=other Web handlers)   [W4 done]
+│  ├─ uploads.ts              # POST: rate→size→quota→Blob put→meta(TTL)→{embedUrl,viewerUrl,deleteToken}
 │  ├─ e/[id].ts               # GET meta → {fragUrl: direct Blob-CDN URL, expiresAt}; DELETE (requires deleteToken)
-│  ├─ oembed.ts               # oEmbed JSON for paste-a-link boards
-│  ├─ cron-cleanup.ts         # daily: delete expired Blob objects + KV records
-│  └─ _lib/entitlements.ts    # tier→{maxSizeMB, ttlDays, maxActiveUploads}; anon defaults
+│  ├─ oembed.ts               # oEmbed JSON (own-origin embed URLs only) for paste-a-link boards
+│  ├─ cron-cleanup.ts         # daily (CRON_SECRET): delete expired Blob objects + meta records
+│  └─ _lib/                   # storage.ts (StorageAdapter: InMemory[test] | Blob+Upstash-Redis[prod]),
+│                             #   entitlements.ts (C4 seam), hosting.ts (pure logic), http.ts, oembed.ts,
+│                             #   optional-deps.d.ts (@vercel/blob + @upstash/redis ambient — NOT installed)
+│                             # NOTE: @vercel/kv is SUNSET → KV-style meta lives in Upstash Redis.
 ├─ e2e/  (split specs + fixtures/*.ifc — moved out of public/, P5)
 ├─ public/  (web-ifc.wasm, worker.mjs — vendored, A2; manifest+sw in W5)
 └─ docs/   (this plan, AUDIT.md, design/, DECISIONS.md as needed)
@@ -102,7 +105,7 @@ late W3.
 | W3 | Rebrand & responsive/a11y | New design shipped; U1–U11 fixed; both themes AA; e2e updated + tablet/axe | ✅ accepted (PO live-verified 2026-07-06): Precision Architect shell, self-hosted fonts/SVG icons, U1–U11, both themes AA, e2e 21/21 (+ **A17 Fit/Section bbox bug found in live-verify & fixed**). Console-clean. |
 | W3.5 | **Decomposition pass** | clean module boundaries (engine/index/tools/ui extracted, unit-tested); reusable `core/viewer-core.ts` for W4; e2e green — `<800` line target **RETIRED** (see Status Log) | ✅ **accepted** (adversarial review CLEAN 2026-07-06): 13 modules extracted incl. `core/viewer-core.ts` (bootstrapEngine — W4 reuses), model-index, `tools/{section,xray,edges}`, `ui/{dom-cache,model-browser,federation-panel,properties-panel,viewpoints-panel,issues-panel,mobile-sheet}`. **viewer.ts 5275→3395**, 87 unit tests, e2e 22/22, A1/A5/A11/A17/A18/F1 all intact. Remaining glue = load-bearing orchestration (load/selection = A6/A10 race fixes); safe extractions (persistence-serializer, keyboard-router) **folded into W5**. |
 | W3.7 | **i18n — EN + DE (C7, launch-blocking)** | all strings externalized to en/de catalogs; runtime language switch persisted; DE complete; brand-voice formats (DD.MM.YYYY, CHF); e2e language-switch test; new W4/W5 strings go through the catalog | ✅ accepted (PO-reviewed 2026-07-06): `core/i18n.ts` typed EN/DE catalogs (~215 keys, DE completeness compile-enforced) + `t()`/`hydrateI18n`/Intl helpers; EN⇄DE toggle persisted + in C8 state; **112 unit tests**, e2e **24/24** (incl. i18n switch + console-clean); EN default unchanged; DE quality spot-checked (Blickpunkt/Schnittebene/Aufgabe, Swiss ss); no leftover English. Live EN⇄DE visual check folded into end-verification. |
-| W4 | Embed & sharing platform | /embed live on Vercel with upload→TTL→cleanup loop; GLB export; oEmbed; frame-ancestors; costs within the W4.3 envelope | ☐ not started (after W3.7) |
+| W4 | Embed & sharing platform | /embed live on Vercel with upload→TTL→cleanup loop; GLB export; oEmbed; frame-ancestors; costs within the W4.3 envelope | ✅ **accepted** (built + **security-reviewed & hardened**, 2026-07-06): W4.1–W4.7 done; adversarial API review found 2 blockers + 2 majors + minors → all fixed (S1–S8, docs/AUDIT.md §S) with 26 regression tests. `ci:local` green (218 unit + SwiftShader e2e 31✓/1 skip/0 fail); C1/C2 verified; en+de. Storage seam InMemory(tests)/Blob+Upstash-Redis(prod, **@vercel/kv sunset**), lazy-imported — **NOT provisioned/deployed** (PO account step; checklist in Status Log). Domain default `btc-ifc-viewer-2.vercel.app`. |
 | W5 | Performance & field readiness | Split chunks (initial JS ≤ ~350KB gzip shell); **full-session persistence: models (IndexedDB fragments) + all modifications, save/restore (C8)**; on-demand render; PWA offline shell | ☐ not started |
 | W6 | Deferred backlog | (not scheduled — see §7) | — |
 
@@ -346,32 +349,61 @@ Title Case buttons, `—` for empty values, tabular numerics.)*
 
 ### Wave 4 — Embed & sharing platform
 
-- [ ] W4.1 Vite MPA: `embed.html` + `src/embed.ts` on viewer-core — chromeless (canvas, orbit,
-  fullscreen, fit, BTC badge, "Open in Viewer" link), `ui=min` param set, on-demand render default
+- [x] W4.1 Vite MPA: `embed.html` + `src/embed.ts` on viewer-core — chromeless (canvas, orbit,
+  fullscreen, fit, BTC badge, "Open in Viewer" link), on-demand render default
   (P6 subset), poster + click-to-activate (WebGL context budget on boards).
-- [ ] W4.2 `core/url-state.ts`: `?m=<model-url>&vp=<hash>` codec (camera/projection/clip/hidden
-  summary); load-by-URL in model-registry with CORS fetch + progress; also powers deep links in the
-  full app ("Copy link to view").
-- [ ] W4.3 Hosting API (C2/C3/C4): `api/uploads.ts` (size cap from entitlements, rate limit,
-  Blob put, KV meta with TTL, returns embedUrl+deleteToken), `api/e/[id].ts` (GET meta with direct
-  Blob-CDN fragUrl; **DELETE with valid deleteToken** removes blob+meta), `api/cron-cleanup.ts`
-  (daily), `api/_lib/entitlements.ts` (anon defaults: **50 MB/upload, 7-day TTL, 3 active uploads
-  per anon key**; anon key = salted hash of IP stored as surrogate `ownerId`, so real accounts later
-  just replace the key — no schema rework), `api/oembed.ts` + OG tags on embed.html. Provision Vercel
-  Blob + KV. `.frag` blobs get long-lived immutable cache-control at **Blob put-time**
-  (`cacheControlMaxAge` — vercel.json headers don't apply to the Blob CDN host). **Cost envelope
-  (PO defaults, user-adjustable): target ≤ $20/mo storage+egress; R2 migration trigger = Blob
-  egress > $10/mo for 2 consecutive months** (R2 egress is $0).
-- [ ] W4.4 Share dialog in app: convert→upload→link/iframe snippet/QR; expiry shown; delete-my-upload
-  with token; PowerPoint how-to (Web Viewer add-in steps + GLB alternative).
-- [ ] W4.5 **GLB export** button via three `GLTFExporter` (current visibility/isolation state;
-  section-capped geometry excluded) — native PowerPoint Insert→3D path.
-- [ ] W4.6 `vercel.json` headers: `frame-ancestors` allowlist on `/embed*` — `*.officeapps.live.com`,
-  `teams.microsoft.com`, `*.cloud.microsoft`, `*.sharepoint.com`, `miro.com`, `*.notion.so`,
-  `*.atlassian.net` (CSP host sources match exactly unless wildcarded; config-driven list, easy to
-  extend). App-served routes only — `.frag` caching lives in W4.3 at Blob put-time.
-- [ ] W4.7 E2E: embed loads fixture by URL; expired id shows friendly state; oEmbed contract test.
-  API unit tests for entitlements/TTL. Update plan + Status Log.
+  > Note: loads a model by URL (`?m=`) — a `.frag` from the Blob CDN or an `.ifc` URL converted
+  > client-side; `?vp=` restores camera/projection/section/x-ray. `initLanguage`+`hydrateIcons`+
+  > `hydrateI18n` at bootstrap; embed strings in en+de. "On-demand" here = cheapest render path (no PEN
+  > postprocessing) + fragments update on camera-move/load/resize; the engine's own rAF still drives
+  > frames (that's what reliably streams+renders under WebGL). MPA shares one engine chunk across both
+  > entries (embed JS ~8KB).
+- [x] W4.2 `core/url-state.ts`: `?m=<model-url>&vp=<hash>` codec (camera/projection/clip/hidden
+  summary), 18 round-trip/defensive unit tests; load-by-URL in the full app at boot (CORS fetch) +
+  "Copy link to view" deep links.
+  > Note: `vp` is compact URL-safe base64 of a terse wire object; hidden-id sample capped at 200/model
+  > with the true count preserved. Load-by-URL lives in viewer.ts `loadFromUrlParams` (the app didn't
+  > have a load-by-URL path before); "Copy link" uses the hosted URL recorded on `?m=` boot or after a
+  > publish.
+- [x] W4.3 Hosting API (C2/C3/C4): `api/uploads.ts`, `api/e/[id].ts` (GET direct Blob-CDN fragUrl;
+  **DELETE with valid deleteToken**), `api/cron-cleanup.ts` (daily, CRON_SECRET-guarded),
+  `api/_lib/entitlements.ts` (anon **50 MB/upload, 7-day TTL, 3 active per salted-IP surrogate
+  ownerId**, env-overridable), `api/oembed.ts` + OG tags on embed.html. `.frag` gets long immutable
+  cache at Blob put-time. **All behind a storage-adapter seam: `InMemoryStorage` (tests) vs
+  `createRealStorage` (prod). 36 API unit tests** (entitlements/size/TTL-expiry/quota/rate-limit/
+  delete-token[valid|missing|wrong|bearer]/cron-secret/oEmbed-contract+own-origin-guard/adapter map).
+  > **Deviation (current Vercel API): `@vercel/kv` is SUNSET.** Metadata + rate-limit now use Upstash
+  > Redis (`@upstash/redis`, `Redis.fromEnv()`) via the Marketplace; Blob via `@vercel/blob`. Both are
+  > OPTIONAL at build/test time (lazy `import()` + `api/_lib/optional-deps.d.ts` ambient decls) — **NOT
+  > installed / NOT provisioned this wave** (PO step). No live storage is ever touched. Cost envelope
+  > unchanged.
+- [x] W4.4 Share dialog in app: "Copy link to view" (offline deep link) + convert→upload→embed link/
+  iframe snippet/**offline QR**/expiry/delete-my-upload-with-token; PowerPoint how-to (Web Viewer
+  add-in steps + GLB). All strings i18n en+de.
+  > Note: QR is a **dependency-free, self-hosted byte-mode encoder** (`core/qrcode.ts`, C1: no CDN/dep)
+  > — VERIFIED SCANNABLE (matrices decoded back with jsQR during dev: v1, multi-block v6, long embed
+  > URL). Upload/delete via `core/upload-client.ts` (injectable fetch, unit-tested). Publish is mocked
+  > in the e2e (no live API).
+- [x] W4.5 **GLB export** button via three `GLTFExporter` (current visibility/isolation state) — native
+  PowerPoint Insert→3D path. Verified: non-empty valid `.glb` (unit header check + e2e byteLength).
+  > **Deviation (fragments geometry is not CPU-readable via the three scene graph):** @thatopen
+  > fragment meshes are custom subclasses whose BufferAttributes have no CPU `.array` and whose
+  > `getX/getY/getZ` throw — GLTFExporter over the live scene yields an EMPTY glb. Fixed by sourcing
+  > geometry from `model.getItemsGeometry(visibleIds)` (CPU-side MeshData: positions/indices/transform),
+  > building plain THREE.Meshes with model+mesh matrices baked in, then exporting. Section-clipped
+  > geometry stays in the mesh (render-time effect) → the app toasts a warning when clipping is active.
+- [x] W4.6 `vercel.json` headers: `frame-ancestors` allowlist on `/embed.html`+`/embed` — 'self'
+  `*.officeapps.live.com teams.microsoft.com *.cloud.microsoft *.sharepoint.com miro.com *.notion.so
+  *.atlassian.net`. Added the daily `crons` entry for `/api/cron-cleanup`. W0 base/asset headers kept.
+- [x] W4.7 E2E: `e2e/embed.spec.ts` (load-by-URL convert+render+console-clean; no-model + expired 404
+  friendly states) + `e2e/share.spec.ts` (publish→link/iframe/QR/expiry/delete mocked; PowerPoint tab;
+  GLB non-empty). **oEmbed contract test is the 9 `api-oembed` unit tests** (the Vercel function does
+  not run under `vite preview`, so a Playwright oEmbed test isn't feasible in this preview-only gate).
+  API unit tests for entitlements/TTL/delete/rate-limit done in W4.3. Plan + Status Log updated.
+  > Gate (full `npm run ci:local`, exit 0): typecheck ✓ (src+node+api) · lint ✓ · **191 unit** ✓
+  > (192 after the post-gate Content-Length hardening test) · audit(prod,high) 0 ✓ · build ✓ (MPA
+  > index+embed) · **SwiftShader e2e 30 passed / 1 skipped / 0 failed (23.1m)** — 24 prior specs +
+  > embed(3) + share(3) all green, §4 console-clean intact.
 
 ### Wave 5 — Performance & field readiness
 
@@ -511,3 +543,7 @@ schedule past the reset.
 | 2026-07-06 | PO (Claude, Opus) | **W3.5 merged to main** (PR #17, fast CI 38s). main=`954de42`. Branched `wave/3.7-i18n`; launching i18n WO (Opus, C7 launch-blocking): `core/i18n.ts` (en/de catalogs + `t()` + `data-i18n` boot hydration + Intl date/number per brand voice), real EN⇄DE switch (replaces the static "EN · CH" hint) persisted to localStorage + into C8 state, complete DE. **EN stays default so the 22 existing e2e (which assert English status strings) keep passing**; add a language-switch e2e. |
 | 2026-07-06 | W3.7 orchestrator (Opus) | **i18n EN+DE implemented (C7 launch-blocking).** 6 commits on `wave/3.7-i18n`. **`core/i18n.ts`** — hand-rolled typed catalog (no i18next/next-intl per C1): `en` is the source of truth defining `MessageKey`, `de` is `Record<MessageKey,string>` (missing DE key = compile error); ~190 keys covering status/toast/confirm/load/panel/empty/label/tree/federation/issue/viewpoint/enum-display + the static `shell.*` set. `t(key, params?)` `{name}`-interpolates + falls back to EN (dev-warns); `setLanguage`/`getLanguage`/`initLanguage` persist to a localStorage key + set `<html lang>` + re-hydrate + notify subscribers; `hydrateI18n(root)` walks `[data-i18n]`/`[data-i18n-attr]` like `hydrateIcons`; `formatDate`/`formatDateTime`/`formatNumber` apply brand voice (Swiss `DD.MM.YYYY`, `CHF 1'234.50` apostrophe grouping) via Intl (`-CH` locales + explicit 2-digit day/month). **Sweep:** every string out of `index.html` (data-i18n / data-i18n-attr) and viewer.ts (~90 setStatus/showToast/confirm/loading/label/counter sites → `t()`); the 5 pure panel builders (model-browser/federation/issues/viewpoints/mobile-sheet) take an already-translated labels bundle (stay DOM-free + catalog-free); viewpoint/comment timestamps → `formatDateTime`. **Switcher:** real EN⇄DE top-bar control (`#btnLangToggle`/`#langCode`) replacing the static "EN · CH" hint; `onLanguageChange` re-renders every JS panel + counters + labels + mobile sheet. **Persistence:** `language` added to the v1 schema (C8 restore); default = **EN** (existing 22 e2e untouched — verified every asserted EN string matches the catalog byte-for-byte, incl. pinning `status.ready` to its hyphen form). Enum `<option>` values stay English (persisted); IFC class ids + element/model names stay verbatim (escaped). **Gates (full `ci:local` green):** typecheck ✓ lint ✓ **112 unit** (was 87; +24 i18n Intl/interpolation/catalog-integrity, +1 persistence-language) ✓ audit(prod,high) 0 ✓ build ✓; **SwiftShader e2e 24 passed / 1 skipped (screenshots scaffold) / 0 failed (8.9m)** — all 22 prior behavior/a11y/icons/console-clean specs still green PLUS new `e2e/i18n.spec.ts` (EN⇄DE switch via the real control + reload-persistence); **§4 console-clean gate passed** (no i18n console noise). Bundle 5,794 kB / 1,021 kB gzip (+i18n catalog; splitting is W5.1). viewer.ts 3395→~3560 (i18n wiring; extraction target already retired W3.5). **Handoff W4:** new embed/share strings register by adding a key to BOTH `en` and `de` in `core/i18n.ts` (DE gap = compile error), then `t('key')` in code or `data-i18n`/`data-i18n-attr` in embed.html — hydrated automatically; use `formatDate`/`formatNumber` for any dates/money. |
 | 2026-07-06 | PO (Claude, Opus) | **W3.7 i18n accepted** (PO review: ci:fast 112 unit green; DE catalog spot-checked — accurate domain German, sentence case, Swiss ss; leftover-English scan clean; e2e 24/24 incl. switch test + console-clean; typed catalog makes a missing DE key a compile error). `language` in persisted v1 schema (C8-ready). Merging → then W4 embed (new embed/share strings register in en+de per the W3.7 handoff). |
+| 2026-07-06 | PO (Claude, Opus) | **W3.7 merged to main** (PR #18, fast CI 36s). main=`2a86ba7`. Branched `wave/4-embed`; launching W4 embed WO (Opus). Scope split to avoid stalling: WO **builds + locally tests all code** (embed.html/embed.ts on viewer-core, url-state deep links, GLB export, share dialog, `api/*` functions with Blob/KV **mocked** in unit tests, vercel.json frame-ancestors, oEmbed) — but does **NOT** provision Vercel Blob/KV or deploy (paid-account decision). Embed domain default `btc-ifc-viewer-2.vercel.app`. **PO/user step at wave-end:** enable Vercel Blob + KV, confirm domain, run the real preview deploy to validate the upload→TTL→cleanup loop end-to-end. New embed strings register in the en+de catalog (W3.7 handoff). |
+| 2026-07-06 | W4 orchestrator (Opus) | **Wave 4 built + locally green; NO Vercel provisioning/deploy (deferred to PO).** 8 commits on `wave/4-embed`. **W4.1** chromeless `/embed` (embed.html + src/embed.ts on `core/viewer-core.ts`): poster+click-to-activate (WebGL-context budget), load-by-URL (`?m=` — Blob-CDN `.frag` or client-converted `.ifc`) + `?vp=` restore, fit/fullscreen, BTC badge + open-in-viewer, cheapest render path (P6 subset), initLanguage/hydrateIcons/hydrateI18n, embed strings en+de; Vite MPA (shared engine chunk, embed JS ~8KB). **W4.2** `core/url-state.ts` codec (`?m=&vp=`; camera/projection/section/xray/edges + capped hidden summary), 18 tests; full-app `?m=` boot-load + "Copy link to view". **W4.3** hosting API — `uploads`/`e/[id]`(GET+DELETE-token)/`cron-cleanup`(CRON_SECRET)/`oembed`, `_lib/{storage,entitlements,hosting,http,oembed}` — behind a **StorageAdapter seam**: `InMemoryStorage` (tests, injectable clock) vs `createRealStorage` (prod). **DEVIATION: `@vercel/kv` is SUNSET → metadata+rate-limit use Upstash Redis (`@upstash/redis`, `Redis.fromEnv()`); Blob via `@vercel/blob`.** Both OPTIONAL at build/test (lazy import + `optional-deps.d.ts` ambient) — **NOT installed, NOT provisioned**; no live storage touched. C4 anon defaults 50MB/7d/3-active per salted-IP surrogate ownerId (env-overridable). Delete tokens 256-bit, returned once, stored SHA-256, constant-time verify. Early Content-Length reject + post-read byte cap. `.frag` long immutable cache at Blob put-time. **W4.4** share dialog: offline "Copy link", publish→embed link/iframe/**offline QR** (dependency-free `core/qrcode.ts` — VERIFIED SCANNABLE via jsQR decode: v1/multi-block-v6/long-URL)/expiry/delete-token; PowerPoint how-to; `core/upload-client.ts`. **W4.5** GLB export. **DEVIATION: fragment geometry isn't CPU-readable via the three scene graph (custom mesh/attr subclasses; GLTFExporter → empty glb)** → sourced from `model.getItemsGeometry(visibleIds)` (CPU MeshData), plain meshes with mesh+model matrices baked, hide/isolate honoured, clipping-warn. **W4.6** `vercel.json` frame-ancestors on `/embed*` (officeapps/teams/cloud.microsoft/sharepoint/miro/notion/atlassian) + daily cron. **W4.7** e2e `embed.spec`(3)+`share.spec`(3, API mocked); oEmbed contract = 9 api-oembed unit tests. **GATE (`npm run ci:local`, exit 0): typecheck (src+node+api) ✓ · lint ✓ · 191 unit ✓ · audit(prod,high) 0 ✓ · build ✓ (MPA) · SwiftShader e2e 30 passed / 1 skipped / 0 failed (23.1m)** — 24 prior + embed/share all green, §4 console-clean intact. **C2 grep-verified** (no server-side IFC parsing — only comments mention it); embed offline-clean (no reachable CDN in bundle). **PO/user step at wave-end:** enable Vercel Blob + a Marketplace Redis (Upstash), add `@vercel/blob`+`@upstash/redis` deps, set env (BLOB_READ_WRITE_TOKEN[auto], UPSTASH_REDIS_REST_URL/TOKEN[auto], CRON_SECRET, BTC_OWNER_SALT; optional BTC_EMBED_ORIGIN + entitlement/rate overrides), confirm domain `btc-ifc-viewer-2.vercel.app`, and run a preview deploy to validate the real upload→TTL→cleanup loop + verify Vercel's function body-size limit accommodates 50MB (or switch to @vercel/blob client-upload). Not pushed/PR'd — PO handles. |
+| 2026-07-06 | W4 orchestrator (Opus) | **W4 security hardening — adversarial hosting-API review S1–S8 all fixed** on `wave/4-embed` (1 commit `e1f4d16`; logged in docs/AUDIT.md §S with verdicts). **Blockers:** S1 quota TOCTOU → atomic `reserveOwnerSlot` (reserve-before-store + rollback; InMemory synchronous, Redis sadd+scard+srem fail-closed) with an N-concurrent `Promise.all` regression test proving ≤maxActive stored; S2 XFF spoof → `clientIp` uses platform-trusted `x-real-ip`/`x-vercel-forwarded-for` or the RIGHT-most XFF hop (never client left), spoof + precedence tests. **Majors:** S3 `deleteFrag(fragUrl)` (blob del is by-URL — was pathname no-op → orphaned blobs) + adapter test; S4 `.frag` cache max-age = TTL 7d (was 1yr immutable) so expired/deleted content leaves the CDN cache. **Minors:** S5 cron fails-closed (500) in production w/o CRON_SECRET; S6 `verifyToken` → node:crypto `timingSafeEqual`; S7 `BTC_OWNER_SALT` fail-closed (throws) in production; S8 `?m=` allowlist (`isAllowedModelUrl`: same-origin + `VITE_ALLOWED_MODEL_HOSTS` + `*.public.blob.vercel-storage.com`) enforced in the embed AND the full-app boot-load, localized reject (`embed.errorBlockedUrl` en+de), unit + e2e (foreign host blocked, never fetched) + live-verified in preview. **Unit suite 192 → 218** (+26 security regression tests: api-http.spec new; concurrency/spoof/cron-fail-closed/cache/allowlist). C1/C2/i18n/design intact. **GATE — full `npm run ci:local` exit 0:** typecheck (src+node+api) OK, lint OK, **218 unit** OK, audit(prod,high) 0 OK, build OK, **SwiftShader e2e 31 passed / 1 skipped / 0 failed (21.8m)** (30 prior + the new S8 embed test, console-clean intact). Residual note: the Redis `reserveOwnerSlot` is sadd+scard+srem (fail-closed on races — never over-admits; a Lua/EVAL script would make it single-round-trip atomic, a cheap follow-up when the store is provisioned). Not pushed/PR'd — PO handles. |
+| 2026-07-07 | PO (Claude, Opus) | **W4 accepted after adversarial security review + hardening.** Review found 2 blockers (S1 quota TOCTOU race, S2 XFF owner/rate spoof) + 2 majors (S3 deleteFrag pathname-not-URL, S4 TTL not enforced on direct-CDN read) + minors (S5 cron fail-open, S6 non-constant-time token compare, S7 salt fallback, S8 embed loads arbitrary ?m= URL). WO fixed ALL with 26 regression tests (concurrency race, XFF spoof, delete-by-URL, TTL cache, fail-closed cron/salt, timingSafeEqual, embed URL allowlist — S8 live-verified). PO spot-checked S1 (atomic reserveOwnerSlot) + S2 (trusted x-real-ip/x-vercel-forwarded-for/rightmost XFF) directly. Gates: ci:fast 218 unit green; WO ci:local e2e 31/31. Merging. **PROVISIONING CHECKLIST for going live (user/account step):** (1) enable Vercel Blob + a Marketplace Upstash Redis; (2) `npm i @vercel/blob @upstash/redis` + commit lockfile; (3) env: `BLOB_READ_WRITE_TOKEN` (auto), `UPSTASH_REDIS_REST_URL`/`_TOKEN` (auto), **`CRON_SECRET`** + **`BTC_OWNER_SALT`** (manual — API fails closed without them in prod), optional `BTC_EMBED_ORIGIN`/quota vars/`VITE_ALLOWED_MODEL_HOSTS`; (4) confirm domain; (5) `vercel deploy` preview → exercise load→Share→Publish→open embed→DELETE + cron; (6) confirm function body-size limit vs 50MB cap (or switch to @vercel/blob client-upload). Residual (W6): Redis reserveOwnerSlot → single-round-trip Lua for strict atomicity (currently fail-closed, integrity holds). |
