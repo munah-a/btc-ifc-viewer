@@ -1172,15 +1172,22 @@ class ViewerApp {
     });
   }
 
-  /** A11: delegated issue-row selection (bound once; survives re-renders). */
+  /** A11/U6: delegated issue-row selection + delete (bound once). */
   private bindIssueListEvents(): void {
     const rowId = (event: Event): string | null => {
       const row = (event.target as HTMLElement).closest<HTMLElement>('[data-issue-id]');
-      return row?.dataset.issueId || null;
+      return row?.dataset.issueId ?? null;
     };
     this.dom.issuesList.addEventListener('click', (event) => {
       const id = rowId(event);
-      if (id !== null) this.selectIssue(id, false);
+      if (id === null) return;
+      const action = (event.target as HTMLElement).closest<HTMLElement>('[data-issue-action]')?.dataset.issueAction;
+      if (action === 'delete') {
+        this.activeIssueId = id;
+        this.fireAndForget(this.deleteSelectedIssue(), 'Delete issue');
+        return;
+      }
+      this.selectIssue(id, false);
     });
     this.dom.issuesList.addEventListener('dblclick', (event) => {
       const id = rowId(event);
@@ -3696,28 +3703,41 @@ class ViewerApp {
 
   private updateIssuesList(): void {
     if (this.issues.length === 0) {
-      this.dom.issuesList.innerHTML = '<div class="issue-item">No issues</div>';
+      this.dom.issuesList.innerHTML = '<div class="list-empty">No issues yet.</div>';
       return;
     }
 
+    const prioColor: Record<string, string> = {
+      Critical: 'var(--error)',
+      High: 'var(--warning)',
+      Medium: 'var(--primary)',
+      Low: 'var(--outline)',
+    };
     this.dom.issuesList.innerHTML = this.issues
       .map((issue) => {
-        const active = issue.id === this.activeIssueId ? 'active' : '';
-        const linkedText = issue.localIds.length > 0 ? `${issue.localIds.length} linked` : 'No element link';
+        const active = issue.id === this.activeIssueId ? ' is-active' : '';
+        const modelCount = issue.elementsByModel ? Object.keys(issue.elementsByModel).length : (issue.localIds.length > 0 ? 1 : 0);
+        const linkedText = issue.localIds.length > 0 ? `${issue.localIds.length} linked · ${modelCount} model(s)` : 'No element link';
         const escapedId = escapeHtml(issue.id);
         const escapedTitle = escapeHtml(issue.title);
-        const escapedState = escapeHtml(`${issue.status} | ${issue.priority}`);
-        const escapedLinked = escapeHtml(linkedText);
+        const escapedMeta = escapeHtml(`${issue.priority} · ${linkedText}`);
+        const dot = prioColor[issue.priority] ?? 'var(--outline)';
         return `
-          <div class="issue-item ${active}" data-issue-id="${escapedId}">
-            <div><strong>${escapedTitle}</strong></div>
-            <div>${escapedState}</div>
-            <div>${escapedLinked}</div>
+          <div class="issue-row${active}" data-issue-id="${escapedId}">
+            <div class="issue-head">
+              <span class="issue-prio-dot" style="background:${dot};"></span>
+              <span class="issue-title">${escapedTitle}</span>
+              <button type="button" class="icon-btn-danger" data-issue-action="delete" title="Delete issue" aria-label="Delete issue">${icon('delete', 15)}</button>
+            </div>
+            <div class="issue-meta">${escapedMeta}</div>
+            <div class="issue-status-row">
+              <span class="status-badge" style="background:var(--surface-container-high);color:var(--on-surface-variant);">${escapeHtml(issue.status)}</span>
+            </div>
           </div>
         `;
       })
       .join('');
-    // A11: row click/dblclick handled by delegation bound once in
+    // A11: row + action clicks handled by delegation bound once in
     // bindIssueListEvents() — no per-item listeners to leak on re-render.
   }
 
@@ -3762,6 +3782,8 @@ class ViewerApp {
       );
     }
 
+    this.dom.btnDeleteIssue.hidden = false;
+    this.dom.issueCommentsGroup.hidden = false;
     this.activateTab('issues');
     this.setStatus(`Selected issue: ${issue.title}`);
   }

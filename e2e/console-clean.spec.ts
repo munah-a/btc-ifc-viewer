@@ -87,25 +87,23 @@ test.describe('console cleanliness (§4 program acceptance)', () => {
     // A15: both status slots populated side by side.
     await expect(page.locator('#loadInfo')).toHaveText(/Loaded in/);
 
-    // F1: search renders results.
+    // F1: search renders results (live-on-input, debounced).
     await page.fill('#searchInput', 'wall');
-    await page.click('#btnSearch');
     await waitForStatus(page, 'Search found');
     await page.click('#btnClearSearch');
 
     // F2: viewpoint capture (render-before-capture + thumbnail encode).
-    await page.click('.tab-btn[data-tab="viewpoints"]');
+    await page.click('#tab-viewpoints');
     await page.fill('#viewpointName', 'Console sweep');
     await page.click('#btnSaveViewpoint');
     await waitForStatus(page, 'Saved viewpoint: Console sweep');
-    await page.locator('[data-viewpoint-id]').first().click();
-    await page.click('#btnApplySelectedViewpoint');
+    await page.locator('[data-viewpoint-id]').first().locator('[data-viewpoint-action="apply"]').click();
     await waitForStatus(page, 'Applied viewpoint: Console sweep');
-    await page.click('#btnDeleteSelectedViewpoint');
-    await page.click('.confirm-btn-confirm');
+    await page.locator('[data-viewpoint-id]').first().locator('[data-viewpoint-action="delete"]').click();
+    await page.click('#confirmOk');
     await waitForStatus(page, 'Viewpoint deleted');
 
-    // F3: X-ray/edges toggles.
+    // F3: X-ray/edges toggles (rail buttons).
     await page.click('#btnTransparency');
     await waitForStatus(page, 'X-ray enabled');
     await page.click('#btnWireframe');
@@ -124,33 +122,23 @@ test.describe('console cleanliness (§4 program acceptance)', () => {
     await page.keyboard.press('Escape');
     await waitForStatus(page, 'Active tool canceled');
 
-    // F8: theme round-trip + background preset via the View menu.
-    await page.locator('.menu-dropdown', { has: page.locator('#toggleTheme') }).locator('.menu-item').click();
-    await page.click('#toggleTheme');
+    // F8: theme round-trip (topbar toggle, per-theme background memory).
+    await page.click('#btnThemeToggle');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-    await page.click('#toggleTheme');
+    await page.click('#btnThemeToggle');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-    await page.click('[data-bg-preset="#0b1220"]');
-    await waitForStatus(page, 'Background color set to #0b1220');
-    await page.locator('.app-titlebar').click();
-
-    // Filters (F11-adjacent safe path: no selection → show-all message).
-    await page.click('.tab-btn[data-tab="explorer"]');
-    await page.click('#btnApplyFilters');
-    await waitForStatus(page, 'No filters selected');
 
     // F9/U8: issue lifecycle from a selection.
     await page.evaluate(async () => {
       const context = window.__viewerTestApi?.firstModelContext();
       if (context) await window.__viewerTestApi?.selectItem(context.modelId, context.firstItemId, false);
     });
-    await page.click('.tab-btn[data-tab="issues"]');
+    await page.click('#tab-issues');
     await page.fill('#issueTitle', 'Console sweep issue');
     await page.click('#btnCreateIssue');
     await waitForStatus(page, 'Issue created');
-    await page.locator('[data-issue-id]').first().click();
-    await page.click('#btnDeleteIssue');
-    await page.click('.confirm-btn-confirm');
+    await page.locator('[data-issue-id]').first().locator('[data-issue-action="delete"]').click();
+    await page.click('#confirmOk');
     await waitForStatus(page, 'Issue deleted');
 
     // F2: screenshot export (canvas readback path).
@@ -159,15 +147,27 @@ test.describe('console cleanliness (§4 program acceptance)', () => {
     await download;
     await waitForStatus(page, 'Screenshot exported');
 
-    // Responsive sweep (§4): tablet and phone visit with interactions — the
-    // app must not crash or log; panels hidden ≤1023px is expected pre-W3.
-    for (const size of [{ width: 768, height: 1024 }, { width: 375, height: 812 }]) {
-      await page.setViewportSize(size);
-      await settleFrames(page);
-      await page.keyboard.press('f'); // fit-to-model via keyboard
-      await page.mouse.click(size.width / 2, size.height / 2); // canvas raycast
-      await settleFrames(page);
-    }
+    // Responsive sweep (§4 + U1): tablet drawer + phone bottom-sheet/More sheet
+    // must be reachable and interactive without console noise.
+    // Tablet (768): open the panel drawer via a tab, then dismiss via scrim.
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await settleFrames(page);
+    await page.click('#tab-explorer');
+    await expect(page.locator('#btc-viewer-root')).toHaveClass(/panel-open/);
+    await page.click('#scrim');
+    await settleFrames(page);
+
+    // Phone (375): bottom nav opens the tree sheet; More opens view settings.
+    await page.setViewportSize({ width: 375, height: 812 });
+    await settleFrames(page);
+    await page.click('[data-mobile-nav="tree"]');
+    await expect(page.locator('#btc-viewer-root')).toHaveClass(/panel-open/);
+    await page.click('[data-mobile-nav="more"]');
+    await expect(page.locator('#btc-viewer-root')).toHaveClass(/sheet-open/);
+    await page.click('#btnCloseSheet');
+    await page.click('#mobileFab'); // fit-to-model FAB
+    await settleFrames(page);
+
     await page.setViewportSize({ width: 1600, height: 1000 });
     await settleFrames(page);
 
