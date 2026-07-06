@@ -26,7 +26,10 @@
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:install": "playwright install chromium",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:ci": "cross-env CI=1 playwright test",
+    "ci:fast": "npm run typecheck && npm run lint && npm run test:unit && npm run build",
+    "ci:local": "npm ci && npm run typecheck && npm run lint && npm run test:unit && npm audit --omit=dev --audit-level=high && npm run build && npm run test:e2e:ci"
   },
   "dependencies": {
     "@thatopen/components": "~3.3.0",
@@ -45,6 +48,7 @@
     "@playwright/test": "^1.58.2",
     "@types/node": "^26.1.0",
     "@types/three": "^0.175.0",
+    "cross-env": "^10.1.0",
     "eslint": "^10.6.0",
     "eslint-config-prettier": "^10.1.8",
     "prettier": "^3.9.4",

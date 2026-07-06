@@ -1,6 +1,11 @@
 # GitHub Pages mirror deploy (Vercel is the primary target — see
-# docs/IMPLEMENTATION_PLAN.md W0.6). Gated on the CI workflow (AUDIT T1);
-# actions pinned to full commit SHAs (AUDIT T9), tag noted per pin.
+# docs/IMPLEMENTATION_PLAN.md W0.6). Actions pinned to full commit SHAs (AUDIT T9).
+#
+# COST: this runs build-only on merge to main and does NOT re-run the CI/e2e
+# suite (user directive 2026-07-06 — GitHub Actions minutes). The merged PR was
+# already gated green by ci.yml on pull_request, so re-running it here is pure
+# duplicate cost. Direct pushes to main bypass CI by design; keep merges the
+# only path to main.
 name: Deploy to GitHub Pages
 
 on:
@@ -18,14 +23,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  ci:
-    # Red CI blocks deploy (AUDIT T1).
-    uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
-
   build:
-    needs: ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

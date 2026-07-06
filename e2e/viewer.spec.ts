@@ -1,6 +1,9 @@
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { expect, test as base, type Page } from '@playwright/test';
+
+import { applyCpuThrottle } from './_cpu-throttle';
 
 type CameraPosition = {
   x: number;
@@ -20,6 +23,7 @@ type ModelContext = {
 };
 
 const ifcPath = path.join(process.cwd(), 'e2e', 'fixtures', 'school_str.ifc');
+const secondIfcPath = path.join(process.cwd(), 'e2e', 'fixtures', 'Ifc4_Revit_ARC.ifc');
 // Resolved against playwright.config.ts baseURL (production preview at '/').
 const viewerUrl = '/';
 
@@ -30,6 +34,9 @@ const CI = Boolean(process.env.CI);
 const STATE_TIMEOUT = CI ? 45_000 : 20_000;
 const CAMERA_POLL_TIMEOUT = CI ? 30_000 : 15_000;
 const SLOW_STATUS_TIMEOUT = CI ? 60_000 : 30_000;
+// Corrupt-file error surfacing: fast when web-ifc rejects, but worst case waits
+// for the app's own 120s load timeout — so on CI wait past that ceiling.
+const ERROR_STATE_TIMEOUT = CI ? 150_000 : 60_000;
 // Matches playwright.config.ts `use.viewport`: worker-fixture contexts are
 // created via browser.newContext(), which does not inherit config options.
 // 1280x720 keeps the software-rasterizer pixel cost down on CI (T11).
@@ -37,30 +44,38 @@ const VIEWPORT = { width: 1280, height: 720 };
 
 const waitForAppReady = async (page: Page): Promise<void> => {
   await page.goto(viewerUrl);
-  // Waiting for 'Ready' in #statusText is racy: the F4 grid hack (500 ms
-  // timer in index.html) overwrites it with 'Grid hidden' whenever init
-  // finishes fast (AUDIT F4, fixed in W1.5). The FPS monitor only starts
-  // after init() fully completes, so a rendered FPS value is deterministic.
+  // init() ends with the 'Ready - load IFC model(s)' status; nothing races it
+  // anymore since W1.5 deleted the F4 grid hack. Match the full message — the
+  // static HTML ships plain 'Ready' before the module boots.
   await page.waitForFunction(
-    () => /\d+ FPS/.test(document.querySelector('#perfInfo')?.textContent || ''),
+    () => (document.querySelector('#statusText')?.textContent || '').includes('Ready - load IFC'),
     undefined,
     { timeout: CI ? 120_000 : 60_000 },
   );
 };
 
-const waitForModelReady = async (page: Page): Promise<void> => {
+// A model is fully registered when its index exists AND the load path has
+// posted its final status (W1.4: the registration promise resolves before
+// 'Model loaded successfully'; the old registeringModelIds set is gone).
+const waitForModelCount = async (page: Page, count: number): Promise<void> => {
   await page.waitForFunction(
-    () => {
+    (expected) => {
       const viewer = (window as any).__viewer;
       const elementText = document.querySelector('#elementCount')?.textContent || '';
+      const statusText = document.querySelector('#statusText')?.textContent || '';
       return !!viewer
-        && viewer.federatedModels?.size > 0
-        && viewer.registeringModelIds?.size === 0
-        && elementText !== '0 elements';
+        && viewer.federatedModels?.size === expected
+        && viewer.modelIndices?.size === expected
+        && elementText !== '0 elements'
+        && statusText.includes('Model loaded successfully');
     },
-    undefined,
+    count,
     { timeout: CI ? 300_000 : 180_000 },
   );
+};
+
+const waitForModelReady = async (page: Page): Promise<void> => {
+  await waitForModelCount(page, 1);
 };
 
 const waitForStatus = async (page: Page, text: string, timeout = STATE_TIMEOUT): Promise<void> => {
@@ -259,6 +274,7 @@ const test = base.extend<NonNullable<unknown>, WorkerFixtures>({
         viewport: VIEWPORT,
       });
       const page = await context.newPage();
+      await applyCpuThrottle(page);
       await waitForAppReady(page);
       await page.setInputFiles('#fileInput', ifcPath);
       await waitForModelReady(page);
@@ -295,6 +311,10 @@ test.describe('shell & boot', () => {
 
     await expect(page.locator('#elementCount')).not.toHaveText(/0 elements/);
     await expect(page.locator('#visibleCount')).not.toHaveText(/0 visible/);
+    // AUDIT A15: load metrics live in their own status slot and coexist with
+    // the FPS monitor instead of being overwritten within a second.
+    await expect(page.locator('#loadInfo')).toHaveText(/Loaded in .+s \| .+MB/);
+    await expect(page.locator('#perfInfo')).toHaveText(/\d+ FPS/);
 
     const screenshotDownload = page.waitForEvent('download');
     await page.click('#btnExportScreenshot');
@@ -354,17 +374,53 @@ test.describe('selection & search', () => {
     await expect(page.locator('#btnSelectSingle')).toHaveClass(/active/);
   });
 
-  // AUDIT F1: search crashes on any hit — fragments v3.3 getItemsData returns
-  // {value,type} ItemAttribute objects and searchElements feeds them raw into
-  // escapeHtml, which throws, so .result-item never renders. Fix is W1.1 —
-  // un-fixme this test there.
-  test.fixme('search finds elements and selects from results', async ({ appPage: page }) => {
+  // AUDIT F1 regression: search used to crash on any hit (raw ItemAttribute
+  // objects fed into escapeHtml) — fixed in W1.1 by unwrapping to primitives.
+  test('search finds elements and selects from results', async ({ appPage: page }) => {
     const modelContext = await getModelContext(page);
     await page.fill('#searchInput', modelContext.searchTerm.split(':')[0].trim());
     await page.click('#btnSearch');
     await expect(page.locator('.result-item').first()).toBeVisible();
     await page.locator('.result-item').first().click();
     await expect(page.locator('#selectionCount')).toHaveText(/1 selected/);
+  });
+
+  // AUDIT F11: a disjoint class∩level filter combination used to silently
+  // hide the entire model — it must warn and leave visibility untouched.
+  test('disjoint class and level filters warn instead of hiding everything', async ({ appPage: page }) => {
+    const disjoint = await page.evaluate(() => {
+      const viewer = (window as any).__viewer;
+      const firstEntry = Array.from(viewer.modelIndices.values())[0] as any;
+      if (!firstEntry) return null;
+      for (const [className, classIds] of firstEntry.classes.entries()) {
+        for (const [levelName, levelIds] of firstEntry.levels.entries()) {
+          let overlaps = false;
+          for (const id of classIds) {
+            if (levelIds.has(id)) {
+              overlaps = true;
+              break;
+            }
+          }
+          if (!overlaps) return { className, levelName };
+        }
+      }
+      return null;
+    });
+    // Hard expectation (gate forbids skipped tests): the structural fixture
+    // has storey-specific classes, so a disjoint pair must exist.
+    expect(disjoint).not.toBeNull();
+    if (!disjoint) return;
+
+    const visibleBefore = await page.locator('#visibleCount').textContent();
+    await page.check(`input[data-filter-type="class"][value="${disjoint.className}"]`);
+    await page.check(`input[data-filter-type="level"][value="${disjoint.levelName}"]`);
+    await page.click('#btnApplyFilters');
+    await expect(page.locator('.toast-warning')).toBeVisible();
+    await waitForStatus(page, 'Selected filters have no elements in common');
+    await expect(page.locator('#visibleCount')).toHaveText(visibleBefore || '');
+
+    await page.click('#btnClearFilters');
+    await waitForStatus(page, 'Filters reset');
   });
 });
 
@@ -546,6 +602,21 @@ test.describe('models panel', () => {
     await waitForStatus(page, 'Background color set to #c6d5e8');
     await expect(page.locator('#backgroundColorInput')).toHaveValue('#c6d5e8');
 
+    // AUDIT F8: a custom background survives a theme round-trip — the theme
+    // toggle swaps per-theme memory instead of force-resetting defaults.
+    await page.click('[data-bg-preset="#1b1f24"]');
+    await waitForStatus(page, 'Background color set to #1b1f24');
+    await page.click('#toggleTheme');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await expect(page.locator('#backgroundColorInput')).toHaveValue('#c6d5e8');
+    await page.click('#toggleTheme');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+    await expect(page.locator('#backgroundColorInput')).toHaveValue('#1b1f24');
+
+    // Restore the default dark background for subsequent tests.
+    await page.click('[data-bg-preset="#0b1220"]');
+    await waitForStatus(page, 'Background color set to #0b1220');
+
     await page.locator('.app-titlebar').click();
     await expect(page.locator('#visualStyleSelect')).toBeHidden();
   });
@@ -605,6 +676,140 @@ test.describe('models panel', () => {
   });
 });
 
+test.describe('federation & load lifecycle', () => {
+  // AUDIT A6 (metadata keyed by model id, no FIFO mis-attribution) and
+  // F6 (per-model unload frees engine + viewer state).
+  test('second model federates with correct metadata and unloads cleanly', async ({ appPage: page }) => {
+    const elementsBefore = await page.locator('#elementCount').textContent();
+
+    // AUDIT F3: X-ray/edges must survive a model load (setVisualStyle used to
+    // wipe them on every registration).
+    await page.click('#btnTransparency');
+    await waitForStatus(page, 'X-ray enabled');
+    await page.click('#btnWireframe');
+    await waitForStatus(page, 'Edge overlay enabled');
+
+    await page.setInputFiles('#fileInput', secondIfcPath);
+    await waitForModelCount(page, 2);
+
+    await expect(page.locator('#btnTransparency')).toHaveClass(/active/);
+    await expect(page.locator('#btnWireframe')).toHaveClass(/active/);
+    expect(await page.evaluate(() => {
+      const viewer = (window as any).__viewer;
+      return { xray: viewer.xrayEnabled, edges: viewer.edgesEnabled };
+    })).toEqual({ xray: true, edges: true });
+
+    // Restore toggles before the panel assertions below.
+    await page.click('#btnTransparency');
+    await waitForStatus(page, 'X-ray disabled');
+    await page.click('#btnWireframe');
+    await waitForStatus(page, 'Edge overlay disabled');
+
+    await page.click('.tab-btn[data-tab="models"]');
+    await expect(page.locator('.federated-model')).toHaveCount(2);
+    // Metadata attribution (A6): each card carries its own file name.
+    await expect(page.locator('.federated-model-name-btn').nth(0)).toContainText('school_str.ifc');
+    await expect(page.locator('.federated-model-name-btn').nth(1)).toContainText('Ifc4_Revit_ARC.ifc');
+
+    const elementsWithTwo = await page.locator('#elementCount').textContent();
+    expect(elementsWithTwo).not.toBe(elementsBefore);
+
+    // AUDIT F9: issues capture the full multi-model selection (not just the
+    // first model's elements) while both models are loaded.
+    await page.evaluate(() => {
+      const viewer = (window as any).__viewer;
+      for (const key of Object.keys(viewer.selectedItems)) delete viewer.selectedItems[key];
+      for (const [modelId, index] of viewer.modelIndices.entries()) {
+        const firstId = Array.from(index.allIds)[0];
+        if (typeof firstId === 'number') viewer.selectedItems[modelId] = new Set([firstId]);
+      }
+    });
+    await page.click('.tab-btn[data-tab="issues"]');
+    await page.fill('#issueTitle', 'Multi-model issue');
+    await page.click('#btnCreateIssue');
+    await waitForStatus(page, 'Issue created');
+    const captured = await page.evaluate(() => {
+      const issue = (window as any).__viewer.issues[0];
+      return {
+        models: Object.keys(issue.elementsByModel ?? {}).length,
+        legacyModelId: typeof issue.modelId === 'string',
+      };
+    });
+    expect(captured.models).toBe(2);
+    expect(captured.legacyModelId).toBe(true);
+    await page.locator('[data-issue-id]').first().click();
+    await page.click('#btnDeleteIssue');
+    await page.click('.confirm-btn-confirm');
+    await page.waitForFunction(
+      () => !(document.querySelector('#issuesList')?.textContent || '').includes('Multi-model issue'),
+      undefined,
+      { timeout: 20_000 },
+    );
+    await page.click('.tab-btn[data-tab="models"]');
+
+    // F6: unload the second model via the federation panel action.
+    await page.locator('[data-model-action="unload"]').nth(1).click();
+    await page.click('.confirm-btn-confirm');
+    await waitForStatus(page, 'Model unloaded: Ifc4_Revit_ARC.ifc', 30_000);
+
+    await expect(page.locator('.federated-model')).toHaveCount(1);
+    await expect(page.locator('#elementCount')).toHaveText(elementsBefore || '');
+    const engineState = await page.evaluate(() => {
+      const viewer = (window as any).__viewer;
+      return {
+        fragmentsCount: viewer.fragments.list.size,
+        federatedCount: viewer.federatedModels.size,
+        indexCount: viewer.modelIndices.size,
+        objectCount: viewer.modelObjects.length,
+      };
+    });
+    expect(engineState).toEqual({ fragmentsCount: 1, federatedCount: 1, indexCount: 1, objectCount: 1 });
+
+    await page.click('.tab-btn[data-tab="explorer"]');
+  });
+});
+
+test.describe('error surfacing (U4)', () => {
+  test('failed imports and loads surface as toasts and overlay error state', async ({ appPage: page }, testInfo) => {
+    // Invalid state import → error toast (catch paths must not stay silent).
+    const badStatePath = testInfo.outputPath('bad-state.json');
+    fs.writeFileSync(badStatePath, 'this is not json');
+    await page.setInputFiles('#importStateInput', badStatePath);
+    await expect(page.locator('.toast-error')).toBeVisible();
+    await waitForStatus(page, 'Import failed');
+    // AUDIT U11: toasts anchor bottom-right, clear of the view cube (top-right).
+    const toastBox = await page.locator('.toast-error').boundingBox();
+    const viewportSize = page.viewportSize();
+    expect(toastBox).not.toBeNull();
+    expect(viewportSize).not.toBeNull();
+    if (toastBox && viewportSize) {
+      expect(toastBox.y).toBeGreaterThan(viewportSize.height / 2);
+    }
+    // Toasts auto-dismiss — wait so later assertions see a clean slate.
+    await page.waitForSelector('.toast-error', { state: 'detached', timeout: 10_000 });
+
+    // Corrupt IFC → overlay error state with Retry/Dismiss (U4).
+    const badIfcPath = testInfo.outputPath('corrupt.ifc');
+    fs.writeFileSync(badIfcPath, 'NOT-AN-IFC-FILE');
+    await page.setInputFiles('#fileInput', badIfcPath);
+    // web-ifc rejects the garbage fast on a GPU box but can be slow on the CI
+    // 2-core runner; the app's own load timeout is 120s, so wait past it on CI
+    // so this catches the error regardless of which failure path fires.
+    await expect(page.locator('#loadingOverlay')).toHaveClass(/is-error/, { timeout: ERROR_STATE_TIMEOUT });
+    await expect(page.locator('#loadingErrorActions')).toBeVisible();
+    await expect(page.locator('.toast-error')).toBeVisible();
+
+    // Retry replays the failed file and fails into the same error state.
+    await page.click('#btnRetryLoad');
+    await expect(page.locator('#loadingOverlay')).toHaveClass(/is-error/, { timeout: ERROR_STATE_TIMEOUT });
+
+    // Dismiss returns to the normal (model still loaded) viewer.
+    await page.click('#btnDismissLoadError');
+    await expect(page.locator('#loadingOverlay')).toBeHidden();
+    await expect(page.locator('#emptyState')).toBeHidden();
+  });
+});
+
 test.describe('viewpoints, issues & state persistence', () => {
   test('viewpoint/issue lifecycle and state export/import round-trip', async ({ appPage: page, browser }, testInfo) => {
     await ensureSingleSelection(page);
@@ -613,6 +818,47 @@ test.describe('viewpoints, issues & state persistence', () => {
     await page.fill('#viewpointName', 'QA View');
     await page.click('#btnSaveViewpoint');
     await waitForStatus(page, 'Saved viewpoint: QA View', SLOW_STATUS_TIMEOUT);
+
+    // AUDIT F2 regression: the snapshot must be a real (non-blank) capture —
+    // decode it and assert pixel variance; size/mime prove the ≤320px JPEG
+    // thumbnail contract. A blank transparent capture decodes to zero spread.
+    const snapshotInfo = await page.evaluate(async () => {
+      const viewpoint = (window as any).__viewer.viewpoints[0];
+      if (!viewpoint?.snapshot) return null;
+      const image = new Image();
+      await new Promise((resolve, reject) => {
+        image.onload = resolve;
+        image.onerror = reject;
+        image.src = viewpoint.snapshot;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d');
+      if (!context) return null;
+      context.drawImage(image, 0, 0);
+      const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+      let min = 255;
+      let max = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        const luminance = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        if (luminance < min) min = luminance;
+        if (luminance > max) max = luminance;
+      }
+      return {
+        mime: viewpoint.snapshot.slice(5, viewpoint.snapshot.indexOf(';')),
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+        spread: max - min,
+      };
+    });
+    expect(snapshotInfo).not.toBeNull();
+    expect(snapshotInfo?.mime).toBe('image/jpeg');
+    expect(Math.max(snapshotInfo?.width ?? 0, snapshotInfo?.height ?? 0)).toBeLessThanOrEqual(320);
+    expect(snapshotInfo?.spread ?? 0).toBeGreaterThan(25);
+    // Thumbnail is rendered in the viewpoint list.
+    await expect(page.locator('.viewpoint-thumb').first()).toBeVisible();
+
     await page.locator('[data-viewpoint-id]').first().click();
     await page.click('#btnApplySelectedViewpoint');
     await waitForStatus(page, 'Applied viewpoint: QA View', SLOW_STATUS_TIMEOUT);

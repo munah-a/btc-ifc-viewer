@@ -4,10 +4,22 @@ import * as OBCF from '@thatopen/components-front';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import type { SpatialTreeItem } from '@thatopen/fragments';
 
-type SelectionMode = 'single' | 'multi';
+import { isModelNotFoundError, serializeError } from './core/errors';
+import { isProbablyIfc } from './core/ifc-format';
+import { escapeHtml, filterListMarkup, spatialTreeMarkup } from './core/markup';
+import { ModelRegistry } from './core/model-registry';
+import {
+  normalizePersistedState,
+  type NavigationMode,
+  type PersistedIssue,
+  type PersistedViewerState,
+  type SavedViewpoint,
+  type SelectionMode,
+  type VisualStyle,
+} from './core/persistence';
+import { DEFAULT_MODEL_UNITS, resolveModelUnits, unitSuffixForLabel, type ModelUnits } from './core/units';
+
 type MeasureMode = 'none' | 'length' | 'area';
-type NavigationMode = 'Orbit' | 'Plan' | 'FirstPerson';
-type VisualStyle = 'basic' | 'pen' | 'color-pen' | 'color-shadows' | 'color-pen-shadows';
 type CubeFaceKey = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom';
 type CubeEdgeKey =
   | 'top-front'
@@ -69,62 +81,10 @@ interface GeometryProbe {
   size: { x: number; y: number; z: number };
 }
 
-interface IssueCommentRecord {
-  id: string;
-  text: string;
-  author: string;
-  createdAt: string;
-}
-
-interface IssueRecord {
-  id: string;
-  title: string;
-  description: string;
-  priority: 'Critical' | 'High' | 'Medium' | 'Low';
-  status: 'Open' | 'In Progress' | 'Resolved' | 'Closed';
-  assignee: string;
-  createdAt: string;
-  updatedAt: string;
-  modelId: string | null;
-  localIds: number[];
-  point: { x: number; y: number; z: number } | null;
+// Persisted shapes (SavedViewpoint, PersistedIssue, PersistedViewerState) live
+// in core/persistence.ts (A7); the runtime issue record adds the marker handle.
+interface IssueRecord extends PersistedIssue {
   markerId?: string;
-  comments: IssueCommentRecord[];
-}
-
-interface SavedViewpoint {
-  id: string;
-  name: string;
-  createdAt: string;
-  camera: {
-    position: { x: number; y: number; z: number };
-    target: { x: number; y: number; z: number };
-    projection: OBC.CameraProjection;
-    mode: NavigationMode;
-  };
-  clippingPlanes: Array<{
-    normal: { x: number; y: number; z: number };
-    origin: { x: number; y: number; z: number };
-  }>;
-  hiddenItems: Record<string, number[]>;
-  visualStyle?: VisualStyle;
-  xray: boolean;
-  edges: boolean;
-  snapshot?: string;
-}
-
-interface PersistedViewerState {
-  version: 1;
-  selectionMode: SelectionMode;
-  navigationMode: NavigationMode;
-  visualStyle?: VisualStyle;
-  xray: boolean;
-  edges: boolean;
-  gridVisible?: boolean;
-  backgroundColor?: string;
-  theme?: 'dark' | 'light';
-  viewpoints: SavedViewpoint[];
-  issues: Omit<IssueRecord, 'markerId'>[];
 }
 
 interface SearchResult {
@@ -175,6 +135,12 @@ interface FederatedModelRecord {
 
 const STORAGE_KEY = 'bim_for_field_viewer_state_v1';
 const DEFAULT_BACKGROUND_COLOR = '#0b1220';
+const DEFAULT_LIGHT_BACKGROUND_COLOR = '#c6d5e8';
+// F2: viewpoint thumbnails are downscaled JPEGs; anything bigger than this
+// (i.e. a full-resolution capture) never enters the localStorage payload.
+const VIEWPOINT_THUMBNAIL_MAX_DIM = 320;
+const VIEWPOINT_THUMBNAIL_JPEG_QUALITY = 0.72;
+const MAX_PERSISTED_SNAPSHOT_CHARS = 150_000;
 const MAX_PROPERTY_ROWS = 280;
 const MAX_PROPERTY_DEPTH = 4;
 const MAX_PROPERTY_VALUE_LENGTH = 220;
@@ -301,19 +267,7 @@ const intersectMaps = (a: OBC.ModelIdMap, b: OBC.ModelIdMap): OBC.ModelIdMap => 
   return result;
 };
 
-const serializeError = (error: unknown): string => {
-  if (error instanceof Error) return error.message;
-  return String(error);
-};
-
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const escapeHtml = (value: string): string => value
-  .replace(/&/g, '&amp;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;')
-  .replace(/'/g, '&#39;');
 
 const uniqueId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -365,12 +319,16 @@ class ViewerApp {
     loadingOverlay: required<HTMLDivElement>('loadingOverlay'),
     loadingText: required<HTMLDivElement>('loadingText'),
     loadingProgress: required<HTMLDivElement>('loadingProgress'),
+    loadingErrorActions: required<HTMLDivElement>('loadingErrorActions'),
+    btnRetryLoad: required<HTMLButtonElement>('btnRetryLoad'),
+    btnDismissLoadError: required<HTMLButtonElement>('btnDismissLoadError'),
     emptyState: required<HTMLDivElement>('emptyState'),
     viewerHint: required<HTMLDivElement>('viewerHint'),
     statusText: required<HTMLSpanElement>('statusText'),
     selectionCount: required<HTMLSpanElement>('selectionCount'),
     elementCount: required<HTMLSpanElement>('elementCount'),
     visibleCount: required<HTMLSpanElement>('visibleCount'),
+    loadInfo: required<HTMLSpanElement>('loadInfo'),
     perfInfo: required<HTMLSpanElement>('perfInfo'),
     btnModeOrbit: required<HTMLButtonElement>('btnModeOrbit'),
     btnModePlan: required<HTMLButtonElement>('btnModePlan'),
@@ -470,9 +428,18 @@ class ViewerApp {
   private edgesEnabled = false;
   private visualStyle: VisualStyle = 'color-pen-shadows';
   private issuePinMode = false;
-  private gridVisible = true;
+  // F4: grid defaults off — the single source of truth (the old 500 ms
+  // checkbox-reset hack in index.html raced init and clobbered persisted
+  // preferences and the status bar).
+  private gridVisible = false;
   private themeMode: 'dark' | 'light' = 'dark';
   private backgroundColor = DEFAULT_BACKGROUND_COLOR;
+  // F8: per-theme background memory — the theme toggle swaps stored values
+  // instead of force-overwriting a custom background.
+  private backgroundByTheme: Record<'dark' | 'light', string> = {
+    dark: DEFAULT_BACKGROUND_COLOR,
+    light: DEFAULT_LIGHT_BACKGROUND_COLOR,
+  };
   private gridHelper: THREE.Object3D | null = null;
   private readonly appliedModelOpacity = new Map<string, number>();
   private hiddenLineColorOverride = false;
@@ -483,12 +450,21 @@ class ViewerApp {
   private readonly edgeMaterial = new THREE.LineBasicMaterial({ color: 0xc8145c, transparent: true, opacity: 0.65 });
   private modelObjects: THREE.Object3D[] = [];
   private readonly federatedModels = new Map<string, FederatedModelRecord>();
-  private readonly modelIdAliases = new Map<string, string>();
-  private readonly registeringModelIds = new Set<string>();
   private modelIndices = new Map<string, ModelIndex>();
-  private readonly pendingModelMetaQueue: Array<{ fileName: string; sizeBytes: number }> = [];
+  // F5: per-model display units resolved from the model's unit entities;
+  // the properties panel uses the selected element's model units.
+  private readonly modelUnits = new Map<string, ModelUnits>();
+  private activePropertyUnits: ModelUnits = DEFAULT_MODEL_UNITS;
+  // Load-lifecycle bookkeeping (A6/A10): metadata keyed by the model id passed
+  // to ifcLoader.load; stale ids track timed-out loads for late disposal.
+  private readonly modelRegistry = new ModelRegistry();
+  // One registration promise per model id — dedupes the onModelLoaded event
+  // and the awaited load path without polling.
+  private readonly modelRegistrations = new Map<string, Promise<void>>();
   private lastHitPoint: THREE.Vector3 | null = null;
   private pendingIssuePoint: THREE.Vector3 | null = null;
+  // U4: failed loads are kept so the overlay's Retry can replay them.
+  private lastFailedLoadFiles: File[] = [];
   private viewpoints: SavedViewpoint[] = [];
   private selectedViewpointId: string | null = null;
   private issues: IssueRecord[] = [];
@@ -589,16 +565,16 @@ class ViewerApp {
 
     // 4. Clear data structures
     this.federatedModels.clear();
-    this.modelIdAliases.clear();
     this.modelIndices.clear();
-    this.registeringModelIds.clear();
+    this.modelUnits.clear();
+    this.modelRegistry.clear();
+    this.modelRegistrations.clear();
     this.appliedModelOpacity.clear();
     this.cubeHotspots.clear();
     clearMap(this.selectedItems);
     this.viewpoints = [];
     this.issues = [];
     this.modelObjects = [];
-    this.pendingModelMetaQueue.length = 0;
 
     // 5. Dispose components
     if (this.components) {
@@ -624,6 +600,7 @@ class ViewerApp {
       this.setStatus('Ready - load IFC model(s)');
       this.startFpsMonitor();
     } catch (error) {
+      this.showToast(`Initialization failed: ${serializeError(error)}`, 'error', 8000);
       this.setStatus(`Initialization failed: ${serializeError(error)}`);
       console.error(error);
     }
@@ -669,6 +646,17 @@ class ViewerApp {
       if (files.length === 0) return;
       this.fireAndForget(this.loadIfcFiles(files), 'Load IFC files');
       this.dom.fileInput.value = '';
+    });
+
+    this.dom.btnRetryLoad.addEventListener('click', () => {
+      const files = this.lastFailedLoadFiles;
+      this.lastFailedLoadFiles = [];
+      this.hideLoadError();
+      if (files.length > 0) this.fireAndForget(this.loadIfcFiles(files), 'Load IFC files');
+    });
+    this.dom.btnDismissLoadError.addEventListener('click', () => {
+      this.lastFailedLoadFiles = [];
+      this.hideLoadError();
     });
 
     this.dom.btnExportScreenshot.addEventListener('click', () => this.exportScreenshot());
@@ -837,8 +825,9 @@ class ViewerApp {
     this.dom.toggleTheme.addEventListener('change', () => {
       this.themeMode = this.dom.toggleTheme.checked ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', this.themeMode);
-      const themeBg = this.themeMode === 'light' ? '#c6d5e8' : DEFAULT_BACKGROUND_COLOR;
-      this.setBackgroundColor(themeBg, false);
+      // F8: restore this theme's remembered background (custom colors survive
+      // theme round-trips instead of being force-reset to defaults).
+      this.setBackgroundColor(this.backgroundByTheme[this.themeMode], false);
       this.persistLocalState();
     });
 
@@ -862,7 +851,8 @@ class ViewerApp {
 
     this.dom.visualStyleSelect.addEventListener('change', () => {
       const style = this.parseVisualStyle(this.dom.visualStyleSelect.value);
-      this.fireAndForget(this.setVisualStyle(style, true, true), 'Set visual style');
+      // Explicit user style change is the only path that resets toggles (F3).
+      this.fireAndForget(this.setVisualStyle(style, true, true, true), 'Set visual style');
     });
 
     this.dom.btnSearch.addEventListener('click', () => {
@@ -943,6 +933,7 @@ class ViewerApp {
       if (files.length === 0) return;
       const ifcFiles = files.filter((file) => file.name.toLowerCase().endsWith('.ifc'));
       if (ifcFiles.length === 0) {
+        this.showToast('Only IFC files are supported', 'warning');
         this.setStatus('Only IFC files are supported');
         return;
       }
@@ -1051,6 +1042,20 @@ class ViewerApp {
         }
         if (action === 'toggle-gizmo') {
           this.toggleModelGizmo(modelId);
+          return;
+        }
+        if (action === 'unload') {
+          this.fireAndForget((async () => {
+            const record = this.federatedModels.get(modelId);
+            if (!record) return;
+            const confirmed = await this.confirm(
+              `Unload ${record.fileName}? Saved issues and viewpoints stay, but its elements leave the viewer.`,
+              'Unload',
+              'Cancel',
+            );
+            if (!confirmed) return;
+            await this.unloadModel(modelId);
+          })(), 'Unload model');
           return;
         }
       }
@@ -1173,8 +1178,9 @@ class ViewerApp {
     });
 
     this.fragments.core.onModelLoaded.add((model) => {
-      const modelId = this.getModelInternalId(model, '');
-      this.fireAndForget(this.onModelAdded(modelId || String(model?.modelId ?? ''), model), 'Register model');
+      const modelId = String(model?.modelId ?? '');
+      if (!modelId) return;
+      this.fireAndForget(this.registerModel(modelId, model), 'Register model');
     });
 
     this.fragments.core.models.materials.list.onItemSet.add(({ value: material }) => {
@@ -1242,87 +1248,147 @@ class ViewerApp {
     await this.updateVisibilityCount();
   }
 
-  private async onModelAdded(modelId: string, model: any): Promise<void> {
-    const resolvedModelId = this.getModelInternalId(model, String(modelId || ''));
-    if (!resolvedModelId) return;
-    if (this.federatedModels.has(resolvedModelId) || this.registeringModelIds.has(resolvedModelId)) return;
-
-    this.registeringModelIds.add(resolvedModelId);
-    try {
-      await this.waitForModelReady(model);
-      model.useCamera(this.world.camera.three);
-      if (typeof model?.graphicsQuality === 'number') model.graphicsQuality = 1;
-      this.world.scene.three.add(model.object);
-
-      const modelObject = model.object as THREE.Object3D;
-      if (!this.modelObjects.includes(modelObject)) this.modelObjects.push(modelObject);
-
-      const ids = await model.getItemsIdsWithGeometry();
-      this.dom.emptyState.hidden = true;
-
-      const meta = this.pendingModelMetaQueue.shift();
-      const fileName = meta?.fileName || String(model?.modelId ?? resolvedModelId);
-      this.registerModelAlias(resolvedModelId, resolvedModelId);
-      this.registerModelAlias(String(modelId || ''), resolvedModelId);
-      this.registerModelAlias(fileName, resolvedModelId);
-      this.registerModelAlias(String(model?.modelId ?? ''), resolvedModelId);
-      const modelRecord: FederatedModelRecord = {
-        modelId: resolvedModelId,
-        fileName,
-        sizeBytes: meta?.sizeBytes ?? 0,
-        elementCount: ids.length,
-        visible: true,
-        opacity: 1,
-        object: modelObject,
-        basePosition: {
-          x: modelObject.position.x,
-          y: modelObject.position.y,
-          z: modelObject.position.z,
-        },
-        baseRotation: {
-          x: modelObject.rotation.x,
-          y: modelObject.rotation.y,
-          z: modelObject.rotation.z,
-        },
-        offsetPosition: { x: 0, y: 0, z: 0 },
-        offsetRotation: { x: 0, y: 0, z: 0 },
-      };
-      this.federatedModels.set(resolvedModelId, modelRecord);
-      this.updateElementCounter();
-      this.renderModelBrowser();
-      this.renderFederatedTree();
-
-      await this.indexModel(resolvedModelId, model);
-      this.renderSpatialTree();
-      this.renderModelBrowser();
-      this.renderFederatedTree();
-
-      await this.setVisualStyle(this.visualStyle, false, false);
-
-      if (!this.suppressAutoFit) this.fitToModel();
-      await this.updateVisibilityCount();
-
-      this.renderClassFilters();
-      this.renderLevelFilters();
-
-      this.refreshIssueMarkers();
-      this.setStatus(`Model loaded: ${fileName}`);
-    } finally {
-      this.registeringModelIds.delete(resolvedModelId);
+  /**
+   * Single registration path for loaded models (A6/A10): dedupes the
+   * onModelLoaded event and the awaited load path via one promise per model
+   * id, and diverts late arrivals of timed-out loads to disposal.
+   */
+  private registerModel(modelId: string, model: any): Promise<void> {
+    if (this.modelRegistry.isStale(modelId)) {
+      return this.disposeStaleModel(modelId);
     }
+    let registration = this.modelRegistrations.get(modelId);
+    if (!registration) {
+      registration = this.onModelAdded(modelId, model).catch((error: unknown) => {
+        // Allow a retry after a failed registration.
+        this.modelRegistrations.delete(modelId);
+        throw error;
+      });
+      this.modelRegistrations.set(modelId, registration);
+    }
+    return registration;
   }
 
-  private async waitForModelReady(model: any, timeoutMs = 10000): Promise<void> {
-    const startedAt = performance.now();
-    while (performance.now() - startedAt < timeoutMs) {
-      if (!model?.isBusy) return;
-      await new Promise((resolve) => window.setTimeout(resolve, 40));
+  /** Disposes a model whose load timed out but completed later (A10). */
+  private async disposeStaleModel(modelId: string): Promise<void> {
+    if (!this.modelRegistry.consumeStale(modelId)) return;
+    if (this.federatedModels.has(modelId)) {
+      // The registration raced ahead of the timeout — run the full unload.
+      await this.unloadModel(modelId);
+      return;
     }
+    this.modelRegistrations.delete(modelId);
+    if (this.fragments?.list?.has(modelId)) {
+      await this.fragments.core.disposeModel(modelId);
+    }
+    console.debug(`Disposed late-arriving model after load timeout: ${modelId}`);
+  }
+
+  /**
+   * Per-model unload (F6): frees the engine-side fragments (worker memory,
+   * meshes, materials) and clears every piece of viewer state tied to the id.
+   */
+  private async unloadModel(modelId: string): Promise<void> {
+    const record = this.federatedModels.get(modelId);
+    if (!record) return;
+
+    if (this.activeGizmoModelId === modelId) this.detachModelGizmo();
+    this.federatedModels.delete(modelId);
+    this.modelIndices.delete(modelId);
+    this.modelUnits.delete(modelId);
+    this.modelRegistrations.delete(modelId);
+    this.appliedModelOpacity.delete(modelId);
+    delete this.selectedItems[modelId];
+    this.modelObjects = this.modelObjects.filter((object) => object !== record.object);
+
+    if (this.fragments?.list?.has(modelId)) {
+      await this.fragments.core.disposeModel(modelId);
+    }
+
+    // Pins referencing the unloaded model are hidden, not deleted (F9).
+    this.refreshIssueMarkers();
+    this.applyXRay();
+    this.applyEdges();
+    await this.refreshSelectionVisuals();
+    this.renderModelBrowser();
+    this.renderFederatedTree();
+    this.renderSpatialTree();
+    this.renderClassFilters();
+    this.renderLevelFilters();
+    this.updateElementCounter();
+    await this.updateVisibilityCount();
+    await this.fragments.core.update(true);
+    this.dom.emptyState.hidden = this.federatedModels.size > 0;
+    this.setStatus(`Model unloaded: ${record.fileName}`);
+  }
+
+  private async onModelAdded(modelId: string, model: any): Promise<void> {
+    if (!modelId || this.federatedModels.has(modelId)) return;
+
+    model.useCamera(this.world.camera.three);
+    if (typeof model?.graphicsQuality === 'number') model.graphicsQuality = 1;
+    this.world.scene.three.add(model.object);
+
+    const modelObject = model.object as THREE.Object3D;
+    if (!this.modelObjects.includes(modelObject)) this.modelObjects.push(modelObject);
+
+    const ids = await model.getItemsIdsWithGeometry();
+    this.dom.emptyState.hidden = true;
+
+    const meta = this.modelRegistry.completeLoad(modelId);
+    const fileName = meta?.fileName || modelId;
+    const modelRecord: FederatedModelRecord = {
+      modelId,
+      fileName,
+      sizeBytes: meta?.sizeBytes ?? 0,
+      elementCount: ids.length,
+      visible: true,
+      opacity: 1,
+      object: modelObject,
+      basePosition: {
+        x: modelObject.position.x,
+        y: modelObject.position.y,
+        z: modelObject.position.z,
+      },
+      baseRotation: {
+        x: modelObject.rotation.x,
+        y: modelObject.rotation.y,
+        z: modelObject.rotation.z,
+      },
+      offsetPosition: { x: 0, y: 0, z: 0 },
+      offsetRotation: { x: 0, y: 0, z: 0 },
+    };
+    this.federatedModels.set(modelId, modelRecord);
+    this.updateElementCounter();
+    this.renderModelBrowser();
+    this.renderFederatedTree();
+
+    await this.indexModel(modelId, model);
+    // F5: resolve the model's display units from its own unit entities;
+    // failures fall back to the metric defaults.
+    try {
+      this.modelUnits.set(modelId, resolveModelUnits(await this.fetchUnitRows(model)));
+    } catch (error) {
+      console.debug(`Unit resolution failed for ${modelId}; using defaults`, error);
+      this.modelUnits.set(modelId, DEFAULT_MODEL_UNITS);
+    }
+    this.renderSpatialTree();
+    this.renderModelBrowser();
+    this.renderFederatedTree();
+
+    await this.setVisualStyle(this.visualStyle, false, false);
+
+    if (!this.suppressAutoFit) this.fitToModel();
+    await this.updateVisibilityCount();
+
+    this.renderClassFilters();
+    this.renderLevelFilters();
+
+    this.refreshIssueMarkers();
+    this.setStatus(`Model loaded: ${fileName}`);
   }
 
   private async indexModel(modelId: string, model: any): Promise<void> {
-    const resolvedModelId = this.getModelInternalId(model, String(modelId || ''));
-    if (!resolvedModelId) return;
     const itemIds = await model.getItemsIdsWithGeometry() as number[];
     const idsSet = new Set(itemIds);
 
@@ -1425,8 +1491,8 @@ class ViewerApp {
 
     const spatialRoot = this.buildSpatialBrowserTree(spatial, itemNames, idsSet);
 
-    this.modelIndices.set(resolvedModelId, {
-      modelId: resolvedModelId,
+    this.modelIndices.set(modelId, {
+      modelId: modelId,
       allIds: new Set(itemIds),
       classes,
       levels,
@@ -1437,16 +1503,13 @@ class ViewerApp {
   }
 
   private renderSpatialTree(): void {
-    this.dom.spatialTree.innerHTML = '';
-    const rows: string[] = [];
-    for (const [modelId, index] of this.modelIndices.entries()) {
-      rows.push(`<div class="tree-item"><strong>${modelId}</strong></div>`);
-      for (const [level, ids] of index.levels.entries()) {
-        rows.push(`<div class="tree-item" data-model-id="${modelId}" data-level="${level}">Level: ${level} (${ids.size})</div>`);
-      }
-      if (index.levels.size === 0) rows.push('<div class="tree-item">No storeys detected</div>');
-    }
-    this.dom.spatialTree.innerHTML = rows.join('');
+    // A1: IFC-derived strings (model ids, storey names) are escaped by the
+    // pure markup builder before they reach innerHTML.
+    const entries = [...this.modelIndices.entries()].map(([modelId, index]) => ({
+      modelId,
+      levels: [...index.levels.entries()].map(([name, ids]) => ({ name, count: ids.size })),
+    }));
+    this.dom.spatialTree.innerHTML = spatialTreeMarkup(entries);
 
     this.dom.spatialTree.querySelectorAll<HTMLElement>('[data-model-id][data-level]').forEach((element) => {
       element.addEventListener('click', () => {
@@ -1473,18 +1536,8 @@ class ViewerApp {
       for (const className of index.classes.keys()) classes.add(className);
     }
     const sorted = [...classes].sort((a, b) => a.localeCompare(b));
-    if (sorted.length === 0) {
-      this.dom.classFilterList.innerHTML = '<div class="filter-item">No classes detected</div>';
-      return;
-    }
-    this.dom.classFilterList.innerHTML = sorted
-      .map((className) => `
-        <label class="filter-item">
-          <input type="checkbox" data-filter-type="class" value="${className}" />
-          <span>${className}</span>
-        </label>
-      `)
-      .join('');
+    // A1: escaped by the pure markup builder.
+    this.dom.classFilterList.innerHTML = filterListMarkup(sorted, 'class', 'No classes detected');
   }
 
   private renderLevelFilters(): void {
@@ -1493,18 +1546,8 @@ class ViewerApp {
       for (const levelName of index.levels.keys()) levels.add(levelName);
     }
     const sorted = [...levels].sort((a, b) => a.localeCompare(b));
-    if (sorted.length === 0) {
-      this.dom.levelFilterList.innerHTML = '<div class="filter-item">No levels detected</div>';
-      return;
-    }
-    this.dom.levelFilterList.innerHTML = sorted
-      .map((levelName) => `
-        <label class="filter-item">
-          <input type="checkbox" data-filter-type="level" value="${levelName}" />
-          <span>${levelName}</span>
-        </label>
-      `)
-      .join('');
+    // A1: escaped by the pure markup builder.
+    this.dom.levelFilterList.innerHTML = filterListMarkup(sorted, 'level', 'No levels detected');
   }
 
   private clearFilterChecks(): void {
@@ -2065,6 +2108,7 @@ class ViewerApp {
               <button class="federated-model-btn ${gizmoStateClass}" type="button" data-model-id="${escapedModelId}" data-model-action="toggle-gizmo">Gizmo</button>
               <button class="federated-model-btn" type="button" data-model-id="${escapedModelId}" data-model-action="fit">Fit</button>
               <button class="federated-model-btn" type="button" data-model-id="${escapedModelId}" data-model-action="reset">Reset</button>
+              <button class="federated-model-btn federated-unload-btn" type="button" data-model-id="${escapedModelId}" data-model-action="unload" title="Unload model and free its memory">Unload</button>
             </div>
 
             <div class="federated-levels">
@@ -2108,6 +2152,7 @@ class ViewerApp {
   private setBackgroundColor(color: string, updateStatus: boolean): void {
     const normalized = this.normalizeHexColor(color);
     this.backgroundColor = normalized;
+    this.backgroundByTheme[this.themeMode] = normalized;
     const threeColor = new THREE.Color(normalized);
     if (this.world?.scene?.three) this.world.scene.three.background = threeColor;
     // Sync the renderer clear color so PEN style (which bypasses the scene color pass)
@@ -2251,7 +2296,7 @@ class ViewerApp {
     this.consistentLightOverride = false;
   }
 
-  private async setVisualStyle(style: VisualStyle, updateStatus: boolean, persist: boolean): Promise<void> {
+  private async setVisualStyle(style: VisualStyle, updateStatus: boolean, persist: boolean, resetToggles = false): Promise<void> {
     const resolvedStyle = this.parseVisualStyle(style);
     this.visualStyle = resolvedStyle;
     this.dom.visualStyleSelect.value = resolvedStyle;
@@ -2260,11 +2305,15 @@ class ViewerApp {
     this.restoreOriginalLighting();
     this.configurePostproduction(resolvedStyle);
 
-    // Reset independent toggles when switching styles
-    this.xrayEnabled = false;
-    this.edgesEnabled = false;
-    this.dom.btnTransparency.classList.toggle('active', false);
-    this.dom.btnWireframe.classList.toggle('active', false);
+    // F3: X-ray/edges are reset only on an explicit user style change —
+    // model loads and state restores re-apply the current toggles instead
+    // of wiping them.
+    if (resetToggles) {
+      this.xrayEnabled = false;
+      this.edgesEnabled = false;
+      this.dom.btnTransparency.classList.toggle('active', false);
+      this.dom.btnWireframe.classList.toggle('active', false);
+    }
     this.applyXRay();
     this.applyEdges();
 
@@ -2285,94 +2334,10 @@ class ViewerApp {
     return Math.min(max, Math.max(min, value));
   }
 
-  private registerModelAlias(alias: string, modelId: string): void {
-    const normalizedAlias = alias.trim();
-    const normalizedModelId = modelId.trim();
-    if (!normalizedAlias || !normalizedModelId) return;
-    this.modelIdAliases.set(normalizedAlias, normalizedModelId);
-    this.modelIdAliases.set(normalizedAlias.toLowerCase(), normalizedModelId);
-  }
-
-  private getModelInternalId(model: any, fallback = ''): string {
-    const fromModel = String(model?.modelId ?? '').trim();
-    if (fromModel) return fromModel;
-    return fallback.trim();
-  }
-
-  private findFragmentsEntryByInternalId(modelId: string): [string, any] | null {
-    if (!this.fragments?.list) return null;
-    const normalizedId = modelId.trim();
-    if (!normalizedId) return null;
-    for (const [key, entry] of this.fragments.list.entries()) {
-      const internalId = this.getModelInternalId(entry, key);
-      if (internalId === normalizedId) return [String(key), entry];
-    }
-    return null;
-  }
-
-  private getFragmentsModel(modelIdOrAlias: string): any {
-    if (!this.fragments?.list) return null;
-    const resolvedModelId = this.resolveModelId(modelIdOrAlias);
-    if (!resolvedModelId) return null;
-
-    const direct = this.fragments.list.get(resolvedModelId);
-    if (direct) return direct;
-
-    const byInternal = this.findFragmentsEntryByInternalId(resolvedModelId);
-    if (byInternal) return byInternal[1];
-    return null;
-  }
-
-  private resolveModelId(candidate: string): string | null {
-    if (!this.fragments?.list) return null;
-    const value = candidate.trim();
-    if (!value) return null;
-
-    const directByKey = this.fragments?.list?.get(value);
-    if (directByKey) {
-      const internalId = this.getModelInternalId(directByKey, value);
-      this.registerModelAlias(value, internalId);
-      this.registerModelAlias(internalId, internalId);
-      return internalId;
-    }
-
-    const aliasResolved = this.modelIdAliases.get(value) ?? this.modelIdAliases.get(value.toLowerCase());
-    if (aliasResolved) {
-      const aliasByKey = this.fragments.list.get(aliasResolved);
-      if (aliasByKey) {
-        const internalId = this.getModelInternalId(aliasByKey, aliasResolved);
-        this.registerModelAlias(value, internalId);
-        this.registerModelAlias(aliasResolved, internalId);
-        return internalId;
-      }
-      const aliasByInternal = this.findFragmentsEntryByInternalId(aliasResolved);
-      if (aliasByInternal) {
-        const [entryKey, entry] = aliasByInternal;
-        const internalId = this.getModelInternalId(entry, entryKey);
-        this.registerModelAlias(value, internalId);
-        this.registerModelAlias(entryKey, internalId);
-        return internalId;
-      }
-    }
-
-    const lowerValue = value.toLowerCase();
-    for (const [entryKey, entry] of this.fragments.list.entries()) {
-      const internalId = this.getModelInternalId(entry, String(entryKey));
-      if (internalId.toLowerCase() === lowerValue || String(entryKey).toLowerCase() === lowerValue) {
-        this.registerModelAlias(value, internalId);
-        this.registerModelAlias(String(entryKey), internalId);
-        return internalId;
-      }
-    }
-
-    for (const [modelId, record] of this.federatedModels.entries()) {
-      if (record.fileName.toLowerCase() === lowerValue) {
-        this.registerModelAlias(value, modelId);
-        return modelId;
-      }
-    }
-
-    return null;
+  // The model id passed to ifcLoader.load IS the fragments.list key and the
+  // model.modelId (A6) — lookups are direct, no alias resolution needed.
+  private getFragmentsModel(modelId: string): any {
+    return this.fragments?.list?.get(modelId) ?? null;
   }
 
   private fireAndForget(task: Promise<unknown>, context: string): void {
@@ -2381,31 +2346,34 @@ class ViewerApp {
 
   private handleAsyncError(context: string, error: unknown): void {
     const message = serializeError(error);
-    const normalized = message.toLowerCase();
-    if (normalized.includes('model not found')) {
+    if (isModelNotFoundError(error)) {
+      // A9: benign engine race (operation vs model unload) — self-heals by
+      // pruning the selection; logged for observability, not surfaced.
+      console.debug(`Suppressed model-not-found race during "${context}":`, error);
       this.pruneSelectedItems();
       if (context !== 'Camera update') {
         this.setStatus('Model synchronization updated. Please reselect element if needed.');
       }
       return;
-    } else {
-      this.setStatus(`${context} failed: ${message}`);
     }
+    // U4: every unexpected async failure surfaces as an error toast, not just
+    // 11px status text (which is hidden on phones).
+    this.showToast(`${context} failed: ${message}`, 'error');
+    this.setStatus(`${context} failed: ${message}`);
     console.error(error);
   }
 
   private isLoadedModelId(modelId: string): boolean {
-    return this.resolveModelId(modelId) !== null;
+    return Boolean(modelId && this.fragments?.list?.has(modelId));
   }
 
   private getValidModelIdMap(input: OBC.ModelIdMap): OBC.ModelIdMap {
     const valid: OBC.ModelIdMap = {};
     for (const [modelId, ids] of Object.entries(input)) {
       if (ids.size === 0) continue;
-      const resolvedModelId = this.resolveModelId(modelId);
-      if (!resolvedModelId) continue;
-      if (!valid[resolvedModelId]) valid[resolvedModelId] = new Set<number>();
-      for (const localId of ids) valid[resolvedModelId].add(localId);
+      if (!this.isLoadedModelId(modelId)) continue;
+      if (!valid[modelId]) valid[modelId] = new Set<number>();
+      for (const localId of ids) valid[modelId].add(localId);
     }
     return valid;
   }
@@ -2417,26 +2385,24 @@ class ViewerApp {
   }
 
   private async selectWholeModel(modelId: string): Promise<void> {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const index = this.modelIndices.get(resolvedModelId);
+    const index = this.modelIndices.get(modelId);
     if (!index || index.allIds.size === 0) {
       this.setStatus('Model index not ready yet');
       return;
     }
     clearMap(this.selectedItems);
-    this.selectedItems[resolvedModelId] = new Set(index.allIds);
+    this.selectedItems[modelId] = new Set(index.allIds);
     await this.refreshSelectionVisuals();
     await this.zoomToItems(this.selectedItems);
     this.setStatus(`Selected full model (${index.allIds.size} elements)`);
   }
 
   private toggleModelVisibility(modelId: string): void {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const model = this.federatedModels.get(resolvedModelId);
+    const model = this.federatedModels.get(modelId);
     if (!model) return;
     model.visible = !model.visible;
     model.object.visible = model.visible;
-    if (!model.visible && this.activeGizmoModelId === resolvedModelId) this.detachModelGizmo();
+    if (!model.visible && this.activeGizmoModelId === modelId) this.detachModelGizmo();
     this.applyXRay();
     if (this.edgesEnabled) this.applyEdges();
     this.fireAndForget(this.fragments.core.update(true), 'Toggle visibility');
@@ -2448,8 +2414,7 @@ class ViewerApp {
   }
 
   private applyModelOpacity(modelId: string, opacity: number): void {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const model = this.federatedModels.get(resolvedModelId);
+    const model = this.federatedModels.get(modelId);
     if (!model) return;
     model.opacity = this.clamp(opacity, 0, 1);
     this.applyXRay();
@@ -2458,21 +2423,20 @@ class ViewerApp {
   }
 
   private toggleModelGizmo(modelId: string): void {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const model = this.federatedModels.get(resolvedModelId);
+    const model = this.federatedModels.get(modelId);
     if (!model || !this.transformControls) return;
     if (!model.visible) {
       this.setStatus('Show the model before enabling gizmo');
       return;
     }
 
-    if (this.activeGizmoModelId === resolvedModelId && this.transformControlsHelper?.visible) {
+    if (this.activeGizmoModelId === modelId && this.transformControlsHelper?.visible) {
       this.detachModelGizmo();
       this.setStatus('Model gizmo detached');
       return;
     }
 
-    this.activeGizmoModelId = resolvedModelId;
+    this.activeGizmoModelId = modelId;
     this.transformControls.attach(model.object);
     this.transformControls.setMode('translate');
     this.transformControls.enabled = true;
@@ -2506,8 +2470,7 @@ class ViewerApp {
     const transform = input.dataset.transform;
     if (!modelId || !transform) return;
 
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const model = this.federatedModels.get(resolvedModelId);
+    const model = this.federatedModels.get(modelId);
     if (!model) return;
 
     const value = Number(input.value);
@@ -2567,8 +2530,7 @@ class ViewerApp {
   }
 
   private resetModelOffsets(modelId: string): void {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const model = this.federatedModels.get(resolvedModelId);
+    const model = this.federatedModels.get(modelId);
     if (!model) return;
     model.offsetPosition = { x: 0, y: 0, z: 0 };
     model.offsetRotation = { x: 0, y: 0, z: 0 };
@@ -2579,8 +2541,7 @@ class ViewerApp {
   }
 
   private fitToModelById(modelId: string): void {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const model = this.federatedModels.get(resolvedModelId);
+    const model = this.federatedModels.get(modelId);
     if (!model) return;
     const bbox = new THREE.Box3().setFromObject(model.object);
     if (bbox.isEmpty()) return;
@@ -2593,14 +2554,13 @@ class ViewerApp {
   }
 
   private async isolateLevelForModel(modelId: string, level: string): Promise<void> {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const index = this.modelIndices.get(resolvedModelId);
+    const index = this.modelIndices.get(modelId);
     const ids = index?.levels.get(level);
     if (!ids || ids.size === 0) {
       this.setStatus(`No elements found for level ${level}`);
       return;
     }
-    const map = this.getValidModelIdMap({ [resolvedModelId]: new Set(ids) });
+    const map = this.getValidModelIdMap({ [modelId]: new Set(ids) });
     if (isMapEmpty(map)) {
       this.setStatus(`Level ${level} is not available for current loaded model IDs`);
       return;
@@ -2611,14 +2571,13 @@ class ViewerApp {
   }
 
   private async isolateClassForModelLevel(modelId: string, level: string, className: string): Promise<void> {
-    const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-    const ids = this.getClassIdsForModelLevel(resolvedModelId, level, className);
+    const ids = this.getClassIdsForModelLevel(modelId, level, className);
     if (ids.size === 0) {
       this.setStatus(`No ${className} elements found in ${level}`);
       return;
     }
 
-    const map = this.getValidModelIdMap({ [resolvedModelId]: ids });
+    const map = this.getValidModelIdMap({ [modelId]: ids });
     if (isMapEmpty(map)) {
       this.setStatus(`${className} in ${level} is not available for current loaded model IDs`);
       return;
@@ -2682,8 +2641,16 @@ class ViewerApp {
     else effectiveMap = levelMap;
     effectiveMap = this.getValidModelIdMap(effectiveMap);
 
+    // F11: a disjoint class∩level combination used to silently hide the
+    // entire model — warn and keep the current visibility instead.
+    if (isMapEmpty(effectiveMap)) {
+      this.showToast('No elements match the selected class and level filters — nothing was hidden', 'warning');
+      this.setStatus('Selected filters have no elements in common');
+      return;
+    }
+
     await this.hider.set(false);
-    if (!isMapEmpty(effectiveMap)) await this.hider.set(true, effectiveMap);
+    await this.hider.set(true, effectiveMap);
     await this.updateVisibilityCount();
     this.setStatus('Filters applied');
   }
@@ -2700,9 +2667,7 @@ class ViewerApp {
     const results: SearchResult[] = [];
 
     for (const [modelKey, model] of this.fragments.list.entries()) {
-      const modelId = this.getModelInternalId(model, String(modelKey));
-      this.registerModelAlias(String(modelKey), modelId);
-      this.registerModelAlias(modelId, modelId);
+      const modelId = String(modelKey);
       const ids = await model.getItemsByQuery({
         attributes: {
           aggregation: 'inclusive',
@@ -2719,10 +2684,12 @@ class ViewerApp {
 
       for (let i = 0; i < trimmed.length; i += 1) {
         const localId = trimmed[i];
-        const data = itemsData[i] as Record<string, unknown>;
-        const name = (data?.Name as string | undefined) || `Element ${localId}`;
-        const type = (data?.ObjectType as string | undefined) || (data?.PredefinedType as string | undefined) || 'Item';
-        const globalId = (data?.GlobalId as string | undefined) || '-';
+        const data = (itemsData[i] || {}) as Record<string, unknown>;
+        // F1: fragments v3.3 returns {value,type} ItemAttribute objects —
+        // unwrap to primitives before they reach escapeHtml/rendering.
+        const name = this.readPrimitiveValue(data.Name) || `Element ${localId}`;
+        const type = this.readPrimitiveValue(data.ObjectType) || this.readPrimitiveValue(data.PredefinedType) || 'Item';
+        const globalId = this.readPrimitiveValue(data.GlobalId) || '-';
         results.push({ modelId, localId, name, type, globalId });
       }
     }
@@ -2753,22 +2720,28 @@ class ViewerApp {
   private async loadIfcFiles(files: File[]): Promise<void> {
     const ifcFiles = files.filter((file) => file.name.toLowerCase().endsWith('.ifc'));
     if (ifcFiles.length === 0) {
+      this.showToast('Only IFC files are supported', 'warning');
       this.setStatus('Only IFC files are supported');
       return;
     }
     if (this.isModelLoading) {
+      this.showToast('A model is already loading. Please wait...', 'warning');
       this.setStatus('A model is already loading. Please wait...');
       return;
     }
 
-    const failedFiles: string[] = [];
+    const failedFiles: File[] = [];
+    let lastError = '';
     const batchTotal = ifcFiles.length;
     if (batchTotal > 1) this.suppressAutoFit = true;
 
     for (let i = 0; i < ifcFiles.length; i += 1) {
       const file = ifcFiles[i];
-      const success = await this.loadIfcFile(file, i + 1, batchTotal);
-      if (!success) failedFiles.push(file.name);
+      const result = await this.loadIfcFile(file, i + 1, batchTotal);
+      if (!result.success) {
+        failedFiles.push(file);
+        lastError = result.error ?? lastError;
+      }
     }
 
     this.suppressAutoFit = false;
@@ -2780,17 +2753,41 @@ class ViewerApp {
       return;
     }
 
-    if (failedFiles.length === batchTotal) {
-      this.setStatus('Failed to load selected IFC files');
-      return;
-    }
-    this.setStatus(`Loaded ${batchTotal - failedFiles.length}/${batchTotal} IFC files`);
+    // U4: failures surface as a toast + overlay error state with Retry.
+    this.lastFailedLoadFiles = failedFiles;
+    const failedNames = failedFiles.map((file) => file.name).join(', ');
+    const summary = failedFiles.length === batchTotal
+      ? `Failed to load ${failedNames}`
+      : `Loaded ${batchTotal - failedFiles.length}/${batchTotal} IFC files — failed: ${failedNames}`;
+    this.showToast(summary, 'error', 6000);
+    this.showLoadError(lastError ? `${summary} (${lastError})` : summary);
+    this.setStatus(summary);
   }
 
-  private async loadIfcFile(file: File, batchIndex = 1, batchTotal = 1): Promise<boolean> {
+  /** U4: switches the loading overlay into its error state (Retry/Dismiss). */
+  private showLoadError(message: string): void {
+    this.dom.loadingOverlay.hidden = false;
+    this.dom.loadingOverlay.classList.add('is-error');
+    this.dom.loadingText.textContent = message;
+    this.dom.loadingProgress.style.width = '0%';
+    this.dom.loadingErrorActions.hidden = false;
+  }
+
+  private hideLoadError(): void {
+    this.dom.loadingOverlay.classList.remove('is-error');
+    this.dom.loadingErrorActions.hidden = true;
+    this.dom.loadingOverlay.hidden = true;
+    this.dom.emptyState.hidden = this.modelObjects.length > 0;
+  }
+
+  private async loadIfcFile(
+    file: File,
+    batchIndex = 1,
+    batchTotal = 1,
+  ): Promise<{ success: boolean; error?: string }> {
     if (this.isModelLoading) {
       this.setStatus('A model is already loading. Please wait...');
-      return false;
+      return { success: false, error: 'A model is already loading' };
     }
 
     this.isModelLoading = true;
@@ -2801,6 +2798,8 @@ class ViewerApp {
 
     this.dom.emptyState.hidden = true;
     this.dom.loadingOverlay.hidden = false;
+    this.dom.loadingOverlay.classList.remove('is-error');
+    this.dom.loadingErrorActions.hidden = true;
     this.dom.loadingText.textContent = batchTotal > 1
       ? `Reading IFC file ${batchIndex}/${batchTotal}...`
       : 'Reading IFC file...';
@@ -2808,19 +2807,32 @@ class ViewerApp {
     this.setStatus('Loading model...');
 
     let timeoutHandle: number | undefined;
+    // Metadata is keyed by the id passed to ifcLoader.load — it becomes
+    // model.modelId and the fragments.list key (A6). Duplicate file names get
+    // a unique suffix so federated loads never collide.
+    const modelId = this.modelRegistry.allocateModelId(file.name, [
+      ...(this.fragments?.list?.keys() ?? []),
+      ...this.federatedModels.keys(),
+    ]);
 
     try {
       const start = performance.now();
       const buffer = await file.arrayBuffer();
       const data = new Uint8Array(buffer);
-      this.pendingModelMetaQueue.push({ fileName: file.name, sizeBytes: file.size });
+      // Deterministic guard before web-ifc (T13): reject non-IFC input fast and
+      // identically on every platform, instead of relying on web-ifc's
+      // undefined behavior for garbage (throw / hang / silent empty model).
+      if (!isProbablyIfc(data)) {
+        throw new Error('Not a valid IFC file (missing ISO-10303-21 header).');
+      }
+      this.modelRegistry.beginLoad(modelId, { fileName: file.name, sizeBytes: file.size });
 
       if (requestId === this.loadRequestId) {
         this.dom.loadingText.textContent = 'Converting IFC to fragments...';
         this.dom.loadingProgress.style.width = '25%';
       }
 
-      const loadPromise = this.ifcLoader.load(data, true, file.name, {
+      const loadPromise = this.ifcLoader.load(data, true, modelId, {
         instanceCallback: (importer: any) => {
           if (typeof importer?.addAllAttributes === 'function') importer.addAllAttributes();
           if (typeof importer?.addAllRelations === 'function') importer.addAllRelations();
@@ -2835,14 +2847,32 @@ class ViewerApp {
         },
       });
 
+      let timedOut = false;
       const timeoutPromise = new Promise<never>((_resolve, reject) => {
         timeoutHandle = window.setTimeout(() => {
+          timedOut = true;
           reject(new Error('Model loading timed out. Please try again with a smaller IFC or reload the page.'));
         }, 120000);
       });
 
-      const loadedModel = await Promise.race([loadPromise, timeoutPromise]) as any;
-      await this.ensureModelRegistered(loadedModel);
+      let loadedModel: any;
+      try {
+        loadedModel = await Promise.race([loadPromise, timeoutPromise]);
+      } catch (error) {
+        if (timedOut) {
+          // A10: the engine keeps converting after the race is lost — record
+          // the stale id and dispose the model if the abandoned load lands.
+          this.modelRegistry.markStale(modelId);
+          loadPromise
+            .then(() => this.disposeStaleModel(modelId))
+            .catch(() => {
+              // The abandoned load itself failed — nothing arrived to dispose.
+              this.modelRegistry.consumeStale(modelId);
+            });
+        }
+        throw error;
+      }
+      await this.registerModel(modelId, loadedModel);
 
       if (timeoutHandle !== undefined) {
         window.clearTimeout(timeoutHandle);
@@ -2850,9 +2880,10 @@ class ViewerApp {
       }
 
       const elapsed = ((performance.now() - start) / 1000).toFixed(1);
-      if (requestId !== this.loadRequestId) return false;
+      if (requestId !== this.loadRequestId) return { success: true };
 
-      this.dom.perfInfo.textContent = `Loaded in ${elapsed}s | ${(file.size / 1024 / 1024).toFixed(1)}MB`;
+      // A15: dedicated slot — the FPS monitor owns perfInfo.
+      this.dom.loadInfo.textContent = `Loaded in ${elapsed}s | ${(file.size / 1024 / 1024).toFixed(1)}MB`;
       this.dom.loadingProgress.style.width = '100%';
       this.setStatus('Model loaded successfully');
 
@@ -2861,23 +2892,22 @@ class ViewerApp {
           this.dom.loadingOverlay.hidden = true;
         }
       }, 220);
-      return true;
+      return { success: true };
     } catch (error) {
-      const staleIndex = this.pendingModelMetaQueue.findIndex(
-        (entry) => entry.fileName === file.name && entry.sizeBytes === file.size,
-      );
-      if (staleIndex !== -1) this.pendingModelMetaQueue.splice(staleIndex, 1);
+      // No-op when the id was already marked stale (timeout path).
+      this.modelRegistry.failLoad(modelId);
 
       if (timeoutHandle !== undefined) {
         window.clearTimeout(timeoutHandle);
       }
-      if (requestId !== this.loadRequestId) return false;
+      const message = serializeError(error);
+      console.error(error);
+      if (requestId !== this.loadRequestId) return { success: false, error: message };
 
       this.dom.loadingOverlay.hidden = true;
       this.dom.emptyState.hidden = this.modelObjects.length > 0;
-      this.setStatus(`Failed to load IFC: ${serializeError(error)}`);
-      console.error(error);
-      return false;
+      this.setStatus(`Failed to load IFC: ${message}`);
+      return { success: false, error: message };
     } finally {
       if (requestId === this.loadRequestId) {
         this.isModelLoading = false;
@@ -2886,89 +2916,7 @@ class ViewerApp {
         this.dom.fileInput.disabled = false;
       }
     }
-    return false;
-  }
-
-  private async ensureModelRegistered(model: any): Promise<void> {
-    if (!model) return;
-    const modelId = this.getModelInternalId(model, '');
-    const modelObject = model.object as THREE.Object3D | undefined;
-    const isObjectRegistered = (): boolean => (
-      !!modelObject && [...this.federatedModels.values()].some((record) => record.object === modelObject)
-    );
-    const isFullyRegistered = (): boolean => {
-      if (modelId && this.federatedModels.has(modelId) && !this.registeringModelIds.has(modelId)) return true;
-      if (isObjectRegistered() && (!modelId || !this.registeringModelIds.has(modelId))) return true;
-      return false;
-    };
-    const waitForRegistration = async (timeoutMs = 30000): Promise<void> => {
-      const pollMs = 40;
-      const startedAt = performance.now();
-      while (performance.now() - startedAt < timeoutMs) {
-        if (isFullyRegistered()) return;
-        await new Promise((resolve) => window.setTimeout(resolve, pollMs));
-      }
-      throw new Error(`Model registration timed out: ${modelId || 'unknown model id'}`);
-    };
-
-    if (isFullyRegistered()) return;
-    if (modelId && this.registeringModelIds.has(modelId)) {
-      await waitForRegistration();
-      return;
-    }
-    if (isObjectRegistered()) return;
-
-    const existingEntry = [...this.fragments.list.entries()].find(([, entry]) => entry === model);
-    if (existingEntry) {
-      const [entryId, entryModel] = existingEntry;
-      await this.onModelAdded(String(entryId), entryModel);
-      await waitForRegistration();
-      return;
-    }
-
-    if (modelId) {
-      const directEntry = this.findFragmentsEntryByInternalId(modelId);
-      if (directEntry) {
-        const [entryId, entryModel] = directEntry;
-        await this.onModelAdded(entryId, entryModel);
-        await waitForRegistration();
-        return;
-      }
-    }
-
-    const timeoutMs = 8000;
-    const pollMs = 40;
-    const startedAt = performance.now();
-    while (performance.now() - startedAt < timeoutMs) {
-      await new Promise((resolve) => window.setTimeout(resolve, pollMs));
-
-      const match = [...this.fragments.list.entries()].find(([, entry]) => entry === model);
-      if (match) {
-        const [entryId, entryModel] = match;
-        await this.onModelAdded(String(entryId), entryModel);
-        await waitForRegistration();
-        return;
-      }
-
-      if (modelId) {
-        const byId = this.findFragmentsEntryByInternalId(modelId);
-        if (byId) {
-          const [entryId, entryModel] = byId;
-          await this.onModelAdded(entryId, entryModel);
-          await waitForRegistration();
-          return;
-        }
-        if (this.federatedModels.has(modelId)) {
-          await waitForRegistration();
-          return;
-        }
-      }
-      if (isObjectRegistered()) {
-        await waitForRegistration();
-        return;
-      }
-    }
-    await waitForRegistration();
+    return { success: false };
   }
 
   private getModelBoundingBox(): THREE.Box3 | null {
@@ -3209,15 +3157,13 @@ class ViewerApp {
     this.setMeasureMode('none');
   }
 
-  private addSectionPlane(normal: THREE.Vector3): void {
-    const bbox = this.getModelBoundingBox();
-    if (!bbox || bbox.isEmpty()) {
-      this.setStatus('No model to section');
-      return;
-    }
-    const center = bbox.getCenter(new THREE.Vector3());
+  /**
+   * F10: the single clip-plane creation path — every caller (section buttons
+   * AND viewpoint restore) gets the gizmo visibility fix.
+   */
+  private createClipPlane(normal: THREE.Vector3, point: THREE.Vector3): void {
     this.clipper.enabled = true;
-    const planeId = this.clipper.createFromNormalAndCoplanarPoint(this.world, normal, center);
+    const planeId = this.clipper.createFromNormalAndCoplanarPoint(this.world, normal, point);
     // Exempt the gizmo from clipping and depth-test so the arrow is always visible
     // (renders on top of model geometry and not clipped by section planes)
     const plane = this.clipper.list.get(planeId);
@@ -3237,6 +3183,16 @@ class ViewerApp {
         child.renderOrder = 999;
       });
     }
+  }
+
+  private addSectionPlane(normal: THREE.Vector3): void {
+    const bbox = this.getModelBoundingBox();
+    if (!bbox || bbox.isEmpty()) {
+      this.setStatus('No model to section');
+      return;
+    }
+    const center = bbox.getCenter(new THREE.Vector3());
+    this.createClipPlane(normal, center);
     this.setStatus('Section plane added');
   }
 
@@ -3342,45 +3298,42 @@ class ViewerApp {
     }
 
     const modelId = String(result.fragments.modelId);
-    const resolvedModelId = this.resolveModelId(modelId);
-    if (!resolvedModelId) return;
+    if (!this.isLoadedModelId(modelId)) return;
     const localId = result.localId as number;
     if (result.point) this.lastHitPoint = result.point.clone();
 
     if (this.issuePinMode) {
       if (result.point) this.pendingIssuePoint = result.point.clone();
-      if (this.selectionMode === 'single') await this.selectSingleItem(resolvedModelId, localId, false);
+      if (this.selectionMode === 'single') await this.selectSingleItem(modelId, localId, false);
       this.activateTab('issues');
       this.setStatus('Issue point captured. Fill issue form and create issue');
       return;
     }
 
     if (this.selectionMode === 'single') {
-      await this.selectSingleItem(resolvedModelId, localId, false);
+      await this.selectSingleItem(modelId, localId, false);
       return;
     }
 
-    this.toggleSelectionItem(resolvedModelId, localId);
+    this.toggleSelectionItem(modelId, localId);
     await this.refreshSelectionVisuals();
   }
 
   private async selectSingleItem(modelId: string, localId: number, zoomToItem: boolean): Promise<void> {
-    const resolvedModelId = this.resolveModelId(modelId);
-    if (!resolvedModelId) return;
+    if (!this.isLoadedModelId(modelId)) return;
     clearMap(this.selectedItems);
-    this.selectedItems[resolvedModelId] = new Set([localId]);
+    this.selectedItems[modelId] = new Set([localId]);
     await this.refreshSelectionVisuals();
     if (zoomToItem) await this.zoomToItems(this.selectedItems);
   }
 
   private toggleSelectionItem(modelId: string, localId: number): void {
-    const resolvedModelId = this.resolveModelId(modelId);
-    if (!resolvedModelId) return;
-    if (!this.selectedItems[resolvedModelId]) this.selectedItems[resolvedModelId] = new Set<number>();
-    const set = this.selectedItems[resolvedModelId];
+    if (!this.isLoadedModelId(modelId)) return;
+    if (!this.selectedItems[modelId]) this.selectedItems[modelId] = new Set<number>();
+    const set = this.selectedItems[modelId];
     if (set.has(localId)) set.delete(localId);
     else set.add(localId);
-    if (set.size === 0) delete this.selectedItems[resolvedModelId];
+    if (set.size === 0) delete this.selectedItems[modelId];
   }
 
   private async clearSelection(): Promise<void> {
@@ -3483,16 +3436,22 @@ class ViewerApp {
     return value.toFixed(4);
   }
 
+  // F5: units come from the model's IfcUnitAssignment members; the keyword
+  // mapping in core/units.ts only classifies the quantity kind and falls
+  // back to the legacy metric suffixes when the model has no unit data.
   private inferUnitSuffix(label: string): string {
-    const lower = label.toLowerCase();
-    if (lower.includes('area')) return ' m\u00B2';
-    if (lower.includes('volume')) return ' m\u00B3';
-    if (lower.includes('length') || lower.includes('width') || lower.includes('height')
-      || lower.includes('thickness') || lower.includes('depth') || lower.includes('radius')
-      || lower.includes('diameter') || lower.includes('perimeter') || lower.includes('span')) return ' m';
-    if (lower.includes('mass') || lower.includes('weight')) return ' kg';
-    if (lower.includes('angle') || lower.includes('slope') || lower.includes('tilt')) return '\u00B0';
-    return '';
+    return unitSuffixForLabel(label, this.activePropertyUnits);
+  }
+
+  /** Rows of the model's unit entities (IfcSIUnit/IfcConversionBasedUnit). */
+  private async fetchUnitRows(model: any): Promise<unknown[]> {
+    const categories = await model.getItemsOfCategories([/IFCSIUNIT/, /IFCCONVERSIONBASEDUNIT/]) as Record<string, number[]>;
+    const ids = Object.values(categories).flat();
+    if (ids.length === 0) return [];
+    return await model.getItemsData(ids, {
+      attributesDefault: true,
+      relationsDefault: { attributes: false, relations: false },
+    }) as unknown[];
   }
 
   private toPropertyString(value: unknown, fallback = '-', contextHint = ''): string {
@@ -4044,6 +4003,8 @@ class ViewerApp {
     if (!firstSelection) return;
     const model = this.getFragmentsModel(firstSelection.modelId);
     if (!model) return;
+    // F5: property suffixes use the selected element's model units.
+    this.activePropertyUnits = this.modelUnits.get(firstSelection.modelId) ?? DEFAULT_MODEL_UNITS;
 
     const itemData = await model.getItemsData([firstSelection.localId], {
       attributesDefault: true,
@@ -4137,12 +4098,8 @@ class ViewerApp {
       origin: { x: plane.origin.x, y: plane.origin.y, z: plane.origin.z },
     }));
 
-    const renderer = this.world.renderer;
-    if (!renderer) {
-      this.setStatus('Renderer unavailable for snapshot');
-      return;
-    }
-    const snapshot = renderer.three.domElement.toDataURL('image/png');
+    // F2: downscaled JPEG thumbnail rendered immediately before capture.
+    const snapshot = this.captureViewpointThumbnail();
 
     const viewpoint: SavedViewpoint = {
       id: uniqueId(),
@@ -4199,14 +4156,15 @@ class ViewerApp {
     );
 
     this.clearSections(false);
-    this.clipper.enabled = viewpoint.clippingPlanes.length > 0;
+    // F10: restore clipping through the shared creation path so the plane
+    // gizmos stay visible exactly like the section buttons' planes.
     for (const plane of viewpoint.clippingPlanes) {
-      this.clipper.createFromNormalAndCoplanarPoint(
-        this.world,
+      this.createClipPlane(
         new THREE.Vector3(plane.normal.x, plane.normal.y, plane.normal.z),
         new THREE.Vector3(plane.origin.x, plane.origin.y, plane.origin.z),
       );
     }
+    this.clipper.enabled = viewpoint.clippingPlanes.length > 0;
 
     await this.hider.set(true);
     const hiddenMap = this.getValidModelIdMap(toSetMap(viewpoint.hiddenItems));
@@ -4253,8 +4211,12 @@ class ViewerApp {
         const active = entry.id === this.selectedViewpointId ? 'active' : '';
         const escapedId = escapeHtml(entry.id);
         const escapedName = escapeHtml(entry.name);
+        const thumbnail = entry.snapshot
+          ? `<img class="viewpoint-thumb" src="${escapeHtml(entry.snapshot)}" alt="" loading="lazy" />`
+          : '';
         return `
           <div class="viewpoint-item ${active}" data-viewpoint-id="${escapedId}">
+            ${thumbnail}
             <div><strong>${escapedName}</strong></div>
             <div>${new Date(entry.createdAt).toLocaleString()}</div>
           </div>
@@ -4291,6 +4253,13 @@ class ViewerApp {
     const point = this.pendingIssuePoint ?? this.lastHitPoint;
     const issuePoint = point ? { x: point.x, y: point.y, z: point.z } : null;
 
+    // F9: capture the whole multi-model selection; modelId/localIds keep the
+    // first model for backwards compatibility with older exports.
+    const elementsByModel: Record<string, number[]> = {};
+    for (const [modelId, ids] of Object.entries(this.selectedItems)) {
+      if (ids.size > 0) elementsByModel[modelId] = [...ids];
+    }
+
     const issue: IssueRecord = {
       id: uniqueId(),
       title,
@@ -4302,6 +4271,7 @@ class ViewerApp {
       updatedAt: new Date().toISOString(),
       modelId: firstSelection?.modelId ?? null,
       localIds: firstSelection ? [...this.selectedItems[firstSelection.modelId]] : [],
+      elementsByModel: Object.keys(elementsByModel).length > 0 ? elementsByModel : undefined,
       point: issuePoint,
       comments: [],
     };
@@ -4325,6 +4295,19 @@ class ViewerApp {
     this.setStatus('Issue created');
   }
 
+  /**
+   * F9: a pin is only resolvable while at least one referenced model is
+   * loaded (or, for point-only pins, while any model gives it context) —
+   * orphan pins floating in an empty viewer are hidden, not deleted.
+   */
+  private isIssueMarkerResolvable(issue: IssueRecord): boolean {
+    const referenced = issue.elementsByModel
+      ? Object.keys(issue.elementsByModel)
+      : (issue.modelId ? [issue.modelId] : []);
+    if (referenced.length > 0) return referenced.some((modelId) => this.federatedModels.has(modelId));
+    return this.federatedModels.size > 0;
+  }
+
   private createIssueMarker(issue: IssueRecord): void {
     if (!issue.point) return;
 
@@ -4332,6 +4315,8 @@ class ViewerApp {
       this.markerManager.delete(issue.markerId);
       issue.markerId = undefined;
     }
+
+    if (!this.isIssueMarkerResolvable(issue)) return;
 
     const markerElement = document.createElement('button');
     markerElement.type = 'button';
@@ -4415,10 +4400,16 @@ class ViewerApp {
     this.dom.issueStatus.value = issue.status;
     this.dom.issueAssignee.value = issue.assignee;
 
-    if (issue.modelId && issue.localIds.length > 0 && this.isLoadedModelId(issue.modelId)) {
-      const selection: OBC.ModelIdMap = { [issue.modelId]: new Set(issue.localIds) };
+    // F9: re-select the issue's elements across every loaded model.
+    const elements = issue.elementsByModel
+      ?? (issue.modelId && issue.localIds.length > 0 ? { [issue.modelId]: issue.localIds } : {});
+    const loadedSelection: OBC.ModelIdMap = {};
+    for (const [modelId, ids] of Object.entries(elements)) {
+      if (ids.length > 0 && this.isLoadedModelId(modelId)) loadedSelection[modelId] = new Set(ids);
+    }
+    if (Object.keys(loadedSelection).length > 0) {
       clearMap(this.selectedItems);
-      Object.assign(this.selectedItems, selection);
+      Object.assign(this.selectedItems, loadedSelection);
       this.fireAndForget(this.refreshSelectionVisuals(), 'Issue selection');
     }
 
@@ -4513,9 +4504,40 @@ class ViewerApp {
       .join('');
   }
 
+  /**
+   * F2: the WebGL drawing buffer is not preserved, so toDataURL() on a stale
+   * canvas yields a blank transparent PNG. Rendering immediately before the
+   * read guarantees a fresh frame (PostproductionRenderer.update() runs the
+   * composer when postproduction is enabled).
+   */
+  private captureCanvas(type = 'image/png', quality?: number): string | null {
+    const renderer = this.world?.renderer;
+    if (!renderer) return null;
+    renderer.update();
+    return renderer.three.domElement.toDataURL(type, quality);
+  }
+
+  /** Downscaled JPEG thumbnail of the current view (≤320px, F2). */
+  private captureViewpointThumbnail(): string | undefined {
+    const renderer = this.world?.renderer;
+    if (!renderer) return undefined;
+    renderer.update();
+    const source = renderer.three.domElement;
+    const largest = Math.max(source.width, source.height);
+    if (largest === 0) return undefined;
+    const scale = Math.min(1, VIEWPOINT_THUMBNAIL_MAX_DIM / largest);
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(source.width * scale));
+    canvas.height = Math.max(1, Math.round(source.height * scale));
+    const context = canvas.getContext('2d');
+    if (!context) return undefined;
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', VIEWPOINT_THUMBNAIL_JPEG_QUALITY);
+  }
+
   private exportScreenshot(): void {
-    if (!this.world?.renderer) return;
-    const dataUrl = this.world.renderer.three.domElement.toDataURL('image/png');
+    const dataUrl = this.captureCanvas('image/png');
+    if (!dataUrl) return;
     fetch(dataUrl)
       .then((response) => response.blob())
       .then((blob) => {
@@ -4523,7 +4545,8 @@ class ViewerApp {
         downloadBlob(name, blob);
         this.setStatus('Screenshot exported');
       })
-      .catch((error) => {
+      .catch((error: unknown) => {
+        this.showToast(`Screenshot export failed: ${serializeError(error)}`, 'error');
         this.setStatus(`Screenshot export failed: ${serializeError(error)}`);
       });
   }
@@ -4539,45 +4562,15 @@ class ViewerApp {
   private async importViewerState(file: File): Promise<void> {
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text) as PersistedViewerState;
-      if (parsed.version !== 1) throw new Error('Unsupported viewer state version');
-
-      this.selectionMode = parsed.selectionMode;
-      this.navigationMode = parsed.navigationMode;
-      this.visualStyle = this.parseVisualStyle(parsed.visualStyle ?? (parsed.xray ? 'xray' : 'shaded'));
-      const restoredXray = parsed.xray;
-      const restoredEdges = parsed.edges;
-      this.gridVisible = parsed.gridVisible ?? this.gridVisible;
-      this.themeMode = parsed.theme ?? 'dark';
-      this.backgroundColor = this.normalizeHexColor(parsed.backgroundColor ?? this.backgroundColor);
-      this.viewpoints = parsed.viewpoints;
-      this.issues = parsed.issues.map((issue) => ({ ...issue }));
-
-      document.documentElement.setAttribute('data-theme', this.themeMode);
-      this.dom.toggleTheme.checked = this.themeMode === 'light';
-
-      this.applySelectionMode(this.selectionMode);
-      this.applyNavigationMode(this.navigationMode);
-
-      await this.setVisualStyle(this.visualStyle, false, false);
-      this.xrayEnabled = restoredXray;
-      this.edgesEnabled = restoredEdges;
-      this.dom.btnTransparency.classList.toggle('active', this.xrayEnabled);
-      this.dom.btnWireframe.classList.toggle('active', this.edgesEnabled);
-      this.setGridVisible(this.gridVisible, false);
-      this.setBackgroundColor(this.backgroundColor, false);
-      this.syncVisualSettingsUi();
-      this.applyXRay();
-      this.applyEdges();
-
-      this.updateViewpointList();
-      this.updateIssuesList();
-      this.updateIssueComments();
-      this.refreshIssueMarkers();
-
+      // A7: one validated apply path shared with restoreLocalState — a
+      // minimal `{"version":1}` import is crash-free.
+      const state = normalizePersistedState(JSON.parse(text));
+      if (!state) throw new Error('Unsupported or invalid viewer state file');
+      await this.applyPersistedState(state);
       this.persistLocalState();
       this.setStatus('Viewer data imported');
     } catch (error) {
+      this.showToast(`Import failed: ${serializeError(error)}`, 'error');
       this.setStatus(`Import failed: ${serializeError(error)}`);
     }
   }
@@ -4594,8 +4587,21 @@ class ViewerApp {
       updatedAt: issue.updatedAt,
       modelId: issue.modelId,
       localIds: [...issue.localIds],
+      elementsByModel: issue.elementsByModel
+        ? Object.fromEntries(Object.entries(issue.elementsByModel).map(([modelId, ids]) => [modelId, [...ids]]))
+        : undefined,
       point: issue.point ? { ...issue.point } : null,
       comments: issue.comments.map((comment) => ({ ...comment })),
+    }));
+
+    // F2 size guard: only downscaled thumbnails are persisted — any snapshot
+    // above the cap (e.g. a full-res capture from an imported legacy state)
+    // is dropped from the localStorage payload.
+    const viewpoints = this.viewpoints.map((viewpoint) => ({
+      ...viewpoint,
+      snapshot: viewpoint.snapshot && viewpoint.snapshot.length <= MAX_PERSISTED_SNAPSHOT_CHARS
+        ? viewpoint.snapshot
+        : undefined,
     }));
 
     return {
@@ -4607,18 +4613,30 @@ class ViewerApp {
       edges: this.edgesEnabled,
       gridVisible: this.gridVisible,
       backgroundColor: this.backgroundColor,
+      backgroundByTheme: { ...this.backgroundByTheme },
       theme: this.themeMode,
-      viewpoints: this.viewpoints,
+      viewpoints,
       issues,
     };
   }
 
   private persistLocalState(): void {
+    const payload = this.getPersistedState();
     try {
-      const payload = this.getPersistedState();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    } catch (error) {
-      this.setStatus(`Unable to persist local state: ${serializeError(error)}`);
+    } catch {
+      // Quota exceeded — retry once without snapshots (F2 size guard).
+      try {
+        const stripped = {
+          ...payload,
+          viewpoints: payload.viewpoints.map((viewpoint) => ({ ...viewpoint, snapshot: undefined })),
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(stripped));
+        this.setStatus('Local state saved without thumbnails (storage quota)');
+      } catch (retryError) {
+        this.showToast(`Unable to persist local state: ${serializeError(retryError)}`, 'error');
+        this.setStatus(`Unable to persist local state: ${serializeError(retryError)}`);
+      }
     }
   }
 
@@ -4626,40 +4644,60 @@ class ViewerApp {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return;
-      const parsed = JSON.parse(raw) as PersistedViewerState;
-      if (parsed.version !== 1) return;
-
-      this.selectionMode = parsed.selectionMode;
-      this.navigationMode = parsed.navigationMode;
-      this.visualStyle = this.parseVisualStyle(parsed.visualStyle ?? 'color-pen-shadows');
-      const restoredXray = parsed.xray;
-      const restoredEdges = parsed.edges;
-      this.gridVisible = parsed.gridVisible ?? this.gridVisible;
-      this.themeMode = parsed.theme ?? 'dark';
-      this.backgroundColor = this.normalizeHexColor(parsed.backgroundColor ?? this.backgroundColor);
-      this.viewpoints = parsed.viewpoints ?? [];
-      this.issues = (parsed.issues ?? []).map((issue) => ({ ...issue }));
-
-      document.documentElement.setAttribute('data-theme', this.themeMode);
-      this.dom.toggleTheme.checked = this.themeMode === 'light';
-
-      await this.setVisualStyle(this.visualStyle, false, false);
-      this.xrayEnabled = restoredXray;
-      this.edgesEnabled = restoredEdges;
-      this.dom.btnTransparency.classList.toggle('active', this.xrayEnabled);
-      this.dom.btnWireframe.classList.toggle('active', this.edgesEnabled);
-      this.setGridVisible(this.gridVisible, false);
-      this.setBackgroundColor(this.backgroundColor, false);
-      this.syncVisualSettingsUi();
-      this.updateViewpointList();
-      this.updateIssuesList();
-      this.updateIssueComments();
-      this.applyXRay();
-      this.applyEdges();
-      this.refreshIssueMarkers();
+      const state = normalizePersistedState(JSON.parse(raw));
+      if (!state) return;
+      await this.applyPersistedState(state);
     } catch (error) {
+      this.showToast(`Failed to restore local state: ${serializeError(error)}`, 'error');
       this.setStatus(`Failed to restore local state: ${serializeError(error)}`);
     }
+  }
+
+  /**
+   * A7: the single apply path for validated persisted state — used by both
+   * restoreLocalState (localStorage) and importViewerState (file import).
+   * Expects a state produced by normalizePersistedState.
+   */
+  private async applyPersistedState(state: PersistedViewerState): Promise<void> {
+    this.selectionMode = state.selectionMode;
+    this.navigationMode = state.navigationMode;
+    this.visualStyle = this.parseVisualStyle(state.visualStyle ?? 'color-pen-shadows');
+    const restoredXray = state.xray;
+    const restoredEdges = state.edges;
+    this.gridVisible = state.gridVisible ?? false;
+    this.themeMode = state.theme ?? 'dark';
+    if (state.backgroundByTheme) {
+      this.backgroundByTheme.dark = this.normalizeHexColor(state.backgroundByTheme.dark, DEFAULT_BACKGROUND_COLOR);
+      this.backgroundByTheme.light = this.normalizeHexColor(state.backgroundByTheme.light, DEFAULT_LIGHT_BACKGROUND_COLOR);
+    }
+    this.backgroundColor = this.normalizeHexColor(
+      state.backgroundColor ?? this.backgroundByTheme[this.themeMode],
+      this.backgroundByTheme[this.themeMode],
+    );
+    this.viewpoints = state.viewpoints;
+    this.issues = state.issues.map((issue) => ({ ...issue }));
+
+    document.documentElement.setAttribute('data-theme', this.themeMode);
+    this.dom.toggleTheme.checked = this.themeMode === 'light';
+
+    this.applySelectionMode(this.selectionMode);
+    this.applyNavigationMode(this.navigationMode);
+
+    await this.setVisualStyle(this.visualStyle, false, false);
+    this.xrayEnabled = restoredXray;
+    this.edgesEnabled = restoredEdges;
+    this.dom.btnTransparency.classList.toggle('active', this.xrayEnabled);
+    this.dom.btnWireframe.classList.toggle('active', this.edgesEnabled);
+    this.setGridVisible(this.gridVisible, false);
+    this.setBackgroundColor(this.backgroundColor, false);
+    this.syncVisualSettingsUi();
+    this.applyXRay();
+    this.applyEdges();
+
+    this.updateViewpointList();
+    this.updateIssuesList();
+    this.updateIssueComments();
+    this.refreshIssueMarkers();
   }
 
   private activateTab(tab: string): void {
@@ -4676,8 +4714,7 @@ class ViewerApp {
     const visibleMap = await this.hider.getVisibilityMap(true);
     let visibleCount = 0;
     for (const [modelId, ids] of Object.entries(visibleMap)) {
-      const resolvedModelId = this.resolveModelId(modelId) ?? modelId;
-      const model = this.federatedModels.get(resolvedModelId);
+      const model = this.federatedModels.get(modelId);
       if (model && !model.visible) continue;
       visibleCount += ids.length;
     }
