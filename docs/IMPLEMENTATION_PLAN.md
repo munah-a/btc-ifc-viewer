@@ -289,27 +289,34 @@ bar (this IS the U1 fix); fonts Outfit+Inter and Material Symbols Outlined come 
 the prototype — MUST be self-hosted/subset per C1/A2 offline rule; brand voice: sentence case, no
 Title Case buttons, `—` for empty values, tabular numerics.)*
 
-- [ ] W3.1 Ingest design: port the two `#btc-viewer-root[data-theme]` token sets +
-  `colors_and_type.css` into `src/styles/tokens.css`; self-host Outfit/Inter (subset woff2) and the
-  Material Symbols glyphs actually used (icon subset or inline SVG — also kills U5's ligature issue);
-  copy `assets/` logos into `src/assets/`; replace favicon with `iconmark.svg` derivative.
-- [ ] W3.2 Rebuild shell per design (top bar/tool rail/viewport overlays/right panel + tab strip/
-  status bar) as **fresh `ui/*` controllers** (delegation + `data-node-key` pattern already in
-  viewer.ts to build on), each wired to the pure `core/` modules. Replace styles.css wholesale;
-  single mobile-first stylesheet (U10). **(Absorbs the W2-deferred `ui/` extraction — build new, don't
-  port old.)**
-- [ ] W3.2b **W2 decomposition (folded in):** lift engine bootstrap/world/render-loop into
-  `core/viewer-core.ts` and the tools (measure/section/xray/edges/view-cube) into `tools/*` behind a
-  small Tool interface, as the shell is rewired. Target: `viewer.ts` → **<~800-line orchestrator**
-  (the W2 exit target, now owned by W3). Keep e2e green via `window.__viewerTestApi` throughout.
-- [ ] W3.3 **U1** implement the design's mobile pattern: bottom sheet + 5-tab bottom bar + fit FAB,
-  drawer/backdrop for tablet, phone error toasts; **U2** settings reachable on tablet (design's
-  More sheet); **U9** pointer-event splitters (panel width is a design prop, 280–400px).
-- [ ] W3.4 Accessibility program: **U6** button rows + list semantics; **U7** real tabs/menus, drop
-  role=application; **U8** `<dialog>` confirm; contrast pass both themes (U3/U11).
-- [ ] W3.5 E2E: update selectors; add 768px viewport test (panels reachable); add axe-core smoke;
-  screenshot baselines 2 themes × 3 viewports.
-- [ ] W3.6 Update plan + Status Log.
+- [x] W3.1 Ingest design: two `#btc-viewer-root[data-theme]` token sets + `colors_and_type.css` scales
+  → `src/styles/tokens.css` (scoped to `:root[data-theme]`). Self-host Inter/Outfit latin woff2 via
+  `scripts/fetch-fonts.mjs` (+ `src/assets/fonts/fonts.css`, `@import`ed into styles.css so Vite
+  fingerprints them). **Inline SVG icon set (`src/ui/icons.ts`) instead of Material Symbols** — kills
+  the U5 ligature bug AND the font CDN. Logos → `src/assets/`; brand-blue favicon from iconmark.
+- [x] W3.2 Rebuild shell per design: fresh `index.html` (52px top bar / 52px tool rail / glass
+  viewport overlays / 320px right panel + 48px tab strip / 30px status bar) + wholesale new mobile-first
+  `styles.css` (U10, single sheet). viewer.ts DOM cache + event bindings rewired to the new anatomy;
+  `data-icon` hydration at boot. Dead `shell.ts` deleted. **Note: the interactive 3D view-cube was
+  removed** (the design uses glass view-control buttons — fit/orbit-home/front/top); camera preset +
+  anchor-basis math retained (powers the buttons + `anchorDirectionForCube`).
+- [~] W3.2b **W2 decomposition (folded in):** DEFERRED — see Status Log. viewer.ts is still ~4.4k lines;
+  the <800-line target + `core/viewer-core.ts`/`tools/*` extraction is the one remaining W3 exit item.
+  Behavior fully preserved (e2e 18/18). `window.__viewerTestApi` unchanged (v1 contract still valid).
+- [x] W3.3 **U1** mobile pattern: bottom sheet (panel) + 5-tab bottom nav + fit FAB (phone), right-slide
+  drawer + scrim (tablet), toasts reachable on phone. **U2** theme toggle (topbar) + grid (rail) +
+  visual-style/theme in the mobile **More sheet**. **U9** pointer-event splitter with `setPointerCapture`
+  + keyboard arrows + `role=separator`/aria-value*; panel width 280–400px.
+- [x] W3.4 Accessibility: **U6** `<button>`/span rows + list semantics (search results, viewpoint/issue
+  rows, filter chips); **U7** real tabs (role=tab/tabpanel/aria-selected + arrow keys), `role=application`
+  dropped; **U8** native `<dialog>.showModal()` confirm (focus trap + Escape + Cancel-focused + focus
+  restore); **U3/U11** both themes pass WCAG AA (min 5.60 light / 7.28 dark across key pairs); toasts
+  clear of the view controls. axe-core smoke green (0 serious/critical, both themes).
+- [x] W3.5 E2E: selectors retargeted to the new DOM; `__viewerTestApi` still the state seam. Added the
+  U1 tablet-drawer + phone bottom-sheet/More-sheet reachability sweep (console-clean) and `e2e/a11y.spec.ts`
+  (axe both themes). Behavior suite **18/18** on SwiftShader. (Screenshot baselines: not added — deferred.)
+- [~] W3.6 Update plan + Status Log — done for the landed phases; final measurements pending the W3.2b
+  decomposition + wave-end full `ci:local`.
 
 ### Wave 4 — Embed & sharing platform
 
@@ -458,3 +465,4 @@ schedule past the reset.
 | 2026-07-06 | PO (Claude, Opus) | **W2 adjudicated & accepted (partial-by-design).** WO extracted all pure/reusable logic to `core/` (model-id-map, property-engine, view-cube + the A8 `FragmentsModelLike` typed boundary) with 75 unit tests (was 36); did A5/A11/A12/A16 cleanups; added frozen `window.__viewerTestApi` (T6) and migrated e2e (16→18, incl. canvas-click + keyboard). Gates: ci:fast green, SwiftShader e2e 18/18 (8.1m), console-clean 0 app noise. **PO live-browser smoke:** load 1526 elts, X-ray/edges/section/search all correct, console clean. **Gate miss:** viewer.ts 4896→4229, not <800 — the engine/tools/panel *class* decomposition was deferred (deeply `this`-coupled, high behavior-risk as sole writer). **Decision: fold that decomposition into W3**, which rebuilds every panel on the new design DOM — building fresh `ui/*`/`core/viewer-core.ts`/`tools/*` there beats extract-then-discard. W3 now owns the <800-line target (see W3.2/W3.2b). Next: push W2 once → PR → GitHub CI → merge, then start W3. |
 | 2026-07-06 | PO (Claude, Opus) | **CI cost policy change (user directive):** GitHub PR CI (`ci.yml`) now runs FAST gates only (typecheck/lint/unit/audit/build, ~4min); the ~24min Playwright e2e is removed from the auto gate and kept as a manual `workflow_dispatch` job. Rationale: e2e is both the entire cost AND the only hardware-sensitive part (all of T11/T12/T13 were green-local/red-GitHub on the 2-core SwiftShader runner). e2e correctness now owned by the LOCAL wave-gate (`npm run ci:local`) + PO live-browser smoke. Cancelled W2's in-flight 28min run; the new fast CI (~4min) confirms W2 (whose e2e was already 18/18 local + PO-smoked). GitHub minutes/run: ~28min → ~4min. |
 | 2026-07-06 | PO (Claude, Opus) | **W2 merged to main** (PR #15, fast CI green 40s under the new e2e-local policy). W0+W1+W2 on main (`4742197`). Branched `wave/3-rebrand`; launching W3 Wave Orchestrator (Opus) — the largest wave: Claude Design "Precision Architect" rebrand + responsive/a11y (U1–U11) + the folded-in decomposition (fresh `ui/*`/`core/viewer-core.ts`/`tools/*`, viewer.ts→<800). Gate: local `ci:local` (fast + SwiftShader e2e, selectors updated for new DOM, `__viewerTestApi` stays the state seam) + PO live-browser verification across desktop/tablet/phone × both themes with a loaded model. |
+| 2026-07-06 | W3 orchestrator (Fable) | **Wave 3 rebrand + responsive + a11y LANDED; decomposition DEFERRED.** 9 commits on `wave/3-rebrand`. **W3.1** tokens (`src/styles/tokens.css`, both prototype theme sets + DS scales) + self-hosted Inter/Outfit woff2 (`scripts/fetch-fonts.mjs`, latin ~318KB) + inline SVG icons (`src/ui/icons.ts` — kills U5 ligature bug AND the Google-Fonts CDN, so CSP dropped `fonts.googleapis.com`/`gstatic`) + brand logos/favicon. **W3.2** wholesale new `index.html` + `styles.css` to the Precision Architect anatomy (top bar / 52px tool rail / glass overlays / 320px panel + 48px tab strip / status bar; mobile top bar + bottom sheet + 5-tab nav + fit FAB); viewer.ts rewired to the new DOM. **Removed the interactive 3D view-cube** (design replaced it with glass fit/orbit/front/top buttons) — camera preset + anchor-basis math kept. **W3.3** U1 mobile bottom-sheet/drawer/scrim + U2 More sheet + U9 pointer/keyboard splitter. **W3.4** U6 button/span rows, U7 real tabs + arrow keys + dropped `role=application`, U8 native `<dialog>` confirm, U3/U11 both themes WCAG AA (min 5.60 light / 7.28 dark). **W3.5** e2e retargeted to new DOM + U1 tablet/phone reachability sweep + `e2e/a11y.spec.ts` axe smoke. **GATES:** typecheck ✓ lint ✓ **73 unit** ✓ audit(prod,high) 0 ✓ build ✓; **SwiftShader e2e 18/18** (behavior) + **axe a11y 2/2** (0 serious/critical both themes); boot verified 0 console errors (preview). Bundle 5,760 kB/1,011 kB gzip. **DEVIATION vs exit gate — viewer.ts ~4.4k lines, NOT <800:** the `core/viewer-core.ts` + `tools/*` extraction (W3.2b) was not reached this session. It is the sole remaining W3 exit item; behavior is fully preserved and `__viewerTestApi` v1 is unchanged, so it is a pure mechanical extraction for a resume. Branch is committed + ci:fast-green at each phase. **Handoff for resume:** finish W3.2b (extract engine bootstrap/render-loop → `core/viewer-core.ts`, measure/section/xray/edges → `tools/*`, panel renderers → `ui/*`; target viewer.ts <~800), then re-run full `ci:local` + PO live-browser sweep (desktop/tablet/phone × both themes) before push/PR. |
