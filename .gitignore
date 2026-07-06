@@ -10,3 +10,4 @@ test-results/
 # vendored at build time by scripts/vendor-assets.mjs (versions track package-lock)
 public/web-ifc.wasm
 public/worker.mjs
+e2e-serve.log
