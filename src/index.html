@@ -1,9 +1,10 @@
-﻿<!DOCTYPE html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#14151b" />
   <!-- CSP (AUDIT A1, defense-in-depth behind escapeHtml):
        - unsafe-eval: REQUIRED by the IFC import path — the bundled importer's
          embind glue generates invoker functions dynamically (verified via
@@ -14,560 +15,469 @@
          'unsafe-eval' can be dropped alone if the eval dependency goes away)
        - worker-src/img-src/connect-src blob:/data:: fragments worker via
          object URL, viewpoint thumbnails, screenshot/state exports
-       - Google Fonts hosts allowed until W3.1 self-hosts the subset
+       - W3.1: fonts self-hosted (no fonts.googleapis.com), icons inline SVG.
+         style-src keeps 'unsafe-inline' only for the few dynamic inline styles
+         (transforms/opacity/section pos) written by the render code.
        - frame-ancestors cannot be set via <meta>; it lands in vercel.json
          headers with the W4.6 allowlist -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' data: blob:; worker-src 'self' blob:" />
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' data: blob:; worker-src 'self' blob:" />
   <title>BTC IFC Viewer</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
   <link rel="stylesheet" href="./styles.css" />
-  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet" />
 </head>
 
 <body>
   <a href="#viewer-container" class="skip-nav">Skip to viewer</a>
-  <div class="app-shell" role="application" aria-label="BTC IFC Viewer">
-    <!-- Title Bar (32px) -->
-    <div class="app-titlebar">
-      <img src="./btc-logo.svg" alt="" class="titlebar-logo" />
-      <span class="titlebar-appname">BIM Tech IFC Viewer</span>
-    </div>
 
-    <!-- Menu Bar (28px) — functional dropdowns -->
-    <div class="app-menubar">
-      <div class="menu-dropdown">
-        <button class="menu-item" type="button">File</button>
-        <div class="menu-dropdown-content">
-          <button data-menu-action="btnUpload">Load IFC Files…</button>
-          <div class="menu-sep"></div>
-          <button data-menu-action="btnExportScreenshot">Export Screenshot</button>
-          <button data-menu-action="btnExportState">Export State</button>
-          <button data-menu-action="btnImportState">Import State</button>
-        </div>
-      </div>
-      <div class="menu-dropdown">
-        <button class="menu-item" type="button">View</button>
-        <div class="menu-dropdown-content menu-dropdown-wide">
-          <button data-menu-action="btnFitAll">Fit All<span class="menu-shortcut">F</span></button>
-          <button data-menu-action="btnFront">Front View</button>
-          <button data-menu-action="btnTop">Top View</button>
-          <div class="menu-sep"></div>
-          <button data-menu-action="btnTransparency">Toggle X-Ray<span class="menu-shortcut">X</span></button>
-          <button data-menu-action="btnWireframe">Toggle Edges<span class="menu-shortcut">E</span></button>
-          <div class="menu-sep"></div>
-          <div class="menu-inline-control">
-            <label for="visualStyleSelect">Style</label>
-            <select id="visualStyleSelect" class="text-input visual-style-select">
-              <option value="basic">Basic</option>
-              <option value="pen">Pen</option>
-              <option value="color-pen">Color Pen</option>
-              <option value="color-shadows">Color Shadows</option>
-              <option value="color-pen-shadows" selected>Color Pen Shadows</option>
-            </select>
-          </div>
-          <div class="menu-inline-control">
-            <label class="menu-checkbox">
-              <input id="toggleGrid" type="checkbox" />
-              <span>Show Grid</span>
-            </label>
-          </div>
-          <div class="menu-inline-control">
-            <label class="menu-checkbox">
-              <input id="toggleTheme" type="checkbox" />
-              <span>Light Theme</span>
-            </label>
-          </div>
-          <div class="menu-sep"></div>
-          <div class="menu-inline-control">
-            <label for="backgroundColorInput">Background</label>
-            <input id="backgroundColorInput" type="color" value="#0b1220" />
-          </div>
-          <div class="menu-inline-control menu-presets">
-            <button type="button" class="visual-preset-btn" data-bg-preset="#0b1220" style="--preset:#0b1220;" title="Night Blue"></button>
-            <button type="button" class="visual-preset-btn" data-bg-preset="#c6d5e8" style="--preset:#c6d5e8;" title="Day Sky"></button>
-            <button type="button" class="visual-preset-btn" data-bg-preset="#1b1f24" style="--preset:#1b1f24;" title="Graphite"></button>
-            <button type="button" class="visual-preset-btn" data-bg-preset="#e9ecef" style="--preset:#e9ecef;" title="Light Gray"></button>
-            <button type="button" class="visual-preset-btn" data-bg-preset="#8ec0f4" style="--preset:#8ec0f4;" title="BIM Sky"></button>
-          </div>
-        </div>
-      </div>
-      <div class="menu-dropdown">
-        <button class="menu-item" type="button">Tools</button>
-        <div class="menu-dropdown-content">
-          <button data-menu-action="btnMeasureLength">Measure Length<span class="menu-shortcut">L</span></button>
-          <button data-menu-action="btnMeasureArea">Measure Area<span class="menu-shortcut">A</span></button>
-          <button data-menu-action="btnClearMeasurements">Clear Measurements</button>
-          <div class="menu-sep"></div>
-          <button data-menu-action="btnSectionX">Section X</button>
-          <button data-menu-action="btnSectionY">Section Y</button>
-          <button data-menu-action="btnSectionZ">Section Z</button>
-          <button data-menu-action="btnSectionBox">Section Box</button>
-          <button data-menu-action="btnClearSections">Clear Sections</button>
-        </div>
-      </div>
-      <div class="menu-dropdown">
-        <button class="menu-item" type="button">Select</button>
-        <div class="menu-dropdown-content">
-          <button data-menu-action="btnSelectSingle">Single Select</button>
-          <button data-menu-action="btnSelectMulti">Multi Select<span class="menu-shortcut">M</span></button>
-          <div class="menu-sep"></div>
-          <button data-menu-action="btnIsolate">Isolate Selection</button>
-          <button data-menu-action="btnHide">Hide Selection</button>
-          <!-- F7: this action shows the current selection (it errors without
-               one) — labeled accordingly; "Reset Visibility" shows all. -->
-          <button data-menu-action="btnShow">Show Selection</button>
-          <button data-menu-action="btnResetVisibility">Reset Visibility</button>
-        </div>
-      </div>
-      <div class="menu-dropdown">
-        <button class="menu-item" type="button">Help</button>
-        <div class="menu-dropdown-content">
-          <button data-menu-action="tab-help">Keyboard Shortcuts</button>
-        </div>
-      </div>
-    </div>
+  <div id="btc-viewer-root" class="app-shell">
 
-    <!-- Toolbar (36px) — file buttons + dock tools inline -->
-    <div class="app-toolbar" role="toolbar" aria-label="Main toolbar">
-      <div class="toolbar-file-group">
-        <button id="btnUpload" class="btn btn-primary" title="Load IFC files">
-          <span class="material-icons-round">upload_file</span>
-          <span>Load IFCs</span>
+    <!-- ══════════════ TOP BAR (52px) ══════════════ -->
+    <header class="topbar">
+      <div class="topbar-brand">
+        <img class="brand-logo brand-logo-dark" src="./assets/logo-white.svg" alt="BIM Tech Consulting" />
+        <img class="brand-logo brand-logo-light" src="./assets/logo-primary.svg" alt="BIM Tech Consulting" />
+        <span class="eyebrow topbar-eyebrow">IFC Viewer</span>
+      </div>
+
+      <div class="topbar-divider"></div>
+
+      <div class="topbar-model" id="topbarModel">
+        <span class="topbar-model-empty">No model loaded</span>
+      </div>
+
+      <div class="topbar-spacer"></div>
+
+      <div class="topbar-actions">
+        <button id="btnUpload" class="btn btn-primary" type="button">
+          <span class="btn-icon" data-icon="upload_file"></span>
+          <span>Load IFC</span>
         </button>
-        <div class="toolbar-sep"></div>
-        <button id="btnExportScreenshot" class="btn btn-secondary" title="Export PNG screenshot">
-          <span class="material-icons-round">photo_camera</span>
-          <span>Shot</span>
-        </button>
-        <button id="btnExportState" class="btn btn-secondary" title="Export local viewer data">
-          <span class="material-icons-round">download</span>
-          <span>Export</span>
-        </button>
-        <button id="btnImportState" class="btn btn-secondary" title="Import viewer data">
-          <span class="material-icons-round">upload</span>
-          <span>Import</span>
-        </button>
-        <input type="file" id="fileInput" accept=".ifc" multiple hidden />
-        <input type="file" id="importStateInput" accept="application/json" hidden />
+        <button id="btnExportScreenshot" class="btn-icon-only" type="button" data-icon="photo_camera"
+          title="Export screenshot" aria-label="Export screenshot"></button>
+        <button id="btnExportState" class="btn-icon-only" type="button" data-icon="download" title="Export state"
+          aria-label="Export state"></button>
+        <button id="btnImportState" class="btn-icon-only" type="button" data-icon="upload" title="Import state"
+          aria-label="Import state"></button>
       </div>
-      <div class="toolbar-sep"></div>
 
-      <div class="viewer-dock" id="viewerDock" role="toolbar" aria-label="Viewer tools">
-        <div class="dock-group">
-          <button class="dock-toggle" data-dock-toggle title="Navigate">
-            <span class="material-icons-round">navigation</span>
-            <span>Navigate</span>
-          </button>
-          <div class="dock-flyout">
-            <button id="btnModeOrbit" class="dock-tool-btn active" title="Orbit mode">
-              <span class="material-icons-round">3d_rotation</span>
-              <span class="dock-tool-label">Orbit</span>
-            </button>
-            <button id="btnModePlan" class="dock-tool-btn" title="Plan mode">
-              <span class="material-icons-round">map</span>
-              <span class="dock-tool-label">Plan</span>
-            </button>
-            <button id="btnModeFirstPerson" class="dock-tool-btn" title="First-person mode">
-              <span class="material-icons-round">directions_walk</span>
-              <span class="dock-tool-label">Walk</span>
-            </button>
-            <button id="btnFitAll" class="dock-tool-btn" title="Fit model">
-              <span class="material-icons-round">fit_screen</span>
-              <span class="dock-tool-label">Fit</span>
-            </button>
-            <button id="btnFront" class="dock-tool-btn" title="Front view">
-              <span class="material-icons-round">crop_portrait</span>
-              <span class="dock-tool-label">Front</span>
-            </button>
-            <button id="btnTop" class="dock-tool-btn" title="Top view">
-              <span class="material-icons-round">crop_landscape</span>
-              <span class="dock-tool-label">Top</span>
-            </button>
-          </div>
-        </div>
+      <div class="topbar-divider"></div>
 
-        <div class="dock-group">
-          <button class="dock-toggle" data-dock-toggle title="Select">
-            <span class="material-icons-round">ads_click</span>
-            <span>Select</span>
-          </button>
-          <div class="dock-flyout">
-            <button id="btnSelectSingle" class="dock-tool-btn active" title="Single select mode">
-              <span class="material-icons-round">ads_click</span>
-              <span class="dock-tool-label">Single</span>
-            </button>
-            <button id="btnSelectMulti" class="dock-tool-btn" title="Multi-select mode">
-              <span class="material-icons-round">select_all</span>
-              <span class="dock-tool-label">Multi</span>
-            </button>
-            <button id="btnIsolate" class="dock-tool-btn" title="Isolate selection">
-              <span class="material-icons-round">visibility</span>
-              <span class="dock-tool-label">Isolate</span>
-            </button>
-            <button id="btnHide" class="dock-tool-btn" title="Hide selection">
-              <span class="material-icons-round">visibility_off</span>
-              <span class="dock-tool-label">Hide</span>
-            </button>
-            <button id="btnShow" class="dock-tool-btn" title="Show selection">
-              <span class="material-icons-round">remove_red_eye</span>
-              <span class="dock-tool-label">Show</span>
-            </button>
-            <button id="btnResetVisibility" class="dock-tool-btn" title="Reset visibility">
-              <span class="material-icons-round">restart_alt</span>
-              <span class="dock-tool-label">Reset</span>
-            </button>
-          </div>
-        </div>
+      <button id="btnThemeToggle" class="btn-icon-only" type="button" data-icon="light_mode"
+        title="Toggle light / dark theme" aria-label="Toggle light / dark theme"></button>
+      <button id="btnPanelToggle" class="btn-icon-only topbar-panel-toggle" type="button" data-icon="right_panel_close"
+        title="Collapse panel" aria-label="Collapse panel" aria-expanded="true" aria-controls="sidePanel"></button>
 
-        <div class="dock-group">
-          <button class="dock-toggle" data-dock-toggle title="Measure">
-            <span class="material-icons-round">straighten</span>
-            <span>Measure</span>
-          </button>
-          <div class="dock-flyout">
-            <button id="btnMeasureLength" class="dock-tool-btn" title="Distance measurement">
-              <span class="material-icons-round">straighten</span>
-              <span class="dock-tool-label">Length</span>
-            </button>
-            <button id="btnMeasureArea" class="dock-tool-btn" title="Area measurement">
-              <span class="material-icons-round">square_foot</span>
-              <span class="dock-tool-label">Area</span>
-            </button>
-            <button id="btnClearMeasurements" class="dock-tool-btn" title="Clear measurements">
-              <span class="material-icons-round">cleaning_services</span>
-              <span class="dock-tool-label">Clear</span>
-            </button>
-          </div>
-        </div>
+      <input type="file" id="fileInput" accept=".ifc" multiple hidden />
+      <input type="file" id="importStateInput" accept="application/json" hidden />
+    </header>
 
-        <div class="dock-group">
-          <button class="dock-toggle" data-dock-toggle title="Section">
-            <span class="material-icons-round">content_cut</span>
-            <span>Section</span>
-          </button>
-          <div class="dock-flyout">
-            <button id="btnSectionX" class="dock-tool-btn" title="Section X">
-              <span class="material-icons-round">vertical_split</span>
-              <span class="dock-tool-label">Cut X</span>
-            </button>
-            <button id="btnSectionY" class="dock-tool-btn" title="Section Y">
-              <span class="material-icons-round">horizontal_split</span>
-              <span class="dock-tool-label">Cut Y</span>
-            </button>
-            <button id="btnSectionZ" class="dock-tool-btn" title="Section Z">
-              <span class="material-icons-round">layers</span>
-              <span class="dock-tool-label">Cut Z</span>
-            </button>
-            <button id="btnSectionBox" class="dock-tool-btn" title="Section box">
-              <span class="material-icons-round">crop_free</span>
-              <span class="dock-tool-label">Box</span>
-            </button>
-            <button id="btnClearSections" class="dock-tool-btn" title="Clear sections">
-              <span class="material-icons-round">clear_all</span>
-              <span class="dock-tool-label">Clear</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="dock-group">
-          <button class="dock-toggle" data-dock-toggle title="Visual">
-            <span class="material-icons-round">visibility</span>
-            <span>Visual</span>
-          </button>
-          <div class="dock-flyout">
-            <button id="btnTransparency" class="dock-tool-btn" title="X-ray mode">
-              <span class="material-icons-round">blur_on</span>
-              <span class="dock-tool-label">X-Ray</span>
-            </button>
-            <button id="btnWireframe" class="dock-tool-btn" title="Edge overlay">
-              <span class="material-icons-round">grid_on</span>
-              <span class="dock-tool-label">Edges</span>
-            </button>
-          </div>
-        </div>
-
-        <div class="dock-group">
-          <button class="dock-toggle" data-dock-toggle title="Collab">
-            <span class="material-icons-round">groups</span>
-            <span>Collab</span>
-          </button>
-          <div class="dock-flyout">
-            <button id="btnIssuePinMode" class="dock-tool-btn" title="Issue pin mode">
-              <span class="material-icons-round">place</span>
-              <span class="dock-tool-label">Issue</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-
+    <!-- ══════════════ MIDDLE (rail + viewport + panel + tabstrip) ══════════════ -->
     <div class="app-main">
-      <aside class="model-panel" role="navigation" aria-label="Model browser">
-        <div class="model-panel-header">
-          <div class="section-title">Model Browser</div>
-          <div class="panel-subtitle">Federated tree by levels, classes, elements and spatial hierarchy</div>
-        </div>
-        <div id="modelBrowserTree" class="model-browser-tree"></div>
-      </aside>
 
-      <div class="panel-splitter" data-splitter="left"></div>
+      <!-- Left tool rail (52px) -->
+      <div class="tool-rail" role="toolbar" aria-label="Viewer tools" aria-orientation="vertical" data-scrollhide>
+        <button id="btnSelectSingle" class="rail-btn is-active" type="button" data-icon="near_me"
+          title="Single select" aria-label="Single select" aria-pressed="true"></button>
+        <button id="btnSelectMulti" class="rail-btn" type="button" data-icon="select_all"
+          title="Multi select (M)" aria-label="Multi select" aria-pressed="false"></button>
+        <button id="btnIsolate" class="rail-btn" type="button" data-icon="center_focus_strong"
+          title="Isolate selection" aria-label="Isolate selection"></button>
+        <button id="btnHide" class="rail-btn" type="button" data-icon="visibility_off" title="Hide selection"
+          aria-label="Hide selection"></button>
+        <button id="btnResetVisibility" class="rail-btn" type="button" data-icon="visibility"
+          title="Show all / reset visibility" aria-label="Show all / reset visibility"></button>
 
-      <section class="viewport-section" role="main" aria-label="3D Viewport">
+        <div class="rail-divider" role="none"></div>
+
+        <button id="btnMeasureLength" class="rail-btn" type="button" data-icon="straighten"
+          title="Measure length (L)" aria-label="Measure length" aria-pressed="false"></button>
+        <button id="btnMeasureArea" class="rail-btn" type="button" data-icon="square_foot" title="Measure area (A)"
+          aria-label="Measure area" aria-pressed="false"></button>
+        <button id="btnClearMeasurements" class="rail-btn" type="button" data-icon="delete_sweep"
+          title="Clear measurements" aria-label="Clear measurements"></button>
+
+        <div class="rail-divider" role="none"></div>
+
+        <button id="btnSectionX" class="rail-btn" type="button" data-icon="vertical_split" title="Section X"
+          aria-label="Section X" aria-pressed="false"></button>
+        <button id="btnSectionY" class="rail-btn" type="button" data-icon="horizontal_split" title="Section Y"
+          aria-label="Section Y" aria-pressed="false"></button>
+        <button id="btnSectionZ" class="rail-btn" type="button" data-icon="layers" title="Section Z"
+          aria-label="Section Z" aria-pressed="false"></button>
+        <button id="btnSectionBox" class="rail-btn" type="button" data-icon="crop_free" title="Section box"
+          aria-label="Section box" aria-pressed="false"></button>
+        <button id="btnClearSections" class="rail-btn" type="button" data-icon="delete_sweep" title="Clear sections"
+          aria-label="Clear sections"></button>
+
+        <div class="rail-divider" role="none"></div>
+
+        <button id="btnTransparency" class="rail-btn" type="button" data-icon="blur_on" title="X-ray (X)"
+          aria-label="X-ray" aria-pressed="false"></button>
+        <button id="btnWireframe" class="rail-btn" type="button" data-icon="border_style" title="Edges (E)"
+          aria-label="Edges" aria-pressed="false"></button>
+        <button id="btnToggleGrid" class="rail-btn" type="button" data-icon="grid_on" title="Grid (G)"
+          aria-label="Grid" aria-pressed="false"></button>
+
+        <div class="rail-divider" role="none"></div>
+
+        <button id="btnIssuePinMode" class="rail-btn" type="button" data-icon="place" title="Issue pin mode (I)"
+          aria-label="Issue pin mode" aria-pressed="false"></button>
+      </div>
+
+      <!-- Viewport -->
+      <section class="viewport" role="main" aria-label="3D viewport">
         <div id="viewer-container" class="viewer" tabindex="0" aria-label="3D model viewer"></div>
 
-        <div id="loadingOverlay" class="loading-overlay" hidden>
-          <div class="loading-spinner"></div>
-          <span class="material-icons-round loading-error-icon" aria-hidden="true">error_outline</span>
-          <div id="loadingText" class="loading-text">Loading model...</div>
-          <div class="loading-bar">
-            <div id="loadingProgress" class="loading-fill"></div>
-          </div>
-          <!-- U4: overlay error state with Retry -->
-          <div id="loadingErrorActions" class="loading-error-actions" hidden>
-            <button id="btnRetryLoad" class="btn btn-primary btn-compact" type="button">Retry</button>
-            <button id="btnDismissLoadError" class="btn btn-secondary btn-compact" type="button">Dismiss</button>
-          </div>
-        </div>
-
+        <!-- Empty state -->
         <div id="emptyState" class="empty-state">
-          <span class="material-icons-round empty-icon">view_in_ar</span>
-          <h2>Load IFC Models</h2>
-          <p>Drop one or more IFC files in the viewport or click Load IFCs</p>
-          <button id="btnUploadEmpty" class="btn btn-primary btn-large">
-            <span class="material-icons-round">upload_file</span>
-            <span>Load IFC Files</span>
-          </button>
-        </div>
-
-        <div id="viewerHint" class="viewer-hint" hidden>
-          Issue pin mode active: click model to place issue anchor
-        </div>
-
-        <div class="view-cube" id="viewCube" aria-label="View cube">
-          <button id="cubeHome" class="view-cube-home" type="button" title="Home view" aria-label="Home view">
-            <span class="material-icons-round">home</span>
-            <span>Home</span>
-          </button>
-          <div class="view-cube-stage">
-            <div class="view-cube-body" id="viewCubeBody">
-              <div id="cubeFaceFront" class="view-cube-face face-front" data-cube-face="front">FRONT</div>
-              <div id="cubeFaceBack" class="view-cube-face face-back" data-cube-face="back">BACK</div>
-              <div id="cubeFaceRight" class="view-cube-face face-right" data-cube-face="right">RIGHT</div>
-              <div id="cubeFaceLeft" class="view-cube-face face-left" data-cube-face="left">LEFT</div>
-              <div id="cubeFaceTop" class="view-cube-face face-top" data-cube-face="top">TOP</div>
-              <div id="cubeFaceBottom" class="view-cube-face face-bottom" data-cube-face="bottom">BOTTOM</div>
+          <div class="empty-card">
+            <span class="empty-icon" data-icon="view_in_ar"></span>
+            <div class="empty-title">Load IFC models</div>
+            <p class="empty-body">Drop one or more IFC files in the viewport, or load them from disk. Federated models
+              stay aligned.</p>
+            <div class="empty-actions">
+              <button id="btnUploadEmpty" class="btn btn-primary" type="button">
+                <span class="btn-icon" data-icon="upload_file"></span>
+                <span>Load IFC files</span>
+              </button>
             </div>
-            <div id="viewCubeHotspots" class="view-cube-hotspots" aria-label="View cube navigation targets"></div>
           </div>
         </div>
 
+        <!-- Loading -->
+        <div id="loadingOverlay" class="loading-overlay" hidden>
+          <div class="loading-card">
+            <div class="loading-head">
+              <span class="loading-title" id="loadingText">Parsing IFC…</span>
+              <span class="numeric loading-pct" id="loadingPct"></span>
+            </div>
+            <div class="loading-bar">
+              <div id="loadingProgress" class="loading-fill"></div>
+            </div>
+            <span class="loading-error-icon" data-icon="error_outline" aria-hidden="true"></span>
+            <div id="loadingErrorActions" class="loading-error-actions" hidden>
+              <button id="btnRetryLoad" class="btn btn-primary btn-compact" type="button">Retry</button>
+              <button id="btnDismissLoadError" class="btn btn-ghost btn-compact" type="button">Dismiss</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- View controls (top-right glass) -->
+        <div class="glass view-controls" role="group" aria-label="View controls">
+          <button id="btnFitAll" class="glass-btn" type="button" data-icon="fit_screen" title="Fit all (F)"
+            aria-label="Fit all"></button>
+          <button id="cubeHome" class="glass-btn is-active" type="button" data-icon="3d_rotation" title="Orbit / home view"
+            aria-label="Orbit / home view"></button>
+          <button id="btnFront" class="glass-btn" type="button" data-icon="crop_portrait" title="Front view"
+            aria-label="Front view"></button>
+          <button id="btnTop" class="glass-btn" type="button" data-icon="crop_landscape" title="Top view"
+            aria-label="Top view"></button>
+        </div>
+
+        <!-- Nav-mode pill (bottom center glass) -->
+        <div class="glass nav-pill" id="navPill" role="group" aria-label="Navigation mode" hidden>
+          <button id="btnModeOrbit" class="nav-mode-btn is-active" type="button" aria-pressed="true">
+            <span class="btn-icon" data-icon="3d_rotation"></span><span>Orbit</span>
+          </button>
+          <button id="btnModePlan" class="nav-mode-btn" type="button" aria-pressed="false">
+            <span class="btn-icon" data-icon="map"></span><span>Plan</span>
+          </button>
+          <button id="btnModeFirstPerson" class="nav-mode-btn" type="button" aria-pressed="false">
+            <span class="btn-icon" data-icon="directions_walk"></span><span>Walk</span>
+          </button>
+        </div>
+
+        <!-- Measure hint (top center) -->
+        <div class="measure-hint" id="measureHint" hidden>
+          <span class="btn-icon" data-icon="straighten"></span>
+          <span id="measureHintText">Length — click two points</span>
+          <button id="btnCancelMeasure" class="measure-hint-esc" type="button">Esc</button>
+        </div>
+
+        <!-- Section slider (bottom center glass) -->
+        <div class="glass section-slider" id="sectionSlider" hidden>
+          <span class="eyebrow" id="sectionLabel">Section</span>
+          <input type="range" id="sectionPos" min="2" max="98" value="50" aria-label="Section plane position" />
+          <span class="numeric section-pos-label" id="sectionPosLabel">50%</span>
+          <button id="btnClearSectionSlider" class="glass-btn glass-btn-sm" type="button" data-icon="close"
+            title="Clear section" aria-label="Clear section"></button>
+        </div>
+
+        <!-- Selection chip (top left glass) -->
+        <div class="glass selection-chip" id="selectionChip" hidden>
+          <span class="sel-chip-icon" data-icon="deployed_code"></span>
+          <div class="sel-chip-text">
+            <div class="sel-chip-name" id="selChipName"></div>
+            <div class="sel-chip-meta" id="selChipMeta"></div>
+          </div>
+          <button id="btnClearSelection" class="glass-btn glass-btn-sm" type="button" data-icon="close"
+            title="Clear selection" aria-label="Clear selection"></button>
+        </div>
+
+        <div id="viewerHint" class="viewer-hint" hidden>Issue pin mode active: click model to place issue anchor</div>
       </section>
 
-      <div class="panel-splitter" data-splitter="right"></div>
+      <!-- Splitter (U9: pointer + keyboard) -->
+      <div class="panel-splitter" id="panelSplitter" role="separator" aria-orientation="vertical"
+        aria-label="Resize panel" aria-valuemin="280" aria-valuemax="400" aria-valuenow="320" tabindex="0"></div>
 
-      <aside class="side-panel" role="complementary" aria-label="Properties and tools">
-        <div class="panel-tabs-wrap">
-          <button class="tab-scroll-btn" data-scroll-dir="left" aria-label="Scroll tabs left">&#9664;</button>
-          <div class="panel-tabs" role="tablist" aria-label="Panel tabs">
-            <button class="tab-btn active" data-tab="explorer">Explorer</button>
-            <button class="tab-btn" data-tab="models">Models</button>
-            <button class="tab-btn" data-tab="properties">Properties</button>
-            <button class="tab-btn" data-tab="viewpoints">Viewpoints</button>
-            <button class="tab-btn" data-tab="issues">Issues</button>
-            <button class="tab-btn" data-tab="help">Help</button>
-          </div>
-          <button class="tab-scroll-btn" data-scroll-dir="right" aria-label="Scroll tabs right">&#9654;</button>
+      <!-- Right panel (320px) -->
+      <aside class="side-panel" id="sidePanel" aria-label="Details panel">
+        <div class="side-panel-header">
+          <span class="side-panel-title" id="panelTitle">Explorer</span>
         </div>
 
-        <div class="tab-panel active" id="panel-explorer">
-          <div class="section-title">Search</div>
-          <div class="search-row">
-            <input id="searchInput" class="text-input" placeholder="Name / GlobalId / type" />
-            <button id="btnSearch" class="btn btn-secondary btn-compact">Go</button>
-            <button id="btnClearSearch" class="btn btn-secondary btn-compact">Clear</button>
-          </div>
-
-          <div class="section-title">Class Filters</div>
-          <div id="classFilterList" class="filter-list"></div>
-
-          <div class="section-title">Level Filters</div>
-          <div id="levelFilterList" class="filter-list"></div>
-
-          <div class="row-actions">
-            <button id="btnApplyFilters" class="btn btn-secondary btn-compact">Apply Filters</button>
-            <button id="btnClearFilters" class="btn btn-secondary btn-compact">Reset Filters</button>
-          </div>
-
-          <div class="section-title">Search Results</div>
-          <div id="elementResults" class="list-box"></div>
-
-          <div class="section-title">Spatial Tree</div>
-          <div id="spatialTree" class="tree-box"></div>
-        </div>
-
-        <div class="tab-panel" id="panel-models">
-          <div class="section-title">Federated Models</div>
-          <div class="panel-subtitle panel-subtitle-inline">Visibility, opacity and manual XYZ/RXYZ alignment</div>
-          <div id="federationTree" class="federation-tree"></div>
-
-        </div>
-
-        <div class="tab-panel" id="panel-properties">
-          <div id="propsEmpty" class="props-empty">
-            <span class="material-icons-round">touch_app</span>
-            <p>Select element(s) to inspect properties</p>
-          </div>
-
-          <div id="propsContent" class="props-content" hidden>
-            <div class="section-title">Element</div>
-            <div class="property-grid">
-              <div class="prop-row"><span class="prop-key">Type</span><span id="propType" class="prop-val">-</span>
-              </div>
-              <div class="prop-row"><span class="prop-key">Name</span><span id="propName" class="prop-val">-</span>
-              </div>
-              <div class="prop-row"><span class="prop-key">GlobalId</span><span id="propGlobalId"
-                  class="prop-val">-</span></div>
-              <div class="prop-row"><span class="prop-key">Description</span><span id="propDescription"
-                  class="prop-val">-</span></div>
-              <div class="prop-row"><span class="prop-key">Storey</span><span id="propStory" class="prop-val">-</span>
-              </div>
+        <div class="side-panel-body">
+          <!-- EXPLORER -->
+          <div class="tab-panel is-active" id="panel-explorer" role="tabpanel" aria-labelledby="tab-explorer"
+            tabindex="0">
+            <div class="search-box">
+              <span class="search-icon" data-icon="search"></span>
+              <input id="searchInput" class="search-input" type="search" placeholder="Search elements, GlobalId…"
+                aria-label="Search elements" />
+              <button id="btnClearSearch" class="search-clear" type="button" data-icon="close" title="Clear search"
+                aria-label="Clear search" hidden></button>
             </div>
 
-            <div class="properties-toolbar">
-              <label class="properties-filter" for="propFilterInput">
-                <span class="material-icons-round">filter_list</span>
-                <input id="propFilterInput" class="text-input" placeholder="Filter properties" />
-              </label>
+            <div class="panel-group">
+              <div class="eyebrow">Class filters</div>
+              <div id="classFilterList" class="chip-row"></div>
             </div>
 
-            <div id="propSections" class="props-sections"></div>
-          </div>
-        </div>
+            <div class="panel-group">
+              <div class="eyebrow">Level filters</div>
+              <div id="levelFilterList" class="chip-row"></div>
+            </div>
 
-        <div class="tab-panel" id="panel-viewpoints">
-          <div class="section-title">Save Viewpoint</div>
-          <div class="search-row">
-            <input id="viewpointName" class="text-input" placeholder="Viewpoint name" />
-            <button id="btnSaveViewpoint" class="btn btn-secondary btn-compact">Save</button>
-          </div>
-          <div class="row-actions">
-            <button id="btnApplySelectedViewpoint" class="btn btn-secondary btn-compact">Apply</button>
-            <button id="btnDeleteSelectedViewpoint" class="btn btn-secondary btn-compact">Delete</button>
-          </div>
-          <div id="viewpointList" class="list-box"></div>
-        </div>
+            <div class="panel-group" id="searchResultsGroup" hidden>
+              <div class="eyebrow">Search results</div>
+              <div id="elementResults" class="list-box"></div>
+            </div>
 
-        <div class="tab-panel" id="panel-issues">
-          <div class="section-title">Create Issue</div>
-          <input id="issueTitle" class="text-input" placeholder="Issue title" />
-          <textarea id="issueDescription" class="text-area" placeholder="Issue description"></textarea>
-          <div class="search-row">
-            <select id="issuePriority" class="text-input">
-              <option value="Critical">Critical</option>
-              <option value="High">High</option>
-              <option value="Medium" selected>Medium</option>
-              <option value="Low">Low</option>
-            </select>
-            <select id="issueStatus" class="text-input">
-              <option value="Open" selected>Open</option>
-              <option value="In Progress">In Progress</option>
-              <option value="Resolved">Resolved</option>
-              <option value="Closed">Closed</option>
-            </select>
-          </div>
-          <input id="issueAssignee" class="text-input" placeholder="Assignee" />
-          <div class="row-actions">
-            <button id="btnCreateIssue" class="btn btn-secondary btn-compact">Create from Selection</button>
-            <button id="btnDeleteIssue" class="btn btn-secondary btn-compact">Delete Selected</button>
+            <div class="panel-group">
+              <div class="eyebrow">Spatial tree</div>
+              <div id="modelBrowserTree" class="tree-box"></div>
+            </div>
           </div>
 
-          <div class="section-title">Issues</div>
-          <div id="issuesList" class="list-box"></div>
-
-          <div class="section-title">Comments</div>
-          <div class="search-row">
-            <input id="issueCommentInput" class="text-input" placeholder="Add comment" />
-            <button id="btnAddIssueComment" class="btn btn-secondary btn-compact">Add</button>
-          </div>
-          <div id="issueComments" class="list-box compact"></div>
-        </div>
-
-        <div class="tab-panel" id="panel-help">
-          <div class="section-title">Keyboard Shortcuts</div>
-          <div class="help-list">
-            <div><kbd>F</kbd> Fit model</div>
-            <div><kbd>1</kbd> Orbit mode</div>
-            <div><kbd>2</kbd> Plan mode</div>
-            <div><kbd>3</kbd> First-person mode</div>
-            <div><kbd>M</kbd> Toggle multi-select</div>
-            <div><kbd>L</kbd> Length measurement</div>
-            <div><kbd>A</kbd> Area measurement</div>
-            <div><kbd>G</kbd> Toggle grid</div>
-            <div><kbd>X</kbd> Toggle X-ray</div>
-            <div><kbd>E</kbd> Toggle edges</div>
-            <div><kbd>I</kbd> Toggle issue pin mode</div>
-            <div><kbd>W</kbd> Gizmo translate mode</div>
-            <div><kbd>E</kbd> Gizmo rotate mode (when gizmo active)</div>
-            <div><kbd>R</kbd> Reset model transform (when gizmo active)</div>
-            <div><kbd>Esc</kbd> Cancel active tool</div>
-            <div><kbd>Del</kbd> Delete selected issue</div>
+          <!-- MODELS -->
+          <div class="tab-panel" id="panel-models" role="tabpanel" aria-labelledby="tab-models" tabindex="0" hidden>
+            <div class="eyebrow">Federated models</div>
+            <div id="federationTree" class="federation-tree"></div>
           </div>
 
-          <div class="section-title">Tips</div>
-          <div class="help-list">
-            <div>Use filters in Explorer to isolate classes and levels.</div>
-            <div>Save viewpoints before creating issues for better traceability.</div>
-            <div>Use Export to persist standalone session data.</div>
+          <!-- PROPERTIES -->
+          <div class="tab-panel" id="panel-properties" role="tabpanel" aria-labelledby="tab-properties" tabindex="0"
+            hidden>
+            <div id="propsEmpty" class="props-empty">
+              <span class="props-empty-icon" data-icon="touch_app"></span>
+              <p>Select an element in the viewport or the spatial tree to inspect its properties.</p>
+            </div>
+
+            <div id="propsContent" class="props-content" hidden>
+              <div class="eyebrow">Attributes</div>
+              <div class="property-grid">
+                <div class="prop-row"><span class="prop-key">Type</span><span id="propType" class="prop-val">—</span>
+                </div>
+                <div class="prop-row"><span class="prop-key">Name</span><span id="propName" class="prop-val">—</span>
+                </div>
+                <div class="prop-row"><span class="prop-key">GlobalId</span><span id="propGlobalId"
+                    class="prop-val prop-mono">—</span></div>
+                <div class="prop-row"><span class="prop-key">Storey</span><span id="propStory"
+                    class="prop-val">—</span></div>
+                <div class="prop-row"><span class="prop-key">Description</span><span id="propDescription"
+                    class="prop-val">—</span></div>
+              </div>
+
+              <div class="props-filter-row">
+                <span class="search-icon" data-icon="filter_list"></span>
+                <input id="propFilterInput" class="search-input" placeholder="Filter properties"
+                  aria-label="Filter properties" />
+              </div>
+
+              <div id="propSections" class="props-sections"></div>
+
+              <div class="props-actions">
+                <button id="btnPropsIsolate" class="btn btn-primary btn-block" type="button">Isolate</button>
+                <button id="btnPropsHide" class="btn btn-ghost btn-block" type="button">Hide</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- VIEWPOINTS -->
+          <div class="tab-panel" id="panel-viewpoints" role="tabpanel" aria-labelledby="tab-viewpoints" tabindex="0"
+            hidden>
+            <div class="save-viewpoint-row">
+              <input id="viewpointName" class="text-input" placeholder="Viewpoint name" aria-label="Viewpoint name" />
+              <button id="btnSaveViewpoint" class="btn btn-primary btn-block" type="button">
+                <span class="btn-icon" data-icon="photo_camera"></span>
+                <span>Save current viewpoint</span>
+              </button>
+            </div>
+            <div id="viewpointList" class="list-box"></div>
+          </div>
+
+          <!-- ISSUES -->
+          <div class="tab-panel" id="panel-issues" role="tabpanel" aria-labelledby="tab-issues" tabindex="0" hidden>
+            <div class="issue-form card">
+              <div class="eyebrow">New issue</div>
+              <input id="issueTitle" class="text-input" placeholder="Issue title…" aria-label="Issue title" />
+              <textarea id="issueDescription" class="text-area" placeholder="Description (optional)"
+                aria-label="Issue description"></textarea>
+              <div class="issue-form-row">
+                <label class="field">
+                  <span class="field-label">Priority</span>
+                  <select id="issuePriority" class="text-input">
+                    <option value="Critical">Critical</option>
+                    <option value="High">High</option>
+                    <option value="Medium" selected>Medium</option>
+                    <option value="Low">Low</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span class="field-label">Status</span>
+                  <select id="issueStatus" class="text-input">
+                    <option value="Open" selected>Open</option>
+                    <option value="In Progress">In Progress</option>
+                    <option value="Resolved">Resolved</option>
+                    <option value="Closed">Closed</option>
+                  </select>
+                </label>
+              </div>
+              <input id="issueAssignee" class="text-input" placeholder="Assignee (optional)" aria-label="Assignee" />
+              <button id="btnCreateIssue" class="btn btn-primary btn-block" type="button">Create issue</button>
+            </div>
+
+            <div id="issuesList" class="list-box"></div>
+
+            <div class="panel-group" id="issueCommentsGroup" hidden>
+              <div class="eyebrow">Comments</div>
+              <div class="save-viewpoint-row">
+                <input id="issueCommentInput" class="text-input" placeholder="Add comment" aria-label="Add comment" />
+                <button id="btnAddIssueComment" class="btn btn-ghost btn-block" type="button">
+                  <span class="btn-icon" data-icon="add_comment"></span><span>Add comment</span>
+                </button>
+              </div>
+              <div id="issueComments" class="list-box compact"></div>
+            </div>
+            <button id="btnDeleteIssue" class="btn btn-ghost btn-block" type="button" hidden>Delete selected
+              issue</button>
+          </div>
+
+          <!-- HELP -->
+          <div class="tab-panel" id="panel-help" role="tabpanel" aria-labelledby="tab-help" tabindex="0" hidden>
+            <div class="eyebrow">Keyboard shortcuts</div>
+            <div class="shortcut-list">
+              <div class="shortcut-row"><kbd>F</kbd><span>Fit model</span></div>
+              <div class="shortcut-row"><kbd>1–3</kbd><span>Orbit / Plan / Walk mode</span></div>
+              <div class="shortcut-row"><kbd>M</kbd><span>Toggle multi-select</span></div>
+              <div class="shortcut-row"><kbd>L</kbd><span>Length measurement</span></div>
+              <div class="shortcut-row"><kbd>A</kbd><span>Area measurement</span></div>
+              <div class="shortcut-row"><kbd>G</kbd><span>Toggle grid</span></div>
+              <div class="shortcut-row"><kbd>X</kbd><span>Toggle X-ray</span></div>
+              <div class="shortcut-row"><kbd>E</kbd><span>Toggle edges</span></div>
+              <div class="shortcut-row"><kbd>I</kbd><span>Toggle issue pin mode</span></div>
+              <div class="shortcut-row"><kbd>Esc</kbd><span>Cancel active tool</span></div>
+            </div>
+            <div class="eyebrow">Tips</div>
+            <p class="help-tip">Use class and level filters in the Explorer to isolate scope. Save viewpoints before
+              creating issues for better traceability. Export state to persist a standalone session.</p>
           </div>
         </div>
       </aside>
+
+      <!-- Right tab strip (48px) -->
+      <div class="tab-strip" role="tablist" aria-label="Panel tabs" aria-orientation="vertical">
+        <button class="tab-strip-btn is-active" id="tab-explorer" role="tab" data-tab="explorer"
+          aria-selected="true" aria-controls="panel-explorer" data-icon="account_tree" title="Explorer"
+          aria-label="Explorer"></button>
+        <button class="tab-strip-btn" id="tab-models" role="tab" data-tab="models" aria-selected="false"
+          aria-controls="panel-models" tabindex="-1" data-icon="deployed_code" title="Models"
+          aria-label="Models"></button>
+        <button class="tab-strip-btn" id="tab-properties" role="tab" data-tab="properties" aria-selected="false"
+          aria-controls="panel-properties" tabindex="-1" data-icon="info" title="Properties"
+          aria-label="Properties"></button>
+        <button class="tab-strip-btn" id="tab-viewpoints" role="tab" data-tab="viewpoints" aria-selected="false"
+          aria-controls="panel-viewpoints" tabindex="-1" data-icon="photo_camera" title="Viewpoints"
+          aria-label="Viewpoints"></button>
+        <button class="tab-strip-btn" id="tab-issues" role="tab" data-tab="issues" aria-selected="false"
+          aria-controls="panel-issues" tabindex="-1" data-icon="flag" title="Issues" aria-label="Issues"></button>
+        <button class="tab-strip-btn" id="tab-help" role="tab" data-tab="help" aria-selected="false"
+          aria-controls="panel-help" tabindex="-1" data-icon="help" title="Help" aria-label="Help"></button>
+      </div>
     </div>
 
-    <!-- Status Bar (24px) — full width below main grid -->
-    <div class="status-bar">
+    <!-- ══════════════ STATUS BAR (30px) ══════════════ -->
+    <footer class="status-bar">
+      <span class="status-dot" aria-hidden="true"></span>
       <span id="statusText" class="status-item" role="status" aria-live="polite">Ready</span>
-      <span id="selectionCount" class="status-pill">0 selected</span>
-      <span id="elementCount" class="status-pill">0 elements</span>
-      <span id="visibleCount" class="status-pill">0 visible</span>
-      <!-- A15: load metrics get their own slot so the FPS monitor no longer
-           overwrites them within a second of a load finishing. -->
-      <span id="loadInfo" class="status-item status-right"></span>
-      <span id="perfInfo" class="status-item"></span>
+      <span id="selectionCount" class="numeric status-pill">0 selected</span>
+      <span id="elementCount" class="numeric status-pill">0 elements</span>
+      <span id="visibleCount" class="numeric status-pill">0 visible</span>
+      <span class="status-spacer"></span>
+      <span id="loadInfo" class="status-item"></span>
+      <span id="perfInfo" class="numeric status-item"></span>
+      <span id="viewLabel" class="status-item">Orbit · perspective</span>
+    </footer>
+
+    <!-- ══════════════ MOBILE: bottom nav + fit FAB (≤767px) ══════════════ -->
+    <button class="mobile-fab" id="mobileFab" type="button" data-icon="fit_screen" title="Fit model"
+      aria-label="Fit model"></button>
+
+    <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
+      <button class="mobile-nav-btn is-active" data-mobile-nav="tree" type="button">
+        <span class="mobile-nav-pill"><span class="btn-icon" data-icon="account_tree"></span></span>
+        <span class="mobile-nav-label">Tree</span>
+      </button>
+      <button class="mobile-nav-btn" data-mobile-nav="orbit" type="button">
+        <span class="mobile-nav-pill"><span class="btn-icon" data-icon="3d_rotation"></span></span>
+        <span class="mobile-nav-label">Orbit</span>
+      </button>
+      <button class="mobile-nav-btn" data-mobile-nav="section" type="button">
+        <span class="mobile-nav-pill"><span class="btn-icon" data-icon="content_cut"></span></span>
+        <span class="mobile-nav-label">Section</span>
+      </button>
+      <button class="mobile-nav-btn" data-mobile-nav="measure" type="button">
+        <span class="mobile-nav-pill"><span class="btn-icon" data-icon="straighten"></span></span>
+        <span class="mobile-nav-label">Measure</span>
+      </button>
+      <button class="mobile-nav-btn" data-mobile-nav="more" type="button">
+        <span class="mobile-nav-pill"><span class="btn-icon" data-icon="more_horiz"></span></span>
+        <span class="mobile-nav-label">More</span>
+      </button>
+    </nav>
+
+    <!-- Drawer backdrop (tablet/phone panel + sheet) -->
+    <div class="scrim" id="scrim" hidden></div>
+
+    <!-- Mobile "More" sheet (U2: theme/style/settings reachable) -->
+    <div class="mobile-sheet" id="mobileSheet" role="dialog" aria-modal="false" aria-label="View settings">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <span class="sheet-title" id="sheetTitle">View settings</span>
+        <button id="btnCloseSheet" class="btn-icon-only" type="button" data-icon="close" title="Close"
+          aria-label="Close sheet"></button>
+      </div>
+      <div class="sheet-body" id="sheetBody"></div>
     </div>
   </div>
 
-  <!-- Mobile-only elements (hidden on desktop via CSS) -->
-  <button class="mobile-fab" id="mobileFab" title="Load IFC files" aria-label="Load IFC files">
-    <span class="material-icons-round">upload_file</span>
-  </button>
+  <!-- Confirm dialog (U8: native <dialog>, focus trap + Escape + focus restore) -->
+  <dialog id="confirmDialog" class="confirm-dialog">
+    <form method="dialog" class="confirm-form">
+      <p class="confirm-message" id="confirmMessage"></p>
+      <div class="confirm-actions">
+        <button id="confirmCancel" class="btn btn-ghost" value="cancel" type="submit">Cancel</button>
+        <button id="confirmOk" class="btn btn-primary" value="confirm" type="submit">Confirm</button>
+      </div>
+    </form>
+  </dialog>
 
-  <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
-    <button class="mobile-nav-btn" data-mobile-nav="tree">
-      <span class="material-icons-round">account_tree</span>
-      <span>Tree</span>
-    </button>
-    <button class="mobile-nav-btn" data-mobile-nav="orbit">
-      <span class="material-icons-round">3d_rotation</span>
-      <span>Orbit</span>
-    </button>
-    <button class="mobile-nav-btn" data-mobile-nav="section">
-      <span class="material-icons-round">content_cut</span>
-      <span>Section</span>
-    </button>
-    <button class="mobile-nav-btn" data-mobile-nav="measure">
-      <span class="material-icons-round">straighten</span>
-      <span>Measure</span>
-    </button>
-    <button class="mobile-nav-btn" data-mobile-nav="more">
-      <span class="material-icons-round">more_horiz</span>
-      <span>More</span>
-    </button>
-  </nav>
+  <!-- Toast region (U4/U11) -->
+  <div class="toast-region" id="toastRegion" role="region" aria-label="Notifications" aria-live="polite"></div>
 
   <script type="module" src="./viewer.ts"></script>
-  <!-- Shell behaviors (splitters, menus, tab scroll) — bundled module so the
-       CSP can enforce script-src 'self' without 'unsafe-inline' (A1). -->
-  <script type="module" src="./shell.ts"></script>
 </body>
 
 </html>

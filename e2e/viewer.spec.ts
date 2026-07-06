@@ -164,10 +164,18 @@ const waitForCameraMove = async (page: Page, before: CameraPosition): Promise<vo
     .toBeTruthy();
 };
 
-const clickVisibleCubeTarget = async (page: Page, key: string): Promise<void> => {
-  const target = page.locator(`[data-cube-target="${key}"][data-visible="true"]`).first();
-  await expect(target).toBeVisible();
-  await target.click();
+// W3: the interactive 3D view-cube widget was replaced by the glass view-control
+// buttons (fit / orbit-home / front / top). Map the old cube keys used by the
+// camera tests onto those buttons.
+const clickViewControl = async (page: Page, key: string): Promise<void> => {
+  const id = key === 'front' ? '#btnFront' : key === 'top' ? '#btnTop' : '#cubeHome';
+  await page.click(id);
+};
+
+// Opens a panel tab via the right tab strip (U7 real tabs).
+const openTab = async (page: Page, tab: string): Promise<void> => {
+  await page.click(`#tab-${tab}`);
+  await expect(page.locator(`#panel-${tab}`)).toBeVisible();
 };
 
 const getExpectedCubeDirection = async (
@@ -258,7 +266,7 @@ test.describe('shell & boot', () => {
     await page.click('#btnUploadEmpty');
     await emptyUploadChooser;
 
-    await expect(page.locator('.header-center')).toHaveCount(0);
+    await expect(page.locator('#emptyState')).toBeVisible();
   });
 
   test('loads the model, exports a screenshot and cycles panel tabs', async ({ appPage: page }, testInfo) => {
@@ -278,10 +286,11 @@ test.describe('shell & boot', () => {
     expect((await screenshotDownload).suggestedFilename()).toMatch(/\.png$/);
 
     for (const tab of ['explorer', 'models', 'properties', 'viewpoints', 'issues', 'help']) {
-      await page.click(`.tab-btn[data-tab="${tab}"]`);
-      await expect(page.locator(`#panel-${tab}`)).toHaveClass(/active/);
+      await page.click(`#tab-${tab}`);
+      await expect(page.locator(`#panel-${tab}`)).toBeVisible();
+      await expect(page.locator(`#tab-${tab}`)).toHaveAttribute('aria-selected', 'true');
     }
-    await page.click('.tab-btn[data-tab="explorer"]');
+    await openTab(page, 'explorer');
     // Viewport screenshot: element screenshots wait for two stable rAF frames,
     // which starves on the ~2 FPS headless WebGL page (P6). These artifacts
     // are never pixel-compared (T5) — the viewport capture is enough.
@@ -292,43 +301,42 @@ test.describe('shell & boot', () => {
 test.describe('camera & navigation', () => {
   test('switches navigation modes', async ({ appPage: page }) => {
     await page.click('#btnModePlan');
-    await expect(page.locator('#btnModePlan')).toHaveClass(/active/);
+    await expect(page.locator('#btnModePlan')).toHaveClass(/is-active/);
 
     await page.click('#btnModeFirstPerson');
-    await expect(page.locator('#btnModeFirstPerson')).toHaveClass(/active/);
+    await expect(page.locator('#btnModeFirstPerson')).toHaveClass(/is-active/);
 
     await page.click('#btnModeOrbit');
-    await expect(page.locator('#btnModeOrbit')).toHaveClass(/active/);
+    await expect(page.locator('#btnModeOrbit')).toHaveClass(/is-active/);
   });
 
-  test('view cube and preset views drive the camera', async ({ appPage: page }) => {
+  test('view-control buttons drive the camera', async ({ appPage: page }) => {
     const beforeFront = await getCameraPosition(page);
     const expectedFrontDirection = await getExpectedCubeDirection(page, [0, 0, 1]);
-    await clickVisibleCubeTarget(page, 'front');
+    await clickViewControl(page, 'front');
     await waitForCameraDirection(page, expectedFrontDirection);
     expect(cameraChanged(beforeFront, await getCameraPosition(page))).toBeTruthy();
-
-    const expectedCornerDirection = await getExpectedCubeDirection(page, [1, 1, 1]);
-    await clickVisibleCubeTarget(page, 'top-front-right');
-    await waitForCameraDirection(page, expectedCornerDirection, 0.975);
+    await expect(page.locator('#btnFront')).toHaveClass(/is-active/);
 
     const expectedHomeDirection = await getExpectedCubeDirection(page, [1, 1, 1]);
     await page.click('#cubeHome');
     await waitForCameraDirection(page, expectedHomeDirection, 0.975);
+    await expect(page.locator('#cubeHome')).toHaveClass(/is-active/);
 
     const beforeTop = await getCameraPosition(page);
     await page.click('#btnTop');
     await waitForCameraMove(page, beforeTop);
+    await expect(page.locator('#btnTop')).toHaveClass(/is-active/);
   });
 });
 
 test.describe('selection & search', () => {
   test('toggles selection modes', async ({ appPage: page }) => {
     await page.click('#btnSelectMulti');
-    await expect(page.locator('#btnSelectMulti')).toHaveClass(/active/);
+    await expect(page.locator('#btnSelectMulti')).toHaveClass(/is-active/);
 
     await page.click('#btnSelectSingle');
-    await expect(page.locator('#btnSelectSingle')).toHaveClass(/active/);
+    await expect(page.locator('#btnSelectSingle')).toHaveClass(/is-active/);
   });
 
   // T6 (W2.5): canvas pick+select path coverage via the frozen test API.
@@ -358,29 +366,29 @@ test.describe('selection & search', () => {
   // number keys drive navigation modes (onKeyDown in viewer.ts).
   test('keyboard shortcuts toggle selection and navigation modes', async ({ appPage: page }) => {
     await page.click('#btnSelectSingle');
-    await expect(page.locator('#btnSelectSingle')).toHaveClass(/active/);
+    await expect(page.locator('#btnSelectSingle')).toHaveClass(/is-active/);
 
     // 'm' toggles single <-> multi.
     await page.locator('body').press('m');
-    await expect(page.locator('#btnSelectMulti')).toHaveClass(/active/);
+    await expect(page.locator('#btnSelectMulti')).toHaveClass(/is-active/);
     await page.locator('body').press('m');
-    await expect(page.locator('#btnSelectSingle')).toHaveClass(/active/);
+    await expect(page.locator('#btnSelectSingle')).toHaveClass(/is-active/);
 
     // '2' = Plan, '1' = Orbit navigation.
     await page.locator('body').press('2');
-    await expect(page.locator('#btnModePlan')).toHaveClass(/active/);
+    await expect(page.locator('#btnModePlan')).toHaveClass(/is-active/);
     await page.locator('body').press('1');
-    await expect(page.locator('#btnModeOrbit')).toHaveClass(/active/);
+    await expect(page.locator('#btnModeOrbit')).toHaveClass(/is-active/);
   });
 
   // AUDIT F1 regression: search used to crash on any hit (raw ItemAttribute
   // objects fed into escapeHtml) — fixed in W1.1 by unwrapping to primitives.
   test('search finds elements and selects from results', async ({ appPage: page }) => {
     const modelContext = await getModelContext(page);
+    // Live search on input (design has no explicit Go button); debounced 300ms.
     await page.fill('#searchInput', modelContext.searchTerm.split(':')[0].trim());
-    await page.click('#btnSearch');
-    await expect(page.locator('.result-item').first()).toBeVisible();
-    await page.locator('.result-item').first().click();
+    await expect(page.locator('.result-row').first()).toBeVisible();
+    await page.locator('.result-row').first().click();
     await expect(page.locator('#selectionCount')).toHaveText(/1 selected/);
   });
 
@@ -393,23 +401,33 @@ test.describe('selection & search', () => {
     expect(disjoint).not.toBeNull();
     if (!disjoint) return;
 
-    const visibleBefore = await page.locator('#visibleCount').textContent();
-    await page.check(`input[data-filter-type="class"][value="${disjoint.className}"]`);
-    await page.check(`input[data-filter-type="level"][value="${disjoint.levelName}"]`);
-    await page.click('#btnApplyFilters');
+    // Filter chips apply immediately on toggle (design: no Apply button), so
+    // the first (valid) chip already reduces visibility. Capture the state just
+    // BEFORE the disjoint second chip; F11 requires that click leaves it
+    // untouched (and >0) rather than hiding the whole model.
+    const readVisible = async (): Promise<number> =>
+      Number((await page.locator('#visibleCount').textContent())?.replace(/\D/g, '') || '0');
+    await page.click(`.filter-chip[data-filter-type="class"][data-filter-value="${disjoint.className}"]`);
+    await waitForStatus(page, 'Filters applied');
+    const visibleBeforeDisjoint = await readVisible();
+    expect(visibleBeforeDisjoint).toBeGreaterThan(0);
+
+    await page.click(`.filter-chip[data-filter-type="level"][data-filter-value="${disjoint.levelName}"]`);
     await expect(page.locator('.toast-warning')).toBeVisible();
     await waitForStatus(page, 'Selected filters have no elements in common');
-    await expect(page.locator('#visibleCount')).toHaveText(visibleBefore || '');
+    expect(await readVisible()).toBe(visibleBeforeDisjoint);
 
-    await page.click('#btnClearFilters');
-    await waitForStatus(page, 'Filters reset');
+    // Toggling the chips back off clears the filter (shows all).
+    await page.click(`.filter-chip[data-filter-type="class"][data-filter-value="${disjoint.className}"]`);
+    await page.click(`.filter-chip[data-filter-type="level"][data-filter-value="${disjoint.levelName}"]`);
+    await waitForStatus(page, 'Showing all elements');
   });
 });
 
 test.describe('properties panel', () => {
   test('shows, filters and scrolls properties for selections', async ({ appPage: page }, testInfo) => {
     await ensureSingleSelection(page);
-    await page.click('.tab-btn[data-tab="properties"]');
+    await page.click('#tab-properties');
     await expect(page.locator('#propsContent')).toBeVisible();
     await expect(page.locator('#propName')).not.toHaveText('-');
     expect(await page.locator('.prop-section').count()).toBeGreaterThan(3);
@@ -427,7 +445,7 @@ test.describe('properties panel', () => {
       },
       thicknessItem,
     );
-    await page.click('.tab-btn[data-tab="properties"]');
+    await page.click('#tab-properties');
     await expect(page.locator('#propsContent')).toBeVisible();
     await page.fill('#propFilterInput', 'thickness');
     await expect(page.locator('#panel-properties')).toContainText(/Thickness/i);
@@ -447,7 +465,7 @@ test.describe('properties panel', () => {
       },
       scrollStressItem,
     );
-    await page.click('.tab-btn[data-tab="properties"]');
+    await page.click('#tab-properties');
     await expect(page.locator('#propsContent')).toBeVisible();
     await expect(page.locator('#panel-properties')).toContainText(/Materials/i);
     await expect(page.locator('#panel-properties')).toContainText(/Raw IFC/i);
@@ -469,34 +487,36 @@ test.describe('properties panel', () => {
       { timeout: STATE_TIMEOUT },
     );
     const propertiesScrollState = await page.evaluate(() => {
-      const sections = document.querySelector('#propSections');
-      const panel = document.querySelector('#panel-properties');
-      if (!sections) return null;
+      // W3: the panel body (.side-panel-body) is the scroll container; sections
+      // grow within it. Verify the body scrolls and all sections start open.
+      const body = document.querySelector('.side-panel-body');
+      if (!body) return null;
       return {
-        panelOverflowY: panel ? getComputedStyle(panel).overflowY : null,
-        sectionsOverflowY: getComputedStyle(sections).overflowY,
+        bodyOverflowY: getComputedStyle(body).overflowY,
+        scrollable: body.scrollHeight > body.clientHeight,
         sectionCount: document.querySelectorAll('.prop-section').length,
         openSectionCount: document.querySelectorAll('.prop-section[open]').length,
       };
     });
     expect(propertiesScrollState).not.toBeNull();
-    expect(propertiesScrollState?.panelOverflowY).toBe('hidden');
-    expect(propertiesScrollState?.sectionsOverflowY).toBe('auto');
+    expect(propertiesScrollState?.bodyOverflowY).toBe('auto');
+    expect(propertiesScrollState?.scrollable).toBe(true);
     expect(propertiesScrollState?.openSectionCount).toBe(propertiesScrollState?.sectionCount);
-    await expect(page.locator('#viewerDock')).toBeVisible();
-    const dockBounds = await page.locator('#viewerDock').boundingBox();
+    // W3: tools live on the left rail; it must stay within the viewport height.
+    await expect(page.locator('.tool-rail')).toBeVisible();
+    const railBounds = await page.locator('.tool-rail').boundingBox();
     const viewport = page.viewportSize();
-    expect(dockBounds).not.toBeNull();
+    expect(railBounds).not.toBeNull();
     expect(viewport).not.toBeNull();
-    if (!dockBounds || !viewport) {
-      throw new Error('Viewer dock bounds unavailable');
+    if (!railBounds || !viewport) {
+      throw new Error('Tool rail bounds unavailable');
     }
-    expect(dockBounds.y + dockBounds.height).toBeLessThanOrEqual(viewport.height);
+    expect(railBounds.y + railBounds.height).toBeLessThanOrEqual(viewport.height + 1);
 
     // Restore the shared fixture page for subsequent describe blocks.
     await page.setViewportSize(VIEWPORT);
     await waitForLayoutSettle(page);
-    await page.click('.tab-btn[data-tab="explorer"]');
+    await page.click('#tab-explorer');
   });
 });
 
@@ -508,9 +528,10 @@ test.describe('visibility, measure, section & visual tools', () => {
     await page.click('#btnHide');
     await waitForStatus(page, 'Selection hidden');
 
-    await page.click('#btnShow');
-    await waitForStatus(page, 'Selection shown');
+    await page.click('#btnResetVisibility');
+    await waitForStatus(page, 'Visibility reset');
 
+    await ensureSingleSelection(page);
     await page.click('#btnIsolate');
     await waitForStatus(page, 'Selection isolated');
 
@@ -553,58 +574,31 @@ test.describe('visibility, measure, section & visual tools', () => {
 });
 
 test.describe('models panel', () => {
-  test('visual style, grid and background settings apply', async ({ appPage: page }) => {
-    // Style/grid/background controls live only in the View menubar dropdown
-    // since the ui-overhaul (AUDIT U2/T10) — open it before interacting.
-    // Inline menu controls stopPropagation, so the menu stays open between
-    // steps; a titlebar click closes it again at the end.
-    await page.locator('.menu-dropdown', { has: page.locator('#visualStyleSelect') }).locator('.menu-item').click();
-    await expect(page.locator('#visualStyleSelect')).toBeVisible();
+  test('visual style, grid and theme settings apply', async ({ appPage: page }) => {
+    // W3: visual style is set via the test API (the picker lives in the mobile
+    // "More" sheet, not the desktop chrome); grid + theme are rail/topbar
+    // buttons.
+    await page.evaluate(() => window.__viewerTestApi?.setVisualStyle('basic'));
+    await page.evaluate(() => window.__viewerTestApi?.setVisualStyle('color-pen-shadows'));
+    // T11: leave the shared fixture on the cheap style for the rest of the suite.
+    await page.evaluate(() => window.__viewerTestApi?.setVisualStyle('basic'));
 
-    await page.selectOption('#visualStyleSelect', 'basic');
-    await waitForStatus(page, 'Visual style: Basic');
+    // Grid toggle (rail button, aria-pressed reflects state).
+    const gridWasOn = (await page.locator('#btnToggleGrid').getAttribute('aria-pressed')) === 'true';
+    await page.click('#btnToggleGrid');
+    await waitForStatus(page, gridWasOn ? 'Grid hidden' : 'Grid enabled');
+    await page.click('#btnToggleGrid');
+    await waitForStatus(page, gridWasOn ? 'Grid enabled' : 'Grid hidden');
 
-    await page.selectOption('#visualStyleSelect', 'color-pen-shadows');
-    await waitForStatus(page, 'Visual style: Color Pen Shadows');
-
-    // T11: return the shared fixture page to the cheap style right after the
-    // heavy-preset assertion so the rest of the suite is not render-starved
-    // on the CI runner's SwiftShader.
-    await page.selectOption('#visualStyleSelect', 'basic');
-    await waitForStatus(page, 'Visual style: Basic');
-
-    const gridWasChecked = await page.locator('#toggleGrid').isChecked();
-    await page.click('#toggleGrid');
-    await waitForStatus(page, gridWasChecked ? 'Grid hidden' : 'Grid enabled');
-
-    await page.click('#toggleGrid');
-    await waitForStatus(page, gridWasChecked ? 'Grid enabled' : 'Grid hidden');
-
-    await page.click('[data-bg-preset="#c6d5e8"]');
-    await waitForStatus(page, 'Background color set to #c6d5e8');
-    await expect(page.locator('#backgroundColorInput')).toHaveValue('#c6d5e8');
-
-    // AUDIT F8: a custom background survives a theme round-trip — the theme
-    // toggle swaps per-theme memory instead of force-resetting defaults.
-    await page.click('[data-bg-preset="#1b1f24"]');
-    await waitForStatus(page, 'Background color set to #1b1f24');
-    await page.click('#toggleTheme');
+    // Theme toggle (topbar button) flips data-theme; both themes ship (U2).
+    await page.click('#btnThemeToggle');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-    await expect(page.locator('#backgroundColorInput')).toHaveValue('#c6d5e8');
-    await page.click('#toggleTheme');
+    await page.click('#btnThemeToggle');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
-    await expect(page.locator('#backgroundColorInput')).toHaveValue('#1b1f24');
-
-    // Restore the default dark background for subsequent tests.
-    await page.click('[data-bg-preset="#0b1220"]');
-    await waitForStatus(page, 'Background color set to #0b1220');
-
-    await page.locator('.app-titlebar').click();
-    await expect(page.locator('#visualStyleSelect')).toBeHidden();
   });
 
   test('per-model visibility, opacity and transforms round-trip', async ({ appPage: page }, testInfo) => {
-    await page.click('.tab-btn[data-tab="models"]');
+    await page.click('#tab-models');
 
     await page.click('[data-model-action="toggle-visibility"]');
     await waitForStatus(page, 'Hidden: school_str.ifc');
@@ -627,16 +621,15 @@ test.describe('models panel', () => {
     await yRotation.dispatchEvent('change');
     await waitForStatus(page, 'Updated transform: school_str.ifc');
 
-    await page.click('.tab-btn[data-tab="explorer"]');
-    // Return to a known camera first: cube hotspots only render when facing
-    // the camera (data-visible), and the preceding tests leave the camera on
-    // a top-down view where the 'front' hotspot is hidden.
+    await page.click('#tab-explorer');
+    // After a 90° model rotation, the anchor basis rotates too — the view
+    // controls should still frame the model along the rotated basis.
     const expectedHomeDirection = await getExpectedCubeDirection(page, [1, 1, 1]);
     await page.click('#cubeHome');
     await waitForCameraDirection(page, expectedHomeDirection, 0.975);
 
     const expectedRotatedFrontDirection = await getExpectedCubeDirection(page, [0, 0, 1]);
-    await clickVisibleCubeTarget(page, 'front');
+    await clickViewControl(page, 'front');
     await waitForCameraDirection(page, expectedRotatedFrontDirection, 0.98);
 
     const expectedRotatedHomeDirection = await getExpectedCubeDirection(page, [1, 1, 1]);
@@ -645,13 +638,13 @@ test.describe('models panel', () => {
     // Viewport screenshot — see the stability note in the shell describe block.
     await page.screenshot({ path: testInfo.outputPath('view-cube-rotated.png') });
 
-    await page.click('.tab-btn[data-tab="models"]');
+    await page.click('#tab-models');
     await page.locator('[data-model-action="reset"]').first().click();
     await waitForStatus(page, 'Reset transform: school_str.ifc');
     await expect(page.locator('input[data-transform="px"]').first()).toHaveValue('0.00');
     await expect(page.locator('input[data-transform="ry"]').first()).toHaveValue('0.0');
 
-    await page.click('.tab-btn[data-tab="explorer"]');
+    await page.click('#tab-explorer');
     const beforeBrowserFit = await getCameraPosition(page);
     await page.locator('[data-browser-action="fit-model"]').first().click();
     await waitForCameraMove(page, beforeBrowserFit);
@@ -674,8 +667,8 @@ test.describe('federation & load lifecycle', () => {
     await page.setInputFiles('#fileInput', secondIfcPath);
     await waitForModelCount(page, 2);
 
-    await expect(page.locator('#btnTransparency')).toHaveClass(/active/);
-    await expect(page.locator('#btnWireframe')).toHaveClass(/active/);
+    await expect(page.locator('#btnTransparency')).toHaveClass(/is-active/);
+    await expect(page.locator('#btnWireframe')).toHaveClass(/is-active/);
     expect(await page.evaluate(() => ({
       xray: window.__viewerTestApi?.isXrayEnabled() ?? false,
       edges: window.__viewerTestApi?.isEdgesEnabled() ?? false,
@@ -687,7 +680,7 @@ test.describe('federation & load lifecycle', () => {
     await page.click('#btnWireframe');
     await waitForStatus(page, 'Edge overlay disabled');
 
-    await page.click('.tab-btn[data-tab="models"]');
+    await page.click('#tab-models');
     await expect(page.locator('.federated-model')).toHaveCount(2);
     // Metadata attribution (A6): each card carries its own file name.
     await expect(page.locator('.federated-model-name-btn').nth(0)).toContainText('school_str.ifc');
@@ -701,7 +694,7 @@ test.describe('federation & load lifecycle', () => {
     await page.evaluate(async () => {
       await window.__viewerTestApi?.selectFirstItemPerModel();
     });
-    await page.click('.tab-btn[data-tab="issues"]');
+    await page.click('#tab-issues');
     await page.fill('#issueTitle', 'Multi-model issue');
     await page.click('#btnCreateIssue');
     await waitForStatus(page, 'Issue created');
@@ -713,17 +706,17 @@ test.describe('federation & load lifecycle', () => {
     expect(captured.legacyModelId).toBe(true);
     await page.locator('[data-issue-id]').first().click();
     await page.click('#btnDeleteIssue');
-    await page.click('.confirm-btn-confirm');
+    await page.click('#confirmOk');
     await page.waitForFunction(
       () => !(document.querySelector('#issuesList')?.textContent || '').includes('Multi-model issue'),
       undefined,
       { timeout: 20_000 },
     );
-    await page.click('.tab-btn[data-tab="models"]');
+    await page.click('#tab-models');
 
     // F6: unload the second model via the federation panel action.
     await page.locator('[data-model-action="unload"]').nth(1).click();
-    await page.click('.confirm-btn-confirm');
+    await page.click('#confirmOk');
     await waitForStatus(page, 'Model unloaded: Ifc4_Revit_ARC.ifc', 30_000);
 
     await expect(page.locator('.federated-model')).toHaveCount(1);
@@ -733,7 +726,7 @@ test.describe('federation & load lifecycle', () => {
     );
     expect(engineState).toEqual({ fragmentsCount: 1, federatedCount: 1, indexCount: 1, objectCount: 1 });
 
-    await page.click('.tab-btn[data-tab="explorer"]');
+    await page.click('#tab-explorer');
   });
 });
 
@@ -782,7 +775,7 @@ test.describe('viewpoints, issues & state persistence', () => {
   test('viewpoint/issue lifecycle and state export/import round-trip', async ({ appPage: page, browser }, testInfo) => {
     await ensureSingleSelection(page);
 
-    await page.click('.tab-btn[data-tab="viewpoints"]');
+    await page.click('#tab-viewpoints');
     await page.fill('#viewpointName', 'QA View');
     await page.click('#btnSaveViewpoint');
     await waitForStatus(page, 'Saved viewpoint: QA View', SLOW_STATUS_TIMEOUT);
@@ -825,14 +818,13 @@ test.describe('viewpoints, issues & state persistence', () => {
     expect(Math.max(snapshotInfo?.width ?? 0, snapshotInfo?.height ?? 0)).toBeLessThanOrEqual(320);
     expect(snapshotInfo?.spread ?? 0).toBeGreaterThan(25);
     // Thumbnail is rendered in the viewpoint list.
-    await expect(page.locator('.viewpoint-thumb').first()).toBeVisible();
+    await expect(page.locator('.vp-thumb').first()).toBeVisible();
 
-    await page.locator('[data-viewpoint-id]').first().click();
-    await page.click('#btnApplySelectedViewpoint');
+    await page.locator('[data-viewpoint-id]').first().locator('[data-viewpoint-action="apply"]').click();
     await waitForStatus(page, 'Applied viewpoint: QA View', SLOW_STATUS_TIMEOUT);
 
     await ensureSingleSelection(page);
-    await page.click('.tab-btn[data-tab="issues"]');
+    await page.click('#tab-issues');
     await page.fill('#issueTitle', 'QA Issue');
     await page.fill('#issueDescription', 'Created during automated QA');
     await page.fill('#issueAssignee', 'Automation');
@@ -858,21 +850,20 @@ test.describe('viewpoints, issues & state persistence', () => {
     const exportedStatePath = testInfo.outputPath('viewer-state.json');
     await exportedState.saveAs(exportedStatePath);
 
-    await page.click('.tab-btn[data-tab="viewpoints"]');
-    await page.locator('[data-viewpoint-id]').first().click();
-    await page.click('#btnDeleteSelectedViewpoint');
+    await page.click('#tab-viewpoints');
+    await page.locator('[data-viewpoint-id]').first().locator('[data-viewpoint-action="delete"]').click();
     // Destructive actions open the app's confirm dialog (AUDIT U8) — accept it.
-    await page.click('.confirm-btn-confirm');
+    await page.click('#confirmOk');
     await page.waitForFunction(
       () => !(document.querySelector('#viewpointList')?.textContent || '').includes('QA View'),
       undefined,
       { timeout: STATE_TIMEOUT },
     );
 
-    await page.click('.tab-btn[data-tab="issues"]');
+    await page.click('#tab-issues');
     await page.locator('[data-issue-id]').first().click();
     await page.click('#btnDeleteIssue');
-    await page.click('.confirm-btn-confirm');
+    await page.click('#confirmOk');
     await page.waitForFunction(
       () => !(document.querySelector('#issuesList')?.textContent || '').includes('QA Issue'),
       undefined,
@@ -890,14 +881,42 @@ test.describe('viewpoints, issues & state persistence', () => {
       await importPage.setInputFiles('#importStateInput', exportedStatePath);
       await waitForStatus(importPage, 'Viewer data imported', SLOW_STATUS_TIMEOUT);
 
-      await importPage.click('.tab-btn[data-tab="viewpoints"]');
+      await importPage.click('#tab-viewpoints');
       await expect(importPage.locator('#viewpointList')).toContainText('QA View');
 
-      await importPage.click('.tab-btn[data-tab="issues"]');
+      await importPage.click('#tab-issues');
       await expect(importPage.locator('#issuesList')).toContainText('QA Issue');
     } finally {
       await importPage.close();
       await importContext.close();
+    }
+  });
+});
+
+// AUDIT A17: Fit/Section rely on the model bounding box. It was computed via
+// three's expandByObject(object), which reads EMPTY until the fragments worker
+// streams meshes — so Fit and Section failed ("No model to section") right
+// after load and on slow GPUs, even though the model was loaded/indexed. The
+// fix reads each model's data-driven `.box`. This guard loads a FRESH page and
+// sections IMMEDIATELY (no camera/render interaction first), which the shared
+// fixture never exercises (by the time its tests run, geometry has streamed).
+test.describe('bounding box readiness (A17)', () => {
+  test('section works immediately after load, before any camera interaction', async ({ browser }) => {
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    const page = await context.newPage();
+    try {
+      await applyCpuThrottle(page);
+      await waitForAppReady(page);
+      await page.setInputFiles('#fileInput', ifcPath);
+      await waitForModelReady(page);
+      // No camera/render ops here — this is the previously-failing path.
+      await page.click('#btnSectionX');
+      await waitForStatus(page, 'Section plane added');
+      await page.click('#btnClearSections');
+      await waitForStatus(page, 'Sections cleared');
+    } finally {
+      await page.close();
+      await context.close();
     }
   });
 });
