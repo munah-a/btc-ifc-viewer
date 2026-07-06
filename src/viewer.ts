@@ -6,7 +6,7 @@ import type { SpatialTreeItem } from '@thatopen/fragments';
 
 import { isModelNotFoundError, serializeError } from './core/errors';
 import { isProbablyIfc } from './core/ifc-format';
-import { escapeHtml, filterListMarkup, spatialTreeMarkup } from './core/markup';
+import { escapeHtml, filterChipMarkup } from './core/markup';
 import { ModelRegistry } from './core/model-registry';
 import {
   normalizePersistedState,
@@ -38,40 +38,9 @@ import {
 import { getClipperPlaneGizmoHelper, type FragmentsModelLike } from './core/fragments-model';
 import type { TestItemRef, ViewerTestApi } from './core/test-api';
 import { getViewCubeAxes, getViewCubeNavigationDistance, resolveViewCubeCameraUp } from './core/view-cube';
+import { hydrateIcons, icon, setIcon, type IconName } from './ui/icons';
 
 type MeasureMode = 'none' | 'length' | 'area';
-type CubeFaceKey = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom';
-type CubeEdgeKey =
-  | 'top-front'
-  | 'top-back'
-  | 'top-right'
-  | 'top-left'
-  | 'bottom-front'
-  | 'bottom-back'
-  | 'bottom-right'
-  | 'bottom-left'
-  | 'front-right'
-  | 'front-left'
-  | 'back-right'
-  | 'back-left';
-type CubeCornerKey =
-  | 'top-front-right'
-  | 'top-front-left'
-  | 'top-back-right'
-  | 'top-back-left'
-  | 'bottom-front-right'
-  | 'bottom-front-left'
-  | 'bottom-back-right'
-  | 'bottom-back-left';
-type CubeTargetKey = CubeFaceKey | CubeEdgeKey | CubeCornerKey;
-type CubeTargetKind = 'face' | 'edge' | 'corner';
-interface ViewCubeTargetDefinition {
-  key: CubeTargetKey;
-  kind: CubeTargetKind;
-  label: string;
-  title: string;
-  vector: readonly [number, number, number];
-}
 
 // Persisted shapes (SavedViewpoint, PersistedIssue, PersistedViewerState) live
 // in core/persistence.ts (A7); the runtime issue record adds the marker handle.
@@ -138,41 +107,13 @@ const MAX_BROWSER_CLASSES_PER_LEVEL = 28;
 const MAX_BROWSER_ELEMENTS_PER_CLASS = 26;
 const MAX_BROWSER_SPATIAL_DEPTH = 7;
 const MAX_BROWSER_SPATIAL_CHILDREN = 80;
-const CUBE_FACE_KEYS: CubeFaceKey[] = ['front', 'back', 'right', 'left', 'top', 'bottom'];
+// The interactive 3D view-cube widget was replaced (W3, design) by the glass
+// view-control buttons (fit / orbit-home / front / top). The camera-direction
+// math is retained: preset views + the anchor basis power the buttons and the
+// `anchorDirectionForCube` test hook.
 const VIEW_CUBE_HOME_VECTOR: readonly [number, number, number] = [1, 1, 1];
-const VIEW_CUBE_HALF_SIZE = 31;
-const VIEW_CUBE_PERSPECTIVE = 140;
-const VIEW_CUBE_TARGETS: ViewCubeTargetDefinition[] = [
-  { key: 'front', kind: 'face', label: 'FRONT', title: 'Front view', vector: [0, 0, 1] },
-  { key: 'back', kind: 'face', label: 'BACK', title: 'Back view', vector: [0, 0, -1] },
-  { key: 'right', kind: 'face', label: 'RIGHT', title: 'Right view', vector: [1, 0, 0] },
-  { key: 'left', kind: 'face', label: 'LEFT', title: 'Left view', vector: [-1, 0, 0] },
-  { key: 'top', kind: 'face', label: 'TOP', title: 'Top view', vector: [0, 1, 0] },
-  { key: 'bottom', kind: 'face', label: 'BOTTOM', title: 'Bottom view', vector: [0, -1, 0] },
-  { key: 'top-front', kind: 'edge', label: '', title: 'Top front view', vector: [0, 1, 1] },
-  { key: 'top-back', kind: 'edge', label: '', title: 'Top back view', vector: [0, 1, -1] },
-  { key: 'top-right', kind: 'edge', label: '', title: 'Top right view', vector: [1, 1, 0] },
-  { key: 'top-left', kind: 'edge', label: '', title: 'Top left view', vector: [-1, 1, 0] },
-  { key: 'bottom-front', kind: 'edge', label: '', title: 'Bottom front view', vector: [0, -1, 1] },
-  { key: 'bottom-back', kind: 'edge', label: '', title: 'Bottom back view', vector: [0, -1, -1] },
-  { key: 'bottom-right', kind: 'edge', label: '', title: 'Bottom right view', vector: [1, -1, 0] },
-  { key: 'bottom-left', kind: 'edge', label: '', title: 'Bottom left view', vector: [-1, -1, 0] },
-  { key: 'front-right', kind: 'edge', label: '', title: 'Front right view', vector: [1, 0, 1] },
-  { key: 'front-left', kind: 'edge', label: '', title: 'Front left view', vector: [-1, 0, 1] },
-  { key: 'back-right', kind: 'edge', label: '', title: 'Back right view', vector: [1, 0, -1] },
-  { key: 'back-left', kind: 'edge', label: '', title: 'Back left view', vector: [-1, 0, -1] },
-  { key: 'top-front-right', kind: 'corner', label: '', title: 'Top front right view', vector: [1, 1, 1] },
-  { key: 'top-front-left', kind: 'corner', label: '', title: 'Top front left view', vector: [-1, 1, 1] },
-  { key: 'top-back-right', kind: 'corner', label: '', title: 'Top back right view', vector: [1, 1, -1] },
-  { key: 'top-back-left', kind: 'corner', label: '', title: 'Top back left view', vector: [-1, 1, -1] },
-  { key: 'bottom-front-right', kind: 'corner', label: '', title: 'Bottom front right view', vector: [1, -1, 1] },
-  { key: 'bottom-front-left', kind: 'corner', label: '', title: 'Bottom front left view', vector: [-1, -1, 1] },
-  { key: 'bottom-back-right', kind: 'corner', label: '', title: 'Bottom back right view', vector: [1, -1, -1] },
-  { key: 'bottom-back-left', kind: 'corner', label: '', title: 'Bottom back left view', vector: [-1, -1, -1] },
-];
-const VIEW_CUBE_TARGETS_BY_KEY = new Map<CubeTargetKey, ViewCubeTargetDefinition>(
-  VIEW_CUBE_TARGETS.map((target) => [target.key, target] as const),
-);
+const FRONT_VIEW_VECTOR: readonly [number, number, number] = [0, 0, 1];
+const TOP_VIEW_VECTOR: readonly [number, number, number] = [0, 1, 0];
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -206,6 +147,24 @@ const required = <T extends HTMLElement>(id: string): T => {
   return element as T;
 };
 
+// Maps the tree's decorative glyph names to the inline SVG icon set (U5/A2:
+// no Material Symbols font). Unmapped names fall back to a neutral node icon.
+const TREE_ICON: Record<string, IconName> = {
+  chevron_right: 'chevron_right',
+  view_in_ar: 'view_in_ar',
+  subdirectory_arrow_right: 'chevron_right',
+  more_horiz: 'more_horiz',
+  hourglass_top: 'more_horiz',
+  hide_source: 'visibility_off',
+  category: 'deployed_code',
+  folder_open: 'account_tree',
+  account_tree: 'account_tree',
+  my_location: 'center_focus_strong',
+  deployed_code: 'deployed_code',
+};
+const treeIco = (name: string, cls = 'browser-ico'): string =>
+  `<span class="${cls}">${icon(TREE_ICON[name] ?? 'deployed_code', 16)}</span>`;
+
 class ViewerApp {
   private readonly abortController = new AbortController();
   private fpsAnimationFrameId: number | null = null;
@@ -215,7 +174,10 @@ class ViewerApp {
   }
 
   private readonly dom = {
+    root: required<HTMLDivElement>('btc-viewer-root'),
     viewerContainer: required<HTMLDivElement>('viewer-container'),
+    // Top bar
+    topbarModel: required<HTMLDivElement>('topbarModel'),
     btnUpload: required<HTMLButtonElement>('btnUpload'),
     btnUploadEmpty: required<HTMLButtonElement>('btnUploadEmpty'),
     fileInput: required<HTMLInputElement>('fileInput'),
@@ -223,31 +185,52 @@ class ViewerApp {
     btnExportState: required<HTMLButtonElement>('btnExportState'),
     btnImportState: required<HTMLButtonElement>('btnImportState'),
     importStateInput: required<HTMLInputElement>('importStateInput'),
+    btnThemeToggle: required<HTMLButtonElement>('btnThemeToggle'),
+    btnPanelToggle: required<HTMLButtonElement>('btnPanelToggle'),
+    // Overlays
+    emptyState: required<HTMLDivElement>('emptyState'),
     loadingOverlay: required<HTMLDivElement>('loadingOverlay'),
     loadingText: required<HTMLDivElement>('loadingText'),
+    loadingPct: required<HTMLSpanElement>('loadingPct'),
     loadingProgress: required<HTMLDivElement>('loadingProgress'),
     loadingErrorActions: required<HTMLDivElement>('loadingErrorActions'),
     btnRetryLoad: required<HTMLButtonElement>('btnRetryLoad'),
     btnDismissLoadError: required<HTMLButtonElement>('btnDismissLoadError'),
-    emptyState: required<HTMLDivElement>('emptyState'),
     viewerHint: required<HTMLDivElement>('viewerHint'),
+    navPill: required<HTMLDivElement>('navPill'),
+    measureHint: required<HTMLDivElement>('measureHint'),
+    measureHintText: required<HTMLSpanElement>('measureHintText'),
+    btnCancelMeasure: required<HTMLButtonElement>('btnCancelMeasure'),
+    sectionSlider: required<HTMLDivElement>('sectionSlider'),
+    sectionLabel: required<HTMLSpanElement>('sectionLabel'),
+    sectionPos: required<HTMLInputElement>('sectionPos'),
+    sectionPosLabel: required<HTMLSpanElement>('sectionPosLabel'),
+    btnClearSectionSlider: required<HTMLButtonElement>('btnClearSectionSlider'),
+    selectionChip: required<HTMLDivElement>('selectionChip'),
+    selChipName: required<HTMLDivElement>('selChipName'),
+    selChipMeta: required<HTMLDivElement>('selChipMeta'),
+    btnClearSelection: required<HTMLButtonElement>('btnClearSelection'),
+    // Status bar
     statusText: required<HTMLSpanElement>('statusText'),
     selectionCount: required<HTMLSpanElement>('selectionCount'),
     elementCount: required<HTMLSpanElement>('elementCount'),
     visibleCount: required<HTMLSpanElement>('visibleCount'),
     loadInfo: required<HTMLSpanElement>('loadInfo'),
     perfInfo: required<HTMLSpanElement>('perfInfo'),
+    viewLabel: required<HTMLSpanElement>('viewLabel'),
+    // View controls (rail replaces dock; cube widget removed per design)
     btnModeOrbit: required<HTMLButtonElement>('btnModeOrbit'),
     btnModePlan: required<HTMLButtonElement>('btnModePlan'),
     btnModeFirstPerson: required<HTMLButtonElement>('btnModeFirstPerson'),
     btnFitAll: required<HTMLButtonElement>('btnFitAll'),
     btnFront: required<HTMLButtonElement>('btnFront'),
     btnTop: required<HTMLButtonElement>('btnTop'),
+    cubeHome: required<HTMLButtonElement>('cubeHome'),
+    // Tool rail
     btnSelectSingle: required<HTMLButtonElement>('btnSelectSingle'),
     btnSelectMulti: required<HTMLButtonElement>('btnSelectMulti'),
     btnIsolate: required<HTMLButtonElement>('btnIsolate'),
     btnHide: required<HTMLButtonElement>('btnHide'),
-    btnShow: required<HTMLButtonElement>('btnShow'),
     btnResetVisibility: required<HTMLButtonElement>('btnResetVisibility'),
     btnSectionX: required<HTMLButtonElement>('btnSectionX'),
     btnSectionY: required<HTMLButtonElement>('btnSectionY'),
@@ -259,34 +242,24 @@ class ViewerApp {
     btnClearMeasurements: required<HTMLButtonElement>('btnClearMeasurements'),
     btnTransparency: required<HTMLButtonElement>('btnTransparency'),
     btnWireframe: required<HTMLButtonElement>('btnWireframe'),
+    btnToggleGrid: required<HTMLButtonElement>('btnToggleGrid'),
     btnIssuePinMode: required<HTMLButtonElement>('btnIssuePinMode'),
-    cubeHome: required<HTMLButtonElement>('cubeHome'),
-    viewCubeBody: required<HTMLDivElement>('viewCubeBody'),
-    viewCubeHotspots: required<HTMLDivElement>('viewCubeHotspots'),
-    cubeFaceFront: required<HTMLDivElement>('cubeFaceFront'),
-    cubeFaceBack: required<HTMLDivElement>('cubeFaceBack'),
-    cubeFaceRight: required<HTMLDivElement>('cubeFaceRight'),
-    cubeFaceLeft: required<HTMLDivElement>('cubeFaceLeft'),
-    cubeFaceTop: required<HTMLDivElement>('cubeFaceTop'),
-    cubeFaceBottom: required<HTMLDivElement>('cubeFaceBottom'),
-    viewerDock: required<HTMLDivElement>('viewerDock'),
-    modelBrowserTree: required<HTMLDivElement>('modelBrowserTree'),
-    federationTree: required<HTMLDivElement>('federationTree'),
-    toggleGrid: required<HTMLInputElement>('toggleGrid'),
-    toggleTheme: required<HTMLInputElement>('toggleTheme'),
-    visualStyleSelect: required<HTMLSelectElement>('visualStyleSelect'),
-    backgroundColorInput: required<HTMLInputElement>('backgroundColorInput'),
-    backgroundPresetButtons: Array.from(document.querySelectorAll<HTMLButtonElement>('[data-bg-preset]')),
-    tabButtons: Array.from(document.querySelectorAll<HTMLButtonElement>('.tab-btn')),
+    // Splitter + panel
+    panelSplitter: required<HTMLDivElement>('panelSplitter'),
+    panelTitle: required<HTMLSpanElement>('panelTitle'),
+    tabStripButtons: Array.from(document.querySelectorAll<HTMLButtonElement>('.tab-strip-btn')),
+    tabPanels: Array.from(document.querySelectorAll<HTMLDivElement>('.tab-panel')),
+    // Explorer
     searchInput: required<HTMLInputElement>('searchInput'),
-    btnSearch: required<HTMLButtonElement>('btnSearch'),
     btnClearSearch: required<HTMLButtonElement>('btnClearSearch'),
+    searchResultsGroup: required<HTMLDivElement>('searchResultsGroup'),
+    elementResults: required<HTMLDivElement>('elementResults'),
     classFilterList: required<HTMLDivElement>('classFilterList'),
     levelFilterList: required<HTMLDivElement>('levelFilterList'),
-    btnApplyFilters: required<HTMLButtonElement>('btnApplyFilters'),
-    btnClearFilters: required<HTMLButtonElement>('btnClearFilters'),
-    elementResults: required<HTMLDivElement>('elementResults'),
-    spatialTree: required<HTMLDivElement>('spatialTree'),
+    modelBrowserTree: required<HTMLDivElement>('modelBrowserTree'),
+    // Models
+    federationTree: required<HTMLDivElement>('federationTree'),
+    // Properties
     propsEmpty: required<HTMLDivElement>('propsEmpty'),
     propsContent: required<HTMLDivElement>('propsContent'),
     propType: required<HTMLSpanElement>('propType'),
@@ -296,11 +269,13 @@ class ViewerApp {
     propStory: required<HTMLSpanElement>('propStory'),
     propFilterInput: required<HTMLInputElement>('propFilterInput'),
     propSections: required<HTMLDivElement>('propSections'),
+    btnPropsIsolate: required<HTMLButtonElement>('btnPropsIsolate'),
+    btnPropsHide: required<HTMLButtonElement>('btnPropsHide'),
+    // Viewpoints
     viewpointName: required<HTMLInputElement>('viewpointName'),
     btnSaveViewpoint: required<HTMLButtonElement>('btnSaveViewpoint'),
-    btnApplySelectedViewpoint: required<HTMLButtonElement>('btnApplySelectedViewpoint'),
-    btnDeleteSelectedViewpoint: required<HTMLButtonElement>('btnDeleteSelectedViewpoint'),
     viewpointList: required<HTMLDivElement>('viewpointList'),
+    // Issues
     issueTitle: required<HTMLInputElement>('issueTitle'),
     issueDescription: required<HTMLTextAreaElement>('issueDescription'),
     issuePriority: required<HTMLSelectElement>('issuePriority'),
@@ -309,9 +284,23 @@ class ViewerApp {
     btnCreateIssue: required<HTMLButtonElement>('btnCreateIssue'),
     btnDeleteIssue: required<HTMLButtonElement>('btnDeleteIssue'),
     issuesList: required<HTMLDivElement>('issuesList'),
+    issueCommentsGroup: required<HTMLDivElement>('issueCommentsGroup'),
     issueCommentInput: required<HTMLInputElement>('issueCommentInput'),
     btnAddIssueComment: required<HTMLButtonElement>('btnAddIssueComment'),
     issueComments: required<HTMLDivElement>('issueComments'),
+    // Mobile + sheet + scrim + confirm + toasts
+    mobileFab: required<HTMLButtonElement>('mobileFab'),
+    mobileNavButtons: Array.from(document.querySelectorAll<HTMLButtonElement>('[data-mobile-nav]')),
+    scrim: required<HTMLDivElement>('scrim'),
+    mobileSheet: required<HTMLDivElement>('mobileSheet'),
+    sheetTitle: required<HTMLSpanElement>('sheetTitle'),
+    sheetBody: required<HTMLDivElement>('sheetBody'),
+    btnCloseSheet: required<HTMLButtonElement>('btnCloseSheet'),
+    confirmDialog: required<HTMLDialogElement>('confirmDialog'),
+    confirmMessage: required<HTMLParagraphElement>('confirmMessage'),
+    confirmOk: required<HTMLButtonElement>('confirmOk'),
+    confirmCancel: required<HTMLButtonElement>('confirmCancel'),
+    toastRegion: required<HTMLDivElement>('toastRegion'),
   };
 
   private components!: OBC.Components;
@@ -383,31 +372,15 @@ class ViewerApp {
   private activeGizmoModelId: string | null = null;
   private gizmoDragging = false;
   private propertyFilterText = '';
-  private readonly cubeFaceElements: Record<CubeFaceKey, HTMLDivElement> = {
-    front: this.dom.cubeFaceFront,
-    back: this.dom.cubeFaceBack,
-    right: this.dom.cubeFaceRight,
-    left: this.dom.cubeFaceLeft,
-    top: this.dom.cubeFaceTop,
-    bottom: this.dom.cubeFaceBottom,
-  };
-  private readonly cubeHotspots = new Map<CubeTargetKey, HTMLButtonElement>();
-  private readonly cubeTarget = new THREE.Vector3();
-  private readonly cubeCamDir = new THREE.Vector3();
-  private readonly cubeBasis = new THREE.Quaternion();
-  private readonly cubeBasisInverse = new THREE.Quaternion();
-  private readonly cubeDisplayQuaternion = new THREE.Quaternion();
-  private readonly cubeProjectedPoint = new THREE.Vector3();
-  private readonly cubeProjectedNormal = new THREE.Vector3();
-  private readonly cubeLocalDirection = new THREE.Vector3();
+  private activeView: 'orbit' | 'front' | 'top' = 'orbit';
   private shaderWarningFilterInstalled = false;
   // A5: keep the original console.warn so the filter can be uninstalled in
   // destroy() rather than leaving console.warn permanently monkey-patched.
   private originalConsoleWarn: typeof console.warn | null = null;
 
   constructor() {
+    hydrateIcons(document);
     this.patchEventListenersWithAbort();
-    this.setupViewCube();
     this.bindUiEvents();
   }
 
@@ -477,7 +450,6 @@ class ViewerApp {
     this.modelRegistry.clear();
     this.modelRegistrations.clear();
     this.appliedModelOpacity.clear();
-    this.cubeHotspots.clear();
     clearMap(this.selectedItems);
     this.viewpoints = [];
     this.issues = [];
@@ -541,22 +513,6 @@ class ViewerApp {
     this.shaderWarningFilterInstalled = false;
   }
 
-  private setupViewCube(): void {
-    for (const target of VIEW_CUBE_TARGETS) {
-      const button = document.createElement('button');
-      button.id = `cubeTarget-${target.key}`;
-      button.type = 'button';
-      button.className = `view-cube-hotspot kind-${target.kind}`;
-      button.dataset.cubeTarget = target.key;
-      button.dataset.visible = 'false';
-      button.title = target.title;
-      button.setAttribute('aria-label', target.title);
-      button.textContent = target.label;
-      this.dom.viewCubeHotspots.append(button);
-      this.cubeHotspots.set(target.key, button);
-    }
-  }
-
   private bindUiEvents(): void {
     this.dom.btnUpload.addEventListener('click', () => this.dom.fileInput.click());
     this.dom.btnUploadEmpty.addEventListener('click', () => this.dom.fileInput.click());
@@ -588,19 +544,18 @@ class ViewerApp {
       this.dom.importStateInput.value = '';
     });
 
-    this.dom.tabButtons.forEach((button) => {
-      button.addEventListener('click', () => this.activateTab(button.dataset.tab || 'explorer'));
-    });
     this.dom.propFilterInput.addEventListener('input', debounce(() => {
       this.propertyFilterText = this.dom.propFilterInput.value.trim().toLowerCase();
       this.applyPropertiesFilter();
     }, 300));
-    this.bindDockEvents();
+    this.bindTabs();
+    this.bindResponsiveShell();
     this.bindModelBrowserEvents();
     this.bindFederationTreeEvents();
     this.bindViewpointListEvents();
     this.bindIssueListEvents();
 
+    // View controls (top-right glass) + nav-mode pill
     this.dom.btnModeOrbit.addEventListener('click', () => this.applyNavigationMode('Orbit'));
     this.dom.btnModePlan.addEventListener('click', () => this.applyNavigationMode('Plan'));
     this.dom.btnModeFirstPerson.addEventListener('click', () => this.applyNavigationMode('FirstPerson'));
@@ -608,193 +563,95 @@ class ViewerApp {
     this.dom.btnFront.addEventListener('click', () => this.setFrontView());
     this.dom.btnTop.addEventListener('click', () => this.setTopView());
     this.dom.cubeHome.addEventListener('click', () => this.setHomeView());
-    this.dom.viewCubeHotspots.addEventListener('click', (event) => {
-      const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-cube-target]');
-      if (!button) return;
-      const key = button.dataset.cubeTarget as CubeTargetKey | undefined;
-      if (!key) return;
-      this.navigateToCubeTarget(key);
-    });
 
+    // Tool rail — selection
     this.dom.btnSelectSingle.addEventListener('click', () => this.applySelectionMode('single'));
     this.dom.btnSelectMulti.addEventListener('click', () => this.applySelectionMode('multi'));
+    this.dom.btnIsolate.addEventListener('click', () => this.isolateSelection());
+    this.dom.btnHide.addEventListener('click', () => this.hideSelection());
+    this.dom.btnResetVisibility.addEventListener('click', () => this.resetVisibility());
+    this.dom.btnPropsIsolate.addEventListener('click', () => this.isolateSelection());
+    this.dom.btnPropsHide.addEventListener('click', () => this.hideSelection());
 
-    this.dom.btnIsolate.addEventListener('click', () => {
-      const selectionMap = this.getValidModelIdMap(this.selectedItems);
-      if (isMapEmpty(selectionMap)) {
-        this.setStatus('No selection to isolate');
-        return;
-      }
-      this.fireAndForget((async () => {
-        await this.hider.isolate(cloneMap(selectionMap));
-        await this.updateVisibilityCount();
-        this.setStatus('Selection isolated');
-      })(), 'Isolate selection');
-    });
-
-    this.dom.btnHide.addEventListener('click', () => {
-      const selectionMap = this.getValidModelIdMap(this.selectedItems);
-      if (isMapEmpty(selectionMap)) {
-        this.setStatus('No selection to hide');
-        return;
-      }
-      this.fireAndForget((async () => {
-        await this.hider.set(false, cloneMap(selectionMap));
-        await this.updateVisibilityCount();
-        this.setStatus('Selection hidden');
-      })(), 'Hide selection');
-    });
-
-    this.dom.btnShow.addEventListener('click', () => {
-      const selectionMap = this.getValidModelIdMap(this.selectedItems);
-      if (isMapEmpty(selectionMap)) {
-        this.setStatus('No selection to show');
-        return;
-      }
-      this.fireAndForget((async () => {
-        await this.hider.set(true, cloneMap(selectionMap));
-        await this.updateVisibilityCount();
-        this.setStatus('Selection shown');
-      })(), 'Show selection');
-    });
-
-    this.dom.btnResetVisibility.addEventListener('click', () => {
-      this.fireAndForget((async () => {
-        await this.hider.set(true);
-        this.clearFilterChecks();
-        await this.updateVisibilityCount();
-        this.setStatus('Visibility reset');
-      })(), 'Reset visibility');
-    });
-
-    // A12: the three axis section handlers were byte-identical bar button+normal.
+    // Tool rail — sections (A12: one path per axis)
     this.dom.btnSectionX.addEventListener('click', () => this.toggleSectionPlane(this.dom.btnSectionX, new THREE.Vector3(-1, 0, 0)));
     this.dom.btnSectionY.addEventListener('click', () => this.toggleSectionPlane(this.dom.btnSectionY, new THREE.Vector3(0, 0, -1)));
     this.dom.btnSectionZ.addEventListener('click', () => this.toggleSectionPlane(this.dom.btnSectionZ, new THREE.Vector3(0, -1, 0)));
     this.dom.btnSectionBox.addEventListener('click', () => {
-      if (this.dom.btnSectionBox.classList.contains('active')) {
+      if (this.dom.btnSectionBox.classList.contains('is-active')) {
         this.clearSections();
       } else {
         this.createSectionBox();
-        this.dom.btnSectionBox.classList.add('active');
+        this.dom.btnSectionBox.classList.add('is-active');
+        this.dom.btnSectionBox.setAttribute('aria-pressed', 'true');
       }
     });
     this.dom.btnClearSections.addEventListener('click', () => {
       this.clearSections();
       this.setStatus('Sections cleared');
     });
+    this.dom.sectionPos.addEventListener('input', () => this.onSectionSliderInput());
+    this.dom.btnClearSectionSlider.addEventListener('click', () => {
+      this.clearSections();
+      this.setStatus('Sections cleared');
+    });
 
+    // Tool rail — measure
     this.dom.btnMeasureLength.addEventListener('click', () => this.setMeasureMode(this.measureMode === 'length' ? 'none' : 'length'));
     this.dom.btnMeasureArea.addEventListener('click', () => this.setMeasureMode(this.measureMode === 'area' ? 'none' : 'area'));
     this.dom.btnClearMeasurements.addEventListener('click', () => {
       this.clearMeasurements();
       this.setStatus('Measurements cleared');
     });
+    this.dom.btnCancelMeasure.addEventListener('click', () => this.setMeasureMode('none'));
 
-    this.dom.btnTransparency.addEventListener('click', () => {
-      this.xrayEnabled = !this.xrayEnabled;
-      this.dom.btnTransparency.classList.toggle('active', this.xrayEnabled);
-      this.applyXRay();
-      this.fireAndForget(this.fragments.core.update(true), 'Toggle x-ray');
-      this.persistLocalState();
-      this.setStatus(this.xrayEnabled ? 'X-ray enabled' : 'X-ray disabled');
-    });
-
-    this.dom.btnWireframe.addEventListener('click', () => {
-      this.edgesEnabled = !this.edgesEnabled;
-      this.dom.btnWireframe.classList.toggle('active', this.edgesEnabled);
-      this.applyEdges();
-      this.persistLocalState();
-      this.setStatus(this.edgesEnabled ? 'Edge overlay enabled' : 'Edge overlay disabled');
-    });
-
-    this.dom.btnIssuePinMode.addEventListener('click', () => {
-      this.issuePinMode = !this.issuePinMode;
-      this.dom.btnIssuePinMode.classList.toggle('active', this.issuePinMode);
-      this.dom.viewerHint.hidden = !this.issuePinMode;
-      this.setStatus(this.issuePinMode ? 'Issue pin mode active' : 'Issue pin mode disabled');
-    });
-
-    this.dom.toggleGrid.addEventListener('change', () => {
-      this.setGridVisible(this.dom.toggleGrid.checked, true);
+    // Tool rail — visual toggles
+    this.dom.btnTransparency.addEventListener('click', () => this.toggleXray());
+    this.dom.btnWireframe.addEventListener('click', () => this.toggleEdges());
+    this.dom.btnToggleGrid.addEventListener('click', () => {
+      this.setGridVisible(!this.gridVisible, true);
       this.persistLocalState();
     });
+    this.dom.btnIssuePinMode.addEventListener('click', () => this.toggleIssuePinMode());
 
-    this.dom.toggleTheme.addEventListener('change', () => {
-      this.themeMode = this.dom.toggleTheme.checked ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', this.themeMode);
-      // F8: restore this theme's remembered background (custom colors survive
-      // theme round-trips instead of being force-reset to defaults).
-      this.setBackgroundColor(this.backgroundByTheme[this.themeMode], false);
-      this.persistLocalState();
+    // Selection chip
+    this.dom.btnClearSelection.addEventListener('click', () => {
+      this.fireAndForget(this.clearSelection(), 'Clear selection');
     });
 
-    this.dom.backgroundColorInput.addEventListener('input', () => {
-      this.setBackgroundColor(this.dom.backgroundColorInput.value, false);
-    });
+    // Theme toggle (F8: per-theme background memory)
+    this.dom.btnThemeToggle.addEventListener('click', () => this.toggleTheme());
 
-    this.dom.backgroundColorInput.addEventListener('change', () => {
-      this.setBackgroundColor(this.dom.backgroundColorInput.value, true);
-      this.persistLocalState();
-    });
-
-    this.dom.backgroundPresetButtons.forEach((button) => {
-      button.addEventListener('click', () => {
-        const color = button.dataset.bgPreset;
-        if (!color) return;
-        this.setBackgroundColor(color, true);
-        this.persistLocalState();
-      });
-    });
-
-    this.dom.visualStyleSelect.addEventListener('change', () => {
-      const style = this.parseVisualStyle(this.dom.visualStyleSelect.value);
-      // Explicit user style change is the only path that resets toggles (F3).
-      this.fireAndForget(this.setVisualStyle(style, true, true, true), 'Set visual style');
-    });
-
-    this.dom.btnSearch.addEventListener('click', () => {
-      this.fireAndForget(this.searchElements(this.dom.searchInput.value.trim()), 'Search');
-    });
-    this.dom.searchInput.addEventListener('keydown', (event) => {
-      if (event.key === 'Enter') this.fireAndForget(this.searchElements(this.dom.searchInput.value.trim()), 'Search');
-    });
+    // Search — live on input (design has no explicit Go button)
+    const runSearch = debounce(() => {
+      const term = this.dom.searchInput.value.trim();
+      this.dom.btnClearSearch.hidden = term.length === 0;
+      this.fireAndForget(this.searchElements(term), 'Search');
+    }, 300);
+    this.dom.searchInput.addEventListener('input', runSearch);
     this.dom.btnClearSearch.addEventListener('click', () => {
       this.dom.searchInput.value = '';
-      this.dom.elementResults.innerHTML = '';
+      this.dom.btnClearSearch.hidden = true;
+      this.dom.elementResults.replaceChildren();
+      this.dom.searchResultsGroup.hidden = true;
       this.setStatus('Search cleared');
     });
 
-    this.dom.btnApplyFilters.addEventListener('click', () => {
-      this.fireAndForget(this.applyFilters(), 'Apply filters');
-    });
-    this.dom.btnClearFilters.addEventListener('click', () => {
-      this.fireAndForget((async () => {
-        this.clearFilterChecks();
-        await this.hider.set(true);
-        await this.updateVisibilityCount();
-        this.setStatus('Filters reset');
-      })(), 'Reset filters');
-    });
+    // Filters — chip toggles apply immediately
+    this.dom.classFilterList.addEventListener('click', (event) => this.onFilterChipClick(event));
+    this.dom.levelFilterList.addEventListener('click', (event) => this.onFilterChipClick(event));
 
+    // Viewpoints / issues
     this.dom.btnSaveViewpoint.addEventListener('click', () => {
       this.fireAndForget(this.saveViewpoint(), 'Save viewpoint');
     });
-    this.dom.btnApplySelectedViewpoint.addEventListener('click', () => {
-      this.fireAndForget(this.applySelectedViewpoint(), 'Apply viewpoint');
-    });
-    this.dom.btnDeleteSelectedViewpoint.addEventListener('click', () => {
-      this.fireAndForget(this.deleteSelectedViewpoint(), 'Delete viewpoint');
-    });
-
-    this.dom.btnCreateIssue.addEventListener('click', () => {
-      this.createIssueFromCurrentContext();
-    });
+    this.dom.btnCreateIssue.addEventListener('click', () => this.createIssueFromCurrentContext());
     this.dom.btnDeleteIssue.addEventListener('click', () => {
       this.fireAndForget(this.deleteSelectedIssue(), 'Delete issue');
     });
     this.dom.btnAddIssueComment.addEventListener('click', () => this.addCommentToActiveIssue());
 
+    // Window + viewport pointer
     window.addEventListener('resize', () => {
       if (this.world?.renderer) this.world.renderer.resize();
     });
@@ -804,29 +661,24 @@ class ViewerApp {
       this.lastPointerDown = { x: event.clientX, y: event.clientY };
       this.pointerDragged = false;
     });
-
     this.dom.viewerContainer.addEventListener('pointermove', (event) => {
       const dx = event.clientX - this.lastPointerDown.x;
       const dy = event.clientY - this.lastPointerDown.y;
       if (Math.hypot(dx, dy) > 5) this.pointerDragged = true;
     });
-
     this.dom.viewerContainer.addEventListener('click', (event) => {
       this.fireAndForget(this.onViewerClick(event), 'Selection');
     });
-
     this.dom.viewerContainer.addEventListener('dragover', (event) => {
       event.preventDefault();
-      this.dom.viewerContainer.style.outline = '2px dashed #c8145c';
+      this.dom.viewerContainer.classList.add('is-dragover');
     });
-
     this.dom.viewerContainer.addEventListener('dragleave', () => {
-      this.dom.viewerContainer.style.outline = 'none';
+      this.dom.viewerContainer.classList.remove('is-dragover');
     });
-
     this.dom.viewerContainer.addEventListener('drop', (event) => {
       event.preventDefault();
-      this.dom.viewerContainer.style.outline = 'none';
+      this.dom.viewerContainer.classList.remove('is-dragover');
       const files = Array.from(event.dataTransfer?.files ?? []);
       if (files.length === 0) return;
       const ifcFiles = files.filter((file) => file.name.toLowerCase().endsWith('.ifc'));
@@ -837,6 +689,98 @@ class ViewerApp {
       }
       this.fireAndForget(this.loadIfcFiles(ifcFiles), 'Load IFC files');
     });
+  }
+
+  /** Shared selection-visibility actions (rail + Properties buttons). */
+  private isolateSelection(): void {
+    const selectionMap = this.getValidModelIdMap(this.selectedItems);
+    if (isMapEmpty(selectionMap)) {
+      this.setStatus('No selection to isolate');
+      return;
+    }
+    this.fireAndForget((async () => {
+      await this.hider.isolate(cloneMap(selectionMap));
+      await this.updateVisibilityCount();
+      this.setStatus('Selection isolated');
+    })(), 'Isolate selection');
+  }
+
+  private hideSelection(): void {
+    const selectionMap = this.getValidModelIdMap(this.selectedItems);
+    if (isMapEmpty(selectionMap)) {
+      this.setStatus('No selection to hide');
+      return;
+    }
+    this.fireAndForget((async () => {
+      await this.hider.set(false, cloneMap(selectionMap));
+      await this.updateVisibilityCount();
+      this.setStatus('Selection hidden');
+    })(), 'Hide selection');
+  }
+
+  private resetVisibility(): void {
+    this.fireAndForget((async () => {
+      await this.hider.set(true);
+      this.clearFilterChecks();
+      await this.updateVisibilityCount();
+      this.setStatus('Visibility reset');
+    })(), 'Reset visibility');
+  }
+
+  private toggleXray(): void {
+    this.xrayEnabled = !this.xrayEnabled;
+    this.setRailPressed(this.dom.btnTransparency, this.xrayEnabled);
+    this.applyXRay();
+    this.fireAndForget(this.fragments.core.update(true), 'Toggle x-ray');
+    this.persistLocalState();
+    this.setStatus(this.xrayEnabled ? 'X-ray enabled' : 'X-ray disabled');
+    this.syncMobileSheet();
+  }
+
+  private toggleEdges(): void {
+    this.edgesEnabled = !this.edgesEnabled;
+    this.setRailPressed(this.dom.btnWireframe, this.edgesEnabled);
+    this.applyEdges();
+    this.persistLocalState();
+    this.setStatus(this.edgesEnabled ? 'Edge overlay enabled' : 'Edge overlay disabled');
+    this.syncMobileSheet();
+  }
+
+  private toggleIssuePinMode(): void {
+    this.issuePinMode = !this.issuePinMode;
+    this.setRailPressed(this.dom.btnIssuePinMode, this.issuePinMode);
+    this.dom.viewerHint.hidden = !this.issuePinMode;
+    this.setStatus(this.issuePinMode ? 'Issue pin mode active' : 'Issue pin mode disabled');
+  }
+
+  private toggleTheme(): void {
+    this.themeMode = this.themeMode === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', this.themeMode);
+    setIcon(this.dom.btnThemeToggle, this.themeMode === 'dark' ? 'light_mode' : 'dark_mode');
+    // F8: restore this theme's remembered background.
+    this.setBackgroundColor(this.backgroundByTheme[this.themeMode], false);
+    this.persistLocalState();
+    this.syncMobileSheet();
+  }
+
+  /** Marks a rail/toggle button active and keeps aria-pressed in sync. */
+  private setRailPressed(button: HTMLButtonElement, active: boolean): void {
+    button.classList.toggle('is-active', active);
+    if (button.hasAttribute('aria-pressed')) button.setAttribute('aria-pressed', String(active));
+  }
+
+  private onSectionSliderInput(): void {
+    const pct = Number(this.dom.sectionPos.value);
+    this.dom.sectionPosLabel.textContent = `${pct}%`;
+    this.setSectionPosition(pct);
+  }
+
+  private onFilterChipClick(event: Event): void {
+    const chip = (event.target as HTMLElement).closest<HTMLButtonElement>('.filter-chip[data-filter-value]');
+    if (!chip) return;
+    const active = chip.classList.toggle('is-active');
+    chip.setAttribute('aria-pressed', String(active));
+    this.fireAndForget(this.applyFilters(), 'Apply filters');
   }
 
   private bindModelBrowserEvents(): void {
@@ -884,34 +828,238 @@ class ViewerApp {
     });
   }
 
-  private bindDockEvents(): void {
-    const toggles = Array.from(this.dom.viewerDock.querySelectorAll<HTMLButtonElement>('[data-dock-toggle]'));
-    toggles.forEach((toggle) => {
-      toggle.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        const group = toggle.closest<HTMLElement>('.dock-group');
-        if (!group) return;
-        const shouldOpen = !group.classList.contains('open');
-        this.closeDockGroups();
-        if (shouldOpen) group.classList.add('open');
+  /**
+   * U7: real tab pattern — role=tab/tabpanel, aria-selected, roving tabindex,
+   * Left/Right/Home/End arrow keys. Opening a tab also opens the panel drawer
+   * on small screens (U1).
+   */
+  private bindTabs(): void {
+    const buttons = this.dom.tabStripButtons;
+    buttons.forEach((button, i) => {
+      button.addEventListener('click', () => {
+        this.activateTab(button.dataset.tab ?? 'explorer');
+        if (this.isSmallScreen()) this.openPanel();
       });
-    });
-
-    this.dom.viewerDock.querySelectorAll<HTMLButtonElement>('.dock-tool-btn').forEach((button) => {
-      button.addEventListener('click', () => this.closeDockGroups());
-    });
-
-    document.addEventListener('pointerdown', (event) => {
-      const target = event.target as HTMLElement | null;
-      if (!target?.closest('#viewerDock')) this.closeDockGroups();
+      button.addEventListener('keydown', (event) => {
+        let next = -1;
+        if (event.key === 'ArrowDown' || event.key === 'ArrowRight') next = (i + 1) % buttons.length;
+        else if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') next = (i - 1 + buttons.length) % buttons.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = buttons.length - 1;
+        if (next < 0) return;
+        event.preventDefault();
+        const target = buttons[next];
+        this.activateTab(target.dataset.tab ?? 'explorer');
+        target.focus();
+      });
     });
   }
 
-  private closeDockGroups(): void {
-    this.dom.viewerDock.querySelectorAll<HTMLElement>('.dock-group.open').forEach((group) => {
-      group.classList.remove('open');
+  /** U1/U2/U9: panel toggle, drawer + scrim, mobile bottom nav + More sheet, splitter. */
+  private bindResponsiveShell(): void {
+    this.dom.btnPanelToggle.addEventListener('click', () => this.togglePanel());
+
+    this.dom.scrim.addEventListener('click', () => {
+      this.closePanel();
+      this.closeSheet();
     });
+
+    // Mobile bottom nav (U1)
+    this.dom.mobileNavButtons.forEach((button) => {
+      button.addEventListener('click', () => this.onMobileNav(button.dataset.mobileNav ?? ''));
+    });
+    this.dom.mobileFab.addEventListener('click', () => this.fitToModel());
+    this.dom.btnCloseSheet.addEventListener('click', () => this.closeSheet());
+
+    this.bindSplitter();
+  }
+
+  /** U9: pointer-event splitter with touch + keyboard (arrows resize). */
+  private bindSplitter(): void {
+    const splitter = this.dom.panelSplitter;
+    const min = 280;
+    const max = 400;
+    let startX = 0;
+    let startW = 0;
+    const currentW = (): number =>
+      parseInt(getComputedStyle(document.documentElement).getPropertyValue('--panel-w'), 10) || 320;
+    const setW = (w: number): void => {
+      const width = Math.min(max, Math.max(min, w));
+      document.documentElement.style.setProperty('--panel-w', `${width}px`);
+      splitter.setAttribute('aria-valuenow', String(width));
+    };
+    splitter.addEventListener('pointerdown', (event) => {
+      splitter.setPointerCapture(event.pointerId);
+      splitter.classList.add('dragging');
+      startX = event.clientX;
+      startW = currentW();
+      event.preventDefault();
+    });
+    splitter.addEventListener('pointermove', (event) => {
+      if (!splitter.hasPointerCapture(event.pointerId)) return;
+      setW(startW + (startX - event.clientX));
+    });
+    const end = (event: PointerEvent): void => {
+      if (splitter.hasPointerCapture(event.pointerId)) splitter.releasePointerCapture(event.pointerId);
+      splitter.classList.remove('dragging');
+      this.persistLocalState();
+    };
+    splitter.addEventListener('pointerup', end);
+    splitter.addEventListener('pointercancel', end);
+    splitter.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowLeft') setW(currentW() + 16);
+      else if (event.key === 'ArrowRight') setW(currentW() - 16);
+      else return;
+      event.preventDefault();
+      this.persistLocalState();
+    });
+  }
+
+  private isSmallScreen(): boolean {
+    return window.matchMedia('(max-width: 1023px)').matches;
+  }
+
+  private openPanel(): void {
+    this.dom.root.classList.remove('panel-collapsed');
+    this.dom.root.classList.add('panel-open');
+    this.closeSheet();
+    this.updatePanelToggleUi();
+  }
+
+  private closePanel(): void {
+    this.dom.root.classList.remove('panel-open');
+    this.updateScrim();
+    this.updatePanelToggleUi();
+  }
+
+  private togglePanel(): void {
+    if (this.isSmallScreen()) {
+      if (this.dom.root.classList.contains('panel-open')) this.closePanel();
+      else this.openPanel();
+    } else {
+      this.dom.root.classList.toggle('panel-collapsed');
+      this.updatePanelToggleUi();
+      const renderer = this.world?.renderer;
+      if (renderer) requestAnimationFrame(() => renderer.resize());
+    }
+    this.updateScrim();
+  }
+
+  private updatePanelToggleUi(): void {
+    const collapsed = this.dom.root.classList.contains('panel-collapsed');
+    const openMobile = this.dom.root.classList.contains('panel-open');
+    const shown = this.isSmallScreen() ? openMobile : !collapsed;
+    setIcon(this.dom.btnPanelToggle, shown ? 'right_panel_close' : 'right_panel_open');
+    this.dom.btnPanelToggle.setAttribute('aria-expanded', String(shown));
+  }
+
+  private updateScrim(): void {
+    const open = this.dom.root.classList.contains('panel-open') || this.dom.root.classList.contains('sheet-open');
+    this.dom.scrim.hidden = !open;
+  }
+
+  private onMobileNav(nav: string): void {
+    switch (nav) {
+      case 'tree':
+        this.activateTab('explorer');
+        this.openPanel();
+        break;
+      case 'orbit':
+        this.applyNavigationMode('Orbit');
+        this.setHomeView();
+        this.closePanel();
+        this.closeSheet();
+        break;
+      case 'section':
+        if (this.dom.btnSectionZ.classList.contains('is-active')) this.clearSections();
+        else this.toggleSectionPlane(this.dom.btnSectionZ, new THREE.Vector3(0, -1, 0));
+        this.closePanel();
+        this.closeSheet();
+        break;
+      case 'measure':
+        this.setMeasureMode(this.measureMode === 'length' ? 'none' : 'length');
+        this.closePanel();
+        this.closeSheet();
+        break;
+      case 'more':
+        this.openSheet();
+        break;
+    }
+    this.updateMobileNavActive(nav);
+  }
+
+  private updateMobileNavActive(active: string): void {
+    this.dom.mobileNavButtons.forEach((button) => {
+      button.classList.toggle('is-active', button.dataset.mobileNav === active);
+    });
+  }
+
+  /** U2: view settings (theme/style/toggles/background) reachable on phones. */
+  private openSheet(): void {
+    this.buildMobileSheet();
+    this.dom.root.classList.add('sheet-open');
+    this.closePanel();
+    this.updateScrim();
+  }
+
+  private closeSheet(): void {
+    this.dom.root.classList.remove('sheet-open');
+    this.updateScrim();
+  }
+
+  private buildMobileSheet(): void {
+    const toggles: Array<{ icon: IconName; label: string; on: boolean; onClick: () => void }> = [
+      { icon: 'blur_on', label: 'X-ray', on: this.xrayEnabled, onClick: () => this.toggleXray() },
+      { icon: 'border_style', label: 'Edges', on: this.edgesEnabled, onClick: () => this.toggleEdges() },
+      { icon: 'grid_on', label: 'Grid', on: this.gridVisible, onClick: () => { this.setGridVisible(!this.gridVisible, true); this.persistLocalState(); this.syncMobileSheet(); } },
+      { icon: this.themeMode === 'dark' ? 'dark_mode' : 'light_mode', label: 'Light theme', on: this.themeMode === 'light', onClick: () => this.toggleTheme() },
+    ];
+    this.dom.sheetBody.replaceChildren();
+    for (const t of toggles) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `sheet-toggle${t.on ? ' is-active' : ''}`;
+      const iconSpan = document.createElement('span');
+      setIcon(iconSpan, t.icon);
+      const label = document.createElement('span');
+      label.textContent = t.label;
+      label.style.flex = '1';
+      const track = document.createElement('span');
+      track.className = 'sheet-toggle-track';
+      const knob = document.createElement('span');
+      knob.className = 'sheet-toggle-knob';
+      track.append(knob);
+      button.append(iconSpan, label, track);
+      button.addEventListener('click', t.onClick);
+      this.dom.sheetBody.append(button);
+    }
+    // Visual style selector
+    const field = document.createElement('label');
+    field.className = 'sheet-toggle';
+    field.style.gap = '10px';
+    const styleLabel = document.createElement('span');
+    styleLabel.textContent = 'Style';
+    styleLabel.style.flex = '1';
+    const select = document.createElement('select');
+    select.className = 'text-input';
+    select.style.width = 'auto';
+    for (const [value, label] of [['basic', 'Basic'], ['pen', 'Pen'], ['color-pen', 'Color pen'], ['color-shadows', 'Color shadows'], ['color-pen-shadows', 'Color pen shadows']] as const) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      if (value === this.visualStyle) option.selected = true;
+      select.append(option);
+    }
+    select.addEventListener('change', () => {
+      this.fireAndForget(this.setVisualStyle(this.parseVisualStyle(select.value), true, true, true), 'Set visual style');
+    });
+    field.append(styleLabel, select);
+    this.dom.sheetBody.append(field);
+  }
+
+  /** Keeps the More sheet's toggle states current when opened. */
+  private syncMobileSheet(): void {
+    if (this.dom.root.classList.contains('sheet-open')) this.buildMobileSheet();
   }
 
   private bindFederationTreeEvents(): void {
@@ -997,17 +1145,24 @@ class ViewerApp {
     });
   }
 
-  /** A11: delegated viewpoint-row selection (bound once; survives re-renders). */
+  /** A11/U6: delegated viewpoint-row actions (bound once; survives re-renders). */
   private bindViewpointListEvents(): void {
     const rowId = (event: Event): string | null => {
       const row = (event.target as HTMLElement).closest<HTMLElement>('[data-viewpoint-id]');
-      return row?.dataset.viewpointId || null;
+      return row?.dataset.viewpointId ?? null;
     };
     this.dom.viewpointList.addEventListener('click', (event) => {
       const id = rowId(event);
       if (id === null) return;
       this.selectedViewpointId = id;
-      this.updateViewpointList();
+      const action = (event.target as HTMLElement).closest<HTMLElement>('[data-viewpoint-action]')?.dataset.viewpointAction;
+      if (action === 'apply') {
+        this.fireAndForget(this.applySelectedViewpoint(), 'Apply viewpoint');
+      } else if (action === 'delete') {
+        this.fireAndForget(this.deleteSelectedViewpoint(), 'Delete viewpoint');
+      } else {
+        this.updateViewpointList();
+      }
     });
     this.dom.viewpointList.addEventListener('dblclick', (event) => {
       const id = rowId(event);
@@ -1107,7 +1262,6 @@ class ViewerApp {
 
     this.world.camera.controls.addEventListener('update', () => {
       this.fireAndForget(this.fragments.core.update(), 'Camera update');
-      this.updateViewCubeFromCamera();
     });
 
     this.fragments.core.onModelLoaded.add((model) => {
@@ -1177,7 +1331,6 @@ class ViewerApp {
     this.transformControlsHelper.visible = false;
     this.world.scene.three.add(this.transformControlsHelper);
 
-    this.updateViewCubeFromCamera();
     await this.updateVisibilityCount();
   }
 
@@ -1245,7 +1398,6 @@ class ViewerApp {
     await this.refreshSelectionVisuals();
     this.renderModelBrowser();
     this.renderFederatedTree();
-    this.renderSpatialTree();
     this.renderClassFilters();
     this.renderLevelFilters();
     this.updateElementCounter();
@@ -1305,7 +1457,6 @@ class ViewerApp {
       console.debug(`Unit resolution failed for ${modelId}; using defaults`, error);
       this.modelUnits.set(modelId, DEFAULT_MODEL_UNITS);
     }
-    this.renderSpatialTree();
     this.renderModelBrowser();
     this.renderFederatedTree();
 
@@ -1435,34 +1586,6 @@ class ViewerApp {
     });
   }
 
-  private renderSpatialTree(): void {
-    // A1: IFC-derived strings (model ids, storey names) are escaped by the
-    // pure markup builder before they reach innerHTML.
-    const entries = [...this.modelIndices.entries()].map(([modelId, index]) => ({
-      modelId,
-      levels: [...index.levels.entries()].map(([name, ids]) => ({ name, count: ids.size })),
-    }));
-    this.dom.spatialTree.innerHTML = spatialTreeMarkup(entries);
-
-    this.dom.spatialTree.querySelectorAll<HTMLElement>('[data-model-id][data-level]').forEach((element) => {
-      element.addEventListener('click', () => {
-        const modelId = element.dataset.modelId;
-        const level = element.dataset.level;
-        if (!modelId || !level) return;
-        const index = this.modelIndices.get(modelId);
-        const ids = index?.levels.get(level);
-        if (!ids || ids.size === 0) return;
-        const map = this.getValidModelIdMap({ [modelId]: new Set(ids) });
-        if (isMapEmpty(map)) return;
-        this.fireAndForget((async () => {
-          await this.hider.isolate(map);
-          await this.updateVisibilityCount();
-          this.setStatus(`Isolated level ${level}`);
-        })(), 'Isolate spatial level');
-      });
-    });
-  }
-
   private renderClassFilters(): void {
     const classes = new Set<string>();
     for (const index of this.modelIndices.values()) {
@@ -1470,7 +1593,7 @@ class ViewerApp {
     }
     const sorted = [...classes].sort((a, b) => a.localeCompare(b));
     // A1: escaped by the pure markup builder.
-    this.dom.classFilterList.innerHTML = filterListMarkup(sorted, 'class', 'No classes detected');
+    this.dom.classFilterList.innerHTML = filterChipMarkup(sorted, 'class', 'No classes detected');
   }
 
   private renderLevelFilters(): void {
@@ -1480,22 +1603,51 @@ class ViewerApp {
     }
     const sorted = [...levels].sort((a, b) => a.localeCompare(b));
     // A1: escaped by the pure markup builder.
-    this.dom.levelFilterList.innerHTML = filterListMarkup(sorted, 'level', 'No levels detected');
+    this.dom.levelFilterList.innerHTML = filterChipMarkup(sorted, 'level', 'No levels detected');
   }
 
   private clearFilterChecks(): void {
-    this.dom.classFilterList.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((checkbox) => {
-      checkbox.checked = false;
-    });
-    this.dom.levelFilterList.querySelectorAll<HTMLInputElement>('input[type="checkbox"]').forEach((checkbox) => {
-      checkbox.checked = false;
-    });
+    for (const list of [this.dom.classFilterList, this.dom.levelFilterList]) {
+      list.querySelectorAll<HTMLButtonElement>('.filter-chip.is-active').forEach((chip) => {
+        chip.classList.remove('is-active');
+        chip.setAttribute('aria-pressed', 'false');
+      });
+    }
   }
 
   private updateElementCounter(): void {
     let total = 0;
     for (const model of this.federatedModels.values()) total += model.elementCount;
     this.dom.elementCount.textContent = `${total} elements`;
+    this.updateTopbarModel();
+  }
+
+  /** Top-bar model name + per-model tag chips (design: "Name  [ARC] [STR]"). */
+  private updateTopbarModel(): void {
+    const models = [...this.federatedModels.values()];
+    this.dom.topbarModel.replaceChildren();
+    this.dom.navPill.hidden = models.length === 0;
+    this.dom.emptyState.hidden = models.length > 0;
+    if (models.length === 0) {
+      const empty = document.createElement('span');
+      empty.className = 'topbar-model-empty';
+      empty.textContent = 'No model loaded';
+      this.dom.topbarModel.append(empty);
+      return;
+    }
+    const name = document.createElement('span');
+    name.className = 'topbar-model-name';
+    name.textContent = models.length === 1 ? models[0].fileName : `${models.length} models`;
+    this.dom.topbarModel.append(name);
+    for (const model of models.slice(0, 4)) {
+      const chip = document.createElement('span');
+      chip.className = 'model-chip';
+      // Short tag: uppercased base name without extension, capped.
+      const base = model.fileName.replace(/\.ifc$/i, '');
+      chip.textContent = base.length > 6 ? base.slice(0, 6).toUpperCase() : base.toUpperCase();
+      chip.title = model.fileName;
+      this.dom.topbarModel.append(chip);
+    }
   }
 
   private getClassIdsForModelLevel(modelId: string, level: string, className: string): Set<number> {
@@ -1581,10 +1733,10 @@ class ViewerApp {
           </button>
         `
         : `<span>${escapeHtml(node.label)}</span>`;
-      const icon = isElement ? 'view_in_ar' : 'subdirectory_arrow_right';
+      const leafIcon = isElement ? 'view_in_ar' : 'subdirectory_arrow_right';
       return `
         <div class="browser-leaf">
-          <span class="material-icons-round">${icon}</span>
+          ${treeIco(leafIcon)}
           ${leafContent}
           <span class="browser-count">${countText}</span>
         </div>
@@ -1596,7 +1748,7 @@ class ViewerApp {
       .map((child) => this.renderSpatialBrowserNode(modelId, index, child, depth + 1))
       .join('');
     const moreMarkup = node.children.length > MAX_BROWSER_SPATIAL_CHILDREN
-      ? `<div class="browser-leaf"><span class="material-icons-round">more_horiz</span><span>${node.children.length - MAX_BROWSER_SPATIAL_CHILDREN} more nodes</span><span class="browser-count">+</span></div>`
+      ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${node.children.length - MAX_BROWSER_SPATIAL_CHILDREN} more nodes</span><span class="browser-count">+</span></div>`
       : '';
 
     const labelMarkup = isStoreyNode
@@ -1620,7 +1772,7 @@ class ViewerApp {
     return `
       <details class="browser-node" data-node-key="${spatialKey}">
         <summary class="browser-summary">
-          <span class="browser-twist material-icons-round">chevron_right</span>
+          ${treeIco('chevron_right', 'browser-twist')}
           ${labelMarkup}
           <span class="browser-count">${countText}</span>
         </summary>
@@ -1649,7 +1801,7 @@ class ViewerApp {
           return `
             <details class="browser-node is-model" data-node-key="model:${escapedModelId}" open>
               <summary class="browser-summary">
-                <span class="browser-twist material-icons-round">chevron_right</span>
+                ${treeIco('chevron_right', 'browser-twist')}
                 <button
                   type="button"
                   class="browser-action"
@@ -1663,7 +1815,7 @@ class ViewerApp {
               </summary>
               <div class="browser-children">
                 <div class="browser-leaf">
-                  <span class="material-icons-round">hourglass_top</span>
+                  ${treeIco('hourglass_top')}
                   <span>Building model tree...</span>
                   <span class="browser-count">-</span>
                 </div>
@@ -1687,7 +1839,7 @@ class ViewerApp {
               const label = index.itemNames.get(localId) ?? `Element ${localId}`;
               return `
                 <div class="browser-leaf">
-                  <span class="material-icons-round">view_in_ar</span>
+                  ${treeIco('view_in_ar')}
                   <button
                     type="button"
                     class="browser-action"
@@ -1704,13 +1856,13 @@ class ViewerApp {
             }).join('');
             const hiddenCount = classIds.length - visibleIds.length;
             const moreElementsMarkup = hiddenCount > 0
-              ? `<div class="browser-leaf"><span class="material-icons-round">more_horiz</span><span>${hiddenCount} more elements</span><span class="browser-count">+</span></div>`
+              ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${hiddenCount} more elements</span><span class="browser-count">+</span></div>`
               : '';
 
             return `
               <details class="browser-node" data-node-key="class:${escapedModelId}:${escapeHtml(levelName)}:${escapeHtml(className)}">
                 <summary class="browser-summary">
-                  <span class="browser-twist material-icons-round">chevron_right</span>
+                  ${treeIco('chevron_right', 'browser-twist')}
                   <button
                     type="button"
                     class="browser-action"
@@ -1725,7 +1877,7 @@ class ViewerApp {
                   <span class="browser-count">${classIds.length}</span>
                 </summary>
                 <div class="browser-children">
-                  ${elementsMarkup || '<div class="browser-leaf"><span class="material-icons-round">hide_source</span><span>No elements</span><span class="browser-count">0</span></div>'}
+                  ${elementsMarkup || `<div class="browser-leaf">${treeIco('hide_source')}<span>No elements</span><span class="browser-count">0</span></div>`}
                   ${moreElementsMarkup}
                 </div>
               </details>
@@ -1735,7 +1887,7 @@ class ViewerApp {
           return `
             <details class="browser-node" data-node-key="level:${escapedModelId}:${escapeHtml(levelName)}">
               <summary class="browser-summary">
-                <span class="browser-twist material-icons-round">chevron_right</span>
+                ${treeIco('chevron_right', 'browser-twist')}
                 <button
                   type="button"
                   class="browser-action"
@@ -1749,14 +1901,14 @@ class ViewerApp {
                 <span class="browser-count">${ids.size}</span>
               </summary>
               <div class="browser-children">
-                ${classMarkup || '<div class="browser-leaf"><span class="material-icons-round">category</span><span>No classes</span><span class="browser-count">0</span></div>'}
+                ${classMarkup || `<div class="browser-leaf">${treeIco('category')}<span>No classes</span><span class="browser-count">0</span></div>`}
               </div>
             </details>
           `;
         }).join('');
 
         const levelMoreMarkup = levelEntries.length > MAX_BROWSER_LEVELS
-          ? `<div class="browser-leaf"><span class="material-icons-round">more_horiz</span><span>${levelEntries.length - MAX_BROWSER_LEVELS} more levels</span><span class="browser-count">+</span></div>`
+          ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${levelEntries.length - MAX_BROWSER_LEVELS} more levels</span><span class="browser-count">+</span></div>`
           : '';
 
         const spatialRootNodes = index.spatialRoot?.children?.length ? index.spatialRoot.children : (index.spatialRoot ? [index.spatialRoot] : []);
@@ -1765,13 +1917,13 @@ class ViewerApp {
           .map((node) => this.renderSpatialBrowserNode(modelId, index, node, 0))
           .join('');
         const spatialMoreMarkup = spatialRootNodes.length > MAX_BROWSER_SPATIAL_CHILDREN
-          ? `<div class="browser-leaf"><span class="material-icons-round">more_horiz</span><span>${spatialRootNodes.length - MAX_BROWSER_SPATIAL_CHILDREN} more nodes</span><span class="browser-count">+</span></div>`
+          ? `<div class="browser-leaf">${treeIco('more_horiz')}<span>${spatialRootNodes.length - MAX_BROWSER_SPATIAL_CHILDREN} more nodes</span><span class="browser-count">+</span></div>`
           : '';
 
         return `
           <details class="browser-node is-model" data-node-key="model:${escapedModelId}" open>
             <summary class="browser-summary">
-              <span class="browser-twist material-icons-round">chevron_right</span>
+              ${treeIco('chevron_right', 'browser-twist')}
               <button
                 type="button"
                 class="browser-action"
@@ -1785,7 +1937,7 @@ class ViewerApp {
             </summary>
             <div class="browser-children">
               <div class="browser-leaf">
-                <span class="material-icons-round">my_location</span>
+                ${treeIco('my_location')}
                 <button
                   type="button"
                   class="browser-action"
@@ -1800,24 +1952,24 @@ class ViewerApp {
 
               <details class="browser-node" data-node-key="group:${escapedModelId}:levels" ${levelEntries.length > 0 ? 'open' : ''}>
                 <summary class="browser-summary">
-                  <span class="browser-twist material-icons-round">chevron_right</span>
+                  ${treeIco('chevron_right', 'browser-twist')}
                   <span>Levels</span>
                   <span class="browser-count">${levelEntries.length}</span>
                 </summary>
                 <div class="browser-children">
-                  ${levelMarkup || '<div class="browser-leaf"><span class="material-icons-round">folder_open</span><span>No levels detected</span><span class="browser-count">-</span></div>'}
+                  ${levelMarkup || `<div class="browser-leaf">${treeIco('folder_open')}<span>No levels detected</span><span class="browser-count">-</span></div>`}
                   ${levelMoreMarkup}
                 </div>
               </details>
 
               <details class="browser-node" data-node-key="group:${escapedModelId}:spatial">
                 <summary class="browser-summary">
-                  <span class="browser-twist material-icons-round">chevron_right</span>
+                  ${treeIco('chevron_right', 'browser-twist')}
                   <span>Spatial Structure</span>
                   <span class="browser-count">${spatialRootNodes.length}</span>
                 </summary>
                 <div class="browser-children">
-                  ${spatialMarkup || '<div class="browser-leaf"><span class="material-icons-round">account_tree</span><span>No spatial tree data</span><span class="browser-count">-</span></div>'}
+                  ${spatialMarkup || `<div class="browser-leaf">${treeIco('account_tree')}<span>No spatial tree data</span><span class="browser-count">-</span></div>`}
                   ${spatialMoreMarkup}
                 </div>
               </details>
@@ -1974,17 +2126,10 @@ class ViewerApp {
     return fallback;
   }
 
-  private updateBackgroundPresetState(): void {
-    for (const button of this.dom.backgroundPresetButtons) {
-      const preset = this.normalizeHexColor(button.dataset.bgPreset, '');
-      button.classList.toggle('active', preset === this.backgroundColor);
-    }
-  }
-
   private setGridVisible(visible: boolean, updateStatus: boolean): void {
     this.gridVisible = visible;
     if (this.gridHelper) this.gridHelper.visible = visible;
-    this.dom.toggleGrid.checked = visible;
+    this.setRailPressed(this.dom.btnToggleGrid, visible);
     if (updateStatus) this.setStatus(visible ? 'Grid enabled' : 'Grid hidden');
   }
 
@@ -2007,16 +2152,15 @@ class ViewerApp {
       post.basePass.clearColor = threeColor;
       post.basePass.clearAlpha = 1;
     }
-    this.dom.backgroundColorInput.value = normalized;
-    this.updateBackgroundPresetState();
     if (updateStatus) this.setStatus(`Background color set to ${normalized}`);
   }
 
   private syncVisualSettingsUi(): void {
-    this.dom.toggleGrid.checked = this.gridVisible;
-    this.dom.visualStyleSelect.value = this.visualStyle;
-    this.dom.backgroundColorInput.value = this.backgroundColor;
-    this.updateBackgroundPresetState();
+    this.setRailPressed(this.dom.btnToggleGrid, this.gridVisible);
+    this.setRailPressed(this.dom.btnTransparency, this.xrayEnabled);
+    this.setRailPressed(this.dom.btnWireframe, this.edgesEnabled);
+    setIcon(this.dom.btnThemeToggle, this.themeMode === 'dark' ? 'light_mode' : 'dark_mode');
+    this.setActiveView(this.activeView);
   }
 
   private parseVisualStyle(value: string | null | undefined): VisualStyle {
@@ -2114,7 +2258,6 @@ class ViewerApp {
   private async setVisualStyle(style: VisualStyle, updateStatus: boolean, persist: boolean, resetToggles = false): Promise<void> {
     const resolvedStyle = this.parseVisualStyle(style);
     this.visualStyle = resolvedStyle;
-    this.dom.visualStyleSelect.value = resolvedStyle;
 
     // A16: resetModelColors()/restoreOriginalLighting() were permanent no-ops —
     // their guard flags could never be set true after the W0.4 deletion of
@@ -2127,8 +2270,8 @@ class ViewerApp {
     if (resetToggles) {
       this.xrayEnabled = false;
       this.edgesEnabled = false;
-      this.dom.btnTransparency.classList.toggle('active', false);
-      this.dom.btnWireframe.classList.toggle('active', false);
+      this.setRailPressed(this.dom.btnTransparency, false);
+      this.setRailPressed(this.dom.btnWireframe, false);
     }
     this.applyXRay();
     this.applyEdges();
@@ -2225,7 +2368,6 @@ class ViewerApp {
     this.fireAndForget(this.updateVisibilityCount(), 'Update visibility');
     this.renderModelBrowser();
     this.renderFederatedTree();
-    this.updateViewCubeFromCamera();
     this.setStatus(`${model.visible ? 'Shown' : 'Hidden'}: ${model.fileName}`);
   }
 
@@ -2341,7 +2483,6 @@ class ViewerApp {
     }
 
     if (this.edgesEnabled) this.applyEdges();
-    this.updateViewCubeFromCamera();
     this.fireAndForget(this.fragments.core.update(true), 'Apply transform');
   }
 
@@ -2405,8 +2546,8 @@ class ViewerApp {
 
   private collectCheckedValues(container: HTMLElement): string[] {
     const values: string[] = [];
-    container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked').forEach((checkbox) => {
-      values.push(checkbox.value);
+    container.querySelectorAll<HTMLButtonElement>('.filter-chip.is-active[data-filter-value]').forEach((chip) => {
+      if (chip.dataset.filterValue) values.push(chip.dataset.filterValue);
     });
     return values;
   }
@@ -2473,8 +2614,8 @@ class ViewerApp {
 
   private async searchElements(term: string): Promise<void> {
     if (!term) {
-      this.dom.elementResults.innerHTML = '';
-      this.setStatus('Enter a term to search');
+      this.dom.elementResults.replaceChildren();
+      this.dom.searchResultsGroup.hidden = true;
       return;
     }
 
@@ -2511,17 +2652,20 @@ class ViewerApp {
     }
 
     const capped = results.slice(0, 180);
-    this.dom.elementResults.innerHTML = capped
-      .map((result) => `
-        <div class="result-item" data-model-id="${escapeHtml(result.modelId)}" data-local-id="${result.localId}">
-          <div><strong>${escapeHtml(result.name)}</strong></div>
-          <div>${escapeHtml(result.type)}</div>
-          <div>${escapeHtml(result.globalId)}</div>
-        </div>
+    // U6: real <button> rows (keyboard-reachable), delegated selection.
+    this.dom.elementResults.innerHTML = capped.length === 0
+      ? '<div class="list-empty">No matches</div>'
+      : capped
+          .map((result) => `
+        <button type="button" class="result-row" data-model-id="${escapeHtml(result.modelId)}" data-local-id="${result.localId}">
+          <span class="result-name">${escapeHtml(result.name)}</span>
+          <span class="result-meta">${escapeHtml(result.type)} · ${escapeHtml(result.globalId)}</span>
+        </button>
       `)
-      .join('');
+          .join('');
+    this.dom.searchResultsGroup.hidden = false;
 
-    this.dom.elementResults.querySelectorAll<HTMLElement>('.result-item').forEach((item) => {
+    this.dom.elementResults.querySelectorAll<HTMLButtonElement>('.result-row').forEach((item) => {
       item.addEventListener('click', () => {
         const modelId = item.dataset.modelId;
         const localId = Number(item.dataset.localId);
@@ -2617,9 +2761,10 @@ class ViewerApp {
     this.dom.loadingOverlay.classList.remove('is-error');
     this.dom.loadingErrorActions.hidden = true;
     this.dom.loadingText.textContent = batchTotal > 1
-      ? `Reading IFC file ${batchIndex}/${batchTotal}...`
-      : 'Reading IFC file...';
+      ? `Parsing IFC ${batchIndex}/${batchTotal}…`
+      : 'Parsing IFC…';
     this.dom.loadingProgress.style.width = '8%';
+    this.dom.loadingPct.textContent = '8%';
     this.setStatus('Loading model...');
 
     let timeoutHandle: number | undefined;
@@ -2644,8 +2789,9 @@ class ViewerApp {
       this.modelRegistry.beginLoad(modelId, { fileName: file.name, sizeBytes: file.size });
 
       if (requestId === this.loadRequestId) {
-        this.dom.loadingText.textContent = 'Converting IFC to fragments...';
+        this.dom.loadingText.textContent = 'Converting IFC to fragments…';
         this.dom.loadingProgress.style.width = '25%';
+        this.dom.loadingPct.textContent = '25%';
       }
 
       const loadPromise = this.ifcLoader.load(data, true, modelId, {
@@ -2658,7 +2804,8 @@ class ViewerApp {
             if (requestId !== this.loadRequestId) return;
             const percentage = Math.round(25 + progress * 70);
             this.dom.loadingProgress.style.width = `${percentage}%`;
-            this.dom.loadingText.textContent = `Processing ${Math.round(progress * 100)}%`;
+            this.dom.loadingPct.textContent = `${percentage}%`;
+            this.dom.loadingText.textContent = 'Building spatial index…';
           },
         },
       });
@@ -2778,21 +2925,26 @@ class ViewerApp {
     void this.world.camera.controls.setLookAt(eye.x, eye.y, eye.z, center.x, center.y, center.z, true);
   }
 
-  private fitToModel(): void {
+  private navigateToView(vector: readonly [number, number, number], view: 'orbit' | 'front' | 'top'): void {
     const bbox = this.getModelBoundingBox();
     if (!bbox || bbox.isEmpty()) return;
     const center = bbox.getCenter(new THREE.Vector3());
     const size = bbox.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
-    this.navigateToDirection(center, maxDim, this.getViewCubeBasisQuaternion(new THREE.Quaternion()), VIEW_CUBE_HOME_VECTOR);
+    this.navigateToDirection(center, maxDim, this.getViewCubeBasisQuaternion(new THREE.Quaternion()), vector);
+    this.setActiveView(view);
+  }
+
+  private fitToModel(): void {
+    this.navigateToView(VIEW_CUBE_HOME_VECTOR, 'orbit');
   }
 
   private setFrontView(): void {
-    this.navigateToCubeTarget('front');
+    this.navigateToView(FRONT_VIEW_VECTOR, 'front');
   }
 
   private setTopView(): void {
-    this.navigateToCubeTarget('top');
+    this.navigateToView(TOP_VIEW_VECTOR, 'top');
   }
 
   private setHomeView(): void {
@@ -2800,99 +2952,20 @@ class ViewerApp {
     this.fitToModel();
   }
 
-  private navigateToCubeTarget(key: CubeTargetKey): void {
-    const target = VIEW_CUBE_TARGETS_BY_KEY.get(key);
-    if (!target) return;
-    const bbox = this.getModelBoundingBox();
-    if (!bbox || bbox.isEmpty()) return;
-    const center = bbox.getCenter(new THREE.Vector3());
-    const size = bbox.getSize(new THREE.Vector3());
-    const maxDim = Math.max(size.x, size.y, size.z);
-    this.navigateToDirection(center, maxDim, this.getViewCubeBasisQuaternion(new THREE.Quaternion()), target.vector);
-  }
-
-  private updateViewCubeHotspots(activeKey: CubeTargetKey | null): void {
-    const centerX = this.dom.viewCubeHotspots.clientWidth / 2 || 56;
-    const centerY = this.dom.viewCubeHotspots.clientHeight / 2 || 56;
-
-    for (const target of VIEW_CUBE_TARGETS) {
-      const button = this.cubeHotspots.get(target.key);
-      if (!button) continue;
-
-      const [x, y, z] = target.vector;
-      this.cubeProjectedPoint.set(x, y, z).multiplyScalar(VIEW_CUBE_HALF_SIZE).applyQuaternion(this.cubeDisplayQuaternion);
-      const perspectiveScale = VIEW_CUBE_PERSPECTIVE / (VIEW_CUBE_PERSPECTIVE - this.cubeProjectedPoint.z);
-      const screenX = centerX + this.cubeProjectedPoint.x * perspectiveScale;
-      const screenY = centerY - this.cubeProjectedPoint.y * perspectiveScale;
-
-      let visible: boolean;
-      if (target.kind === 'face') {
-        this.cubeProjectedNormal.set(x, y, z).normalize().applyQuaternion(this.cubeDisplayQuaternion);
-        visible = this.cubeProjectedNormal.z > 0.08;
-      } else if (target.kind === 'edge') {
-        visible = this.cubeProjectedPoint.z > -VIEW_CUBE_HALF_SIZE * 0.18;
-      } else {
-        visible = this.cubeProjectedPoint.z > -VIEW_CUBE_HALF_SIZE * 0.34;
-      }
-
-      const hotspotScale = target.kind === 'face' ? perspectiveScale * 0.92 : target.kind === 'edge' ? perspectiveScale * 0.86 : perspectiveScale * 0.78;
-      button.dataset.visible = visible ? 'true' : 'false';
-      button.style.pointerEvents = visible ? 'auto' : 'none';
-      button.style.left = `${screenX.toFixed(2)}px`;
-      button.style.top = `${screenY.toFixed(2)}px`;
-      button.style.transform = `translate(-50%, -50%) scale(${hotspotScale.toFixed(3)})`;
-      button.style.zIndex = String(Math.round(100 + this.cubeProjectedPoint.z));
-      button.classList.toggle('is-active', visible && activeKey === target.key && target.kind === 'face');
-    }
-  }
-
-  private updateViewCubeFromCamera(): void {
-    if (!this.world?.camera) return;
-    const camera = this.world.camera.three;
-    this.getViewCubeBasisQuaternion(this.cubeBasis);
-    this.cubeBasisInverse.copy(this.cubeBasis).invert();
-    this.cubeDisplayQuaternion.copy(camera.quaternion).invert().multiply(this.cubeBasis);
-    const euler = new THREE.Euler().setFromQuaternion(this.cubeDisplayQuaternion, 'XYZ');
-    // CSS 3D: Y-down, Three.js: Y-up → negate X and Y rotations
-    const rx = -THREE.MathUtils.radToDeg(euler.x);
-    const ry = -THREE.MathUtils.radToDeg(euler.y);
-    const rz = THREE.MathUtils.radToDeg(euler.z);
-    this.dom.viewCubeBody.style.transform = `rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(2)}deg) rotateZ(${rz.toFixed(2)}deg)`;
-
-    this.world.camera.controls.getTarget(this.cubeTarget);
-    this.cubeCamDir.copy(camera.position).sub(this.cubeTarget).normalize();
-    this.cubeLocalDirection.copy(this.cubeCamDir).applyQuaternion(this.cubeBasisInverse).normalize();
-
-    let activeKey: CubeTargetKey | null = null;
-    let bestDot = -Infinity;
-    for (const target of VIEW_CUBE_TARGETS) {
-      const [x, y, z] = target.vector;
-      const length = Math.hypot(x, y, z);
-      const dot = (this.cubeLocalDirection.x * x + this.cubeLocalDirection.y * y + this.cubeLocalDirection.z * z) / length;
-      if (dot > bestDot) {
-        bestDot = dot;
-        activeKey = target.key;
-      }
-    }
-
-    const homeLength = Math.hypot(VIEW_CUBE_HOME_VECTOR[0], VIEW_CUBE_HOME_VECTOR[1], VIEW_CUBE_HOME_VECTOR[2]);
-    const homeDot = (
-      this.cubeLocalDirection.x * VIEW_CUBE_HOME_VECTOR[0]
-      + this.cubeLocalDirection.y * VIEW_CUBE_HOME_VECTOR[1]
-      + this.cubeLocalDirection.z * VIEW_CUBE_HOME_VECTOR[2]
-    ) / homeLength;
-
-    for (const faceKey of CUBE_FACE_KEYS) {
-      this.cubeFaceElements[faceKey].classList.toggle('is-active', activeKey === faceKey);
-    }
-    this.dom.cubeHome.classList.toggle('is-active', homeDot > 0.992);
-    this.updateViewCubeHotspots(activeKey);
+  /** Reflects the active preset in the glass view controls + status label. */
+  private setActiveView(view: 'orbit' | 'front' | 'top'): void {
+    this.activeView = view;
+    this.dom.cubeHome.classList.toggle('is-active', view === 'orbit');
+    this.dom.btnFront.classList.toggle('is-active', view === 'front');
+    this.dom.btnTop.classList.toggle('is-active', view === 'top');
+    this.dom.viewLabel.textContent =
+      view === 'orbit' ? 'Orbit · perspective' : view === 'front' ? 'Front · orthographic' : 'Top · orthographic';
   }
 
   private applySelectionMode(mode: SelectionMode): void {
     this.selectionMode = mode;
-    this.dom.btnSelectSingle.classList.toggle('active', mode === 'single');
-    this.dom.btnSelectMulti.classList.toggle('active', mode === 'multi');
+    this.setRailPressed(this.dom.btnSelectSingle, mode === 'single');
+    this.setRailPressed(this.dom.btnSelectMulti, mode === 'multi');
     this.setStatus(mode === 'single' ? 'Single-selection mode' : 'Multi-selection mode');
     this.persistLocalState();
   }
@@ -2901,9 +2974,9 @@ class ViewerApp {
     if (!this.world?.camera) return;
     this.navigationMode = mode;
     this.world.camera.set(mode);
-    this.dom.btnModeOrbit.classList.toggle('active', mode === 'Orbit');
-    this.dom.btnModePlan.classList.toggle('active', mode === 'Plan');
-    this.dom.btnModeFirstPerson.classList.toggle('active', mode === 'FirstPerson');
+    this.setRailPressed(this.dom.btnModeOrbit, mode === 'Orbit');
+    this.setRailPressed(this.dom.btnModePlan, mode === 'Plan');
+    this.setRailPressed(this.dom.btnModeFirstPerson, mode === 'FirstPerson');
     this.persistLocalState();
   }
 
@@ -2911,8 +2984,14 @@ class ViewerApp {
     this.measureMode = mode;
     this.lengthMeasurement.enabled = mode === 'length';
     this.areaMeasurement.enabled = mode === 'area';
-    this.dom.btnMeasureLength.classList.toggle('active', mode === 'length');
-    this.dom.btnMeasureArea.classList.toggle('active', mode === 'area');
+    this.setRailPressed(this.dom.btnMeasureLength, mode === 'length');
+    this.setRailPressed(this.dom.btnMeasureArea, mode === 'area');
+    // Measure hint overlay
+    this.dom.measureHint.hidden = mode === 'none';
+    if (mode !== 'none') {
+      this.dom.measureHintText.textContent =
+        mode === 'area' ? 'Area — click points, double-click to close' : 'Length — click two points';
+    }
     this.setStatus(mode === 'none' ? 'Measure mode disabled' : `${mode === 'length' ? 'Length' : 'Area'} measurement enabled`);
   }
 
@@ -2952,6 +3031,11 @@ class ViewerApp {
     }
   }
 
+  // Active single-plane section state, for the glass slider (position + normal).
+  private activeSectionNormal: THREE.Vector3 | null = null;
+  private activeSectionBox: THREE.Box3 | null = null;
+  private activeSectionLabel = '';
+
   private addSectionPlane(normal: THREE.Vector3): void {
     const bbox = this.getModelBoundingBox();
     if (!bbox || bbox.isEmpty()) {
@@ -2965,13 +3049,39 @@ class ViewerApp {
 
   /** A12: shared toggle for the X/Y/Z axis section buttons. */
   private toggleSectionPlane(button: HTMLButtonElement, normal: THREE.Vector3): void {
-    if (button.classList.contains('active')) {
+    if (button.classList.contains('is-active')) {
       this.clearSections();
       return;
     }
     this.clearSections(false);
     this.addSectionPlane(normal);
-    button.classList.add('active');
+    this.setRailPressed(button, true);
+    // Wire the glass slider to this axis (design: bottom-center section control).
+    this.activeSectionNormal = normal.clone();
+    this.activeSectionBox = this.getModelBoundingBox();
+    this.activeSectionLabel =
+      button === this.dom.btnSectionX ? 'Section X' : button === this.dom.btnSectionY ? 'Section Y' : 'Section Z';
+    this.dom.sectionLabel.textContent = this.activeSectionLabel;
+    this.dom.sectionPos.value = '50';
+    this.dom.sectionPosLabel.textContent = '50%';
+    this.dom.sectionSlider.hidden = false;
+  }
+
+  /** Moves the active section plane along its normal to the given percentage. */
+  private setSectionPosition(pct: number): void {
+    if (!this.activeSectionNormal || !this.activeSectionBox || this.activeSectionBox.isEmpty()) return;
+    const t = this.clamp(pct / 100, 0, 1);
+    const { min, max } = this.activeSectionBox;
+    const center = this.activeSectionBox.getCenter(new THREE.Vector3());
+    const point = center.clone();
+    const n = this.activeSectionNormal;
+    // Slide along the dominant axis of the normal between the bbox extremes.
+    if (Math.abs(n.x) > 0.5) point.x = min.x + (max.x - min.x) * t;
+    else if (Math.abs(n.y) > 0.5) point.y = min.y + (max.y - min.y) * t;
+    else point.z = min.z + (max.z - min.z) * t;
+    this.clipper.deleteAll();
+    this.createClipPlane(this.activeSectionNormal.clone(), point);
+    this.fireAndForget(this.fragments.core.update(true), 'Section move');
   }
 
   private createSectionBox(): void {
@@ -2995,10 +3105,12 @@ class ViewerApp {
   private clearSections(updateStatus = true): void {
     this.clipper.deleteAll();
     this.clipper.enabled = false;
-    this.dom.btnSectionX.classList.remove('active');
-    this.dom.btnSectionY.classList.remove('active');
-    this.dom.btnSectionZ.classList.remove('active');
-    this.dom.btnSectionBox.classList.remove('active');
+    for (const btn of [this.dom.btnSectionX, this.dom.btnSectionY, this.dom.btnSectionZ, this.dom.btnSectionBox]) {
+      this.setRailPressed(btn, false);
+    }
+    this.activeSectionNormal = null;
+    this.activeSectionBox = null;
+    this.dom.sectionSlider.hidden = true;
     if (updateStatus) this.setStatus('Sections cleared');
   }
 
@@ -3171,19 +3283,17 @@ class ViewerApp {
     this.dom.propSections.innerHTML = sections.map((section) => `
       <details class="prop-section" data-prop-section data-search="${escapeHtml(section.title.toLowerCase())}" ${section.defaultOpen ? 'open' : ''}>
         <summary class="prop-section-summary">
-          <span class="material-icons-round">chevron_right</span>
-          <span>${escapeHtml(section.title)}</span>
+          ${treeIco('chevron_right', 'browser-twist')}
+          <span class="prop-section-name">${escapeHtml(section.title)}</span>
           <span class="prop-section-count" data-prop-count>${section.rows.length}</span>
         </summary>
         <div class="prop-section-body">
-          <div class="property-grid">
             ${section.rows.map((row) => `
               <div class="prop-row" data-prop-row data-search="${escapeHtml(row.searchText)}">
                 <span class="prop-key">${escapeHtml(row.key)}</span>
                 <span class="prop-val">${escapeHtml(row.value)}</span>
               </div>
             `).join('')}
-          </div>
         </div>
       </details>
     `).join('');
@@ -3217,6 +3327,7 @@ class ViewerApp {
       this.dom.propsEmpty.hidden = false;
       this.dom.propsContent.hidden = true;
       this.dom.propSections.innerHTML = '';
+      this.dom.selectionChip.hidden = true;
       return;
     }
 
@@ -3241,11 +3352,19 @@ class ViewerApp {
     ].find((entry) => entry.length > 0) || '-';
 
     const nameValue = toPropertyString(data.Name, '');
+    const displayName = nameValue || `Element ${firstSelection.localId}`;
+    const storey = this.modelIndices.get(firstSelection.modelId)?.itemToLevel.get(firstSelection.localId) || '—';
     this.dom.propType.textContent = typeValue;
-    this.dom.propName.textContent = nameValue || `Element ${firstSelection.localId}`;
-    this.dom.propGlobalId.textContent = toPropertyString(data.GlobalId, '-');
-    this.dom.propDescription.textContent = toPropertyString(data.Description, '-');
-    this.dom.propStory.textContent = this.modelIndices.get(firstSelection.modelId)?.itemToLevel.get(firstSelection.localId) || '-';
+    this.dom.propName.textContent = displayName;
+    this.dom.propGlobalId.textContent = toPropertyString(data.GlobalId, '—');
+    this.dom.propDescription.textContent = toPropertyString(data.Description, '—');
+    this.dom.propStory.textContent = storey;
+
+    // Selection chip (glass overlay, top-left).
+    const count = countMapItems(this.selectedItems);
+    this.dom.selChipName.textContent = count > 1 ? `${count} elements selected` : displayName;
+    this.dom.selChipMeta.textContent = count > 1 ? typeValue : `${typeValue} · ${storey}`;
+    this.dom.selectionChip.hidden = false;
 
     let volumeText = '';
     let geometryProbe: GeometryProbe | null = null;
@@ -3403,8 +3522,8 @@ class ViewerApp {
     await this.setVisualStyle(viewpointStyle, false, false);
     this.xrayEnabled = viewpoint.xray;
     this.edgesEnabled = viewpoint.edges;
-    this.dom.btnTransparency.classList.toggle('active', this.xrayEnabled);
-    this.dom.btnWireframe.classList.toggle('active', this.edgesEnabled);
+    this.setRailPressed(this.dom.btnTransparency, this.xrayEnabled);
+    this.setRailPressed(this.dom.btnWireframe, this.edgesEnabled);
     this.applyXRay();
     this.applyEdges();
 
@@ -3431,28 +3550,35 @@ class ViewerApp {
 
   private updateViewpointList(): void {
     if (this.viewpoints.length === 0) {
-      this.dom.viewpointList.innerHTML = '<div class="viewpoint-item">No viewpoints saved</div>';
+      this.dom.viewpointList.innerHTML =
+        '<div class="list-empty">No viewpoints yet. Save one before creating issues for better traceability.</div>';
       return;
     }
 
     this.dom.viewpointList.innerHTML = this.viewpoints
       .map((entry) => {
-        const active = entry.id === this.selectedViewpointId ? 'active' : '';
+        const active = entry.id === this.selectedViewpointId ? ' is-active' : '';
         const escapedId = escapeHtml(entry.id);
         const escapedName = escapeHtml(entry.name);
         const thumbnail = entry.snapshot
-          ? `<img class="viewpoint-thumb" src="${escapeHtml(entry.snapshot)}" alt="" loading="lazy" />`
-          : '';
+          ? `<img class="vp-thumb" src="${escapeHtml(entry.snapshot)}" alt="" loading="lazy" />`
+          : `<span class="vp-icon">${icon('photo_camera')}</span>`;
         return `
-          <div class="viewpoint-item ${active}" data-viewpoint-id="${escapedId}">
-            ${thumbnail}
-            <div><strong>${escapedName}</strong></div>
-            <div>${new Date(entry.createdAt).toLocaleString()}</div>
+          <div class="vp-row${active}" data-viewpoint-id="${escapedId}">
+            <div class="vp-row-main">
+              ${thumbnail}
+              <div class="vp-text">
+                <div class="vp-name">${escapedName}</div>
+                <div class="vp-meta">${escapeHtml(new Date(entry.createdAt).toLocaleString())}</div>
+              </div>
+              <button type="button" class="row-btn" data-viewpoint-action="apply">Apply</button>
+              <button type="button" class="icon-btn-danger" data-viewpoint-action="delete" title="Delete viewpoint" aria-label="Delete viewpoint">${icon('delete', 16)}</button>
+            </div>
           </div>
         `;
       })
       .join('');
-    // A11: row click/dblclick handled by delegation bound once in
+    // A11: row + action clicks handled by delegation bound once in
     // bindViewpointListEvents() — no per-item listeners to leak on re-render.
   }
 
@@ -3887,7 +4013,6 @@ class ViewerApp {
     this.issues = state.issues.map((issue) => ({ ...issue }));
 
     document.documentElement.setAttribute('data-theme', this.themeMode);
-    this.dom.toggleTheme.checked = this.themeMode === 'light';
 
     this.applySelectionMode(this.selectionMode);
     this.applyNavigationMode(this.navigationMode);
@@ -3895,8 +4020,8 @@ class ViewerApp {
     await this.setVisualStyle(this.visualStyle, false, false);
     this.xrayEnabled = restoredXray;
     this.edgesEnabled = restoredEdges;
-    this.dom.btnTransparency.classList.toggle('active', this.xrayEnabled);
-    this.dom.btnWireframe.classList.toggle('active', this.edgesEnabled);
+    this.setRailPressed(this.dom.btnTransparency, this.xrayEnabled);
+    this.setRailPressed(this.dom.btnWireframe, this.edgesEnabled);
     this.setGridVisible(this.gridVisible, false);
     this.setBackgroundColor(this.backgroundColor, false);
     this.syncVisualSettingsUi();
@@ -3909,14 +4034,28 @@ class ViewerApp {
     this.refreshIssueMarkers();
   }
 
+  /** U7: real tab activation — aria-selected + roving tabindex + panel title. */
   private activateTab(tab: string): void {
-    this.dom.tabButtons.forEach((button) => {
-      button.classList.toggle('active', button.dataset.tab === tab);
+    this.dom.tabStripButtons.forEach((button) => {
+      const active = button.dataset.tab === tab;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-selected', String(active));
+      button.tabIndex = active ? 0 : -1;
     });
-
-    document.querySelectorAll<HTMLElement>('.tab-panel').forEach((panel) => {
-      panel.classList.toggle('active', panel.id === `panel-${tab}`);
+    this.dom.tabPanels.forEach((panel) => {
+      const active = panel.id === `panel-${tab}`;
+      panel.classList.toggle('is-active', active);
+      panel.hidden = !active;
     });
+    const titles: Record<string, string> = {
+      explorer: 'Explorer',
+      models: 'Federated models',
+      properties: 'Properties',
+      viewpoints: 'Viewpoints',
+      issues: 'Issues',
+      help: 'Help',
+    };
+    this.dom.panelTitle.textContent = titles[tab] ?? 'Explorer';
   }
 
   private async updateVisibilityCount(): Promise<void> {
@@ -3948,8 +4087,10 @@ class ViewerApp {
       this.setMeasureMode('none');
       this.issuePinMode = false;
       this.dom.viewerHint.hidden = true;
-      this.dom.btnIssuePinMode.classList.remove('active');
+      this.setRailPressed(this.dom.btnIssuePinMode, false);
       if (this.activeGizmoModelId) this.detachModelGizmo();
+      if (this.dom.root.classList.contains('sheet-open')) this.closeSheet();
+      else if (this.isSmallScreen() && this.dom.root.classList.contains('panel-open')) this.closePanel();
       this.setStatus('Active tool canceled');
       return;
     }
@@ -3977,7 +4118,7 @@ class ViewerApp {
         this.setMeasureMode(this.measureMode === 'area' ? 'none' : 'area');
         break;
       case 'g':
-        this.dom.toggleGrid.click();
+        this.dom.btnToggleGrid.click();
         break;
       case 'x':
         this.dom.btnTransparency.click();
@@ -4020,69 +4161,50 @@ class ViewerApp {
     this.dom.statusText.textContent = message;
   }
 
-  /** Show a floating toast notification that auto-dismisses. */
+  /**
+   * U4/U11: floating toast, reachable on every viewport (region is fixed and
+   * clear of the view controls). Auto-dismisses; assertive for errors.
+   */
   private showToast(message: string, type: 'success' | 'error' | 'warning' | 'info' = 'info', durationMs = 4000): void {
-    let container = document.getElementById('toast-container');
-    if (!container) {
-      container = document.createElement('div');
-      container.id = 'toast-container';
-      document.body.appendChild(container);
-    }
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.setAttribute('role', 'alert');
-    toast.setAttribute('aria-live', 'assertive');
-    toast.textContent = message;
-    container.appendChild(toast);
-    requestAnimationFrame(() => toast.classList.add('toast-visible'));
+    toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    const iconSpan = document.createElement('span');
+    const iconName: IconName = type === 'error' ? 'error_outline' : type === 'success' ? 'visibility' : 'info';
+    setIcon(iconSpan, iconName, 18);
+    const text = document.createElement('span');
+    text.textContent = message;
+    toast.append(iconSpan, text);
+    this.dom.toastRegion.append(toast);
     setTimeout(() => {
-      toast.classList.remove('toast-visible');
       toast.addEventListener('transitionend', () => toast.remove(), { once: true });
-      setTimeout(() => toast.remove(), 500);
+      toast.style.opacity = '0';
+      setTimeout(() => toast.remove(), 400);
     }, durationMs);
   }
 
-  /** Show a modal confirmation dialog. Returns a promise that resolves true on confirm, false on cancel. */
+  /**
+   * U8: modal confirm via native <dialog>.showModal() — the browser provides
+   * the focus trap and Escape handling; we focus Cancel (not the destructive
+   * button) and restore focus to the invoker on close.
+   */
   private confirm(message: string, confirmLabel = 'Confirm', cancelLabel = 'Cancel'): Promise<boolean> {
     return new Promise((resolve) => {
-      const overlay = document.createElement('div');
-      overlay.className = 'confirm-overlay';
-      overlay.setAttribute('role', 'dialog');
-      overlay.setAttribute('aria-modal', 'true');
-      overlay.setAttribute('aria-label', 'Confirmation');
-
-      const dialog = document.createElement('div');
-      dialog.className = 'confirm-dialog';
-
-      const msg = document.createElement('p');
-      msg.className = 'confirm-message';
-      msg.textContent = message;
-
-      const actions = document.createElement('div');
-      actions.className = 'confirm-actions';
-
-      const btnCancel = document.createElement('button');
-      btnCancel.className = 'confirm-btn confirm-btn-cancel';
-      btnCancel.textContent = cancelLabel;
-
-      const btnConfirm = document.createElement('button');
-      btnConfirm.className = 'confirm-btn confirm-btn-confirm';
-      btnConfirm.textContent = confirmLabel;
-
-      const cleanup = (result: boolean) => {
-        overlay.remove();
-        resolve(result);
+      const dialog = this.dom.confirmDialog;
+      const invoker = document.activeElement as HTMLElement | null;
+      this.dom.confirmMessage.textContent = message;
+      this.dom.confirmOk.textContent = confirmLabel;
+      this.dom.confirmCancel.textContent = cancelLabel;
+      const onClose = (): void => {
+        dialog.removeEventListener('close', onClose);
+        invoker?.focus?.();
+        resolve(dialog.returnValue === 'confirm');
       };
-
-      btnCancel.addEventListener('click', () => cleanup(false));
-      btnConfirm.addEventListener('click', () => cleanup(true));
-      overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup(false); });
-
-      actions.append(btnCancel, btnConfirm);
-      dialog.append(msg, actions);
-      overlay.appendChild(dialog);
-      document.body.appendChild(overlay);
-      btnConfirm.focus();
+      dialog.addEventListener('close', onClose);
+      dialog.returnValue = 'cancel';
+      dialog.showModal();
+      // Focus the non-destructive action (U8), not the confirm button.
+      this.dom.confirmCancel.focus();
     });
   }
 

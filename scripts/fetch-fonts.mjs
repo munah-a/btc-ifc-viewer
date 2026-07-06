@@ -62,7 +62,7 @@ for (const face of faces) {
     '  font-style: normal;',
     `  font-weight: ${face.weight};`,
     '  font-display: swap;',
-    `  src: url('./fonts/${file}') format('woff2');`,
+    `  src: url('./${file}') format('woff2');`,
     '}',
   );
 }

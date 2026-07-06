@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { escapeHtml, filterListMarkup, spatialTreeMarkup } from '../../src/core/markup';
+import { escapeHtml, filterChipMarkup } from '../../src/core/markup';
 
 // AUDIT A1: IFC-derived strings (storey/class names, model ids) reach
 // innerHTML — a hostile name must never survive as live markup.
@@ -19,37 +19,21 @@ describe('escapeHtml', () => {
   });
 });
 
-describe('spatialTreeMarkup (A1)', () => {
-  it('escapes hostile model ids and storey names in text and attributes', () => {
-    const markup = spatialTreeMarkup([
-      { modelId: HOSTILE_NAME, levels: [{ name: HOSTILE_NAME, count: 3 }, { name: HOSTILE_ATTR, count: 1 }] },
-    ]);
-    expect(markup).not.toContain('<img');
-    expect(markup).toContain('&lt;img');
-    // Attribute injection stays inside the quoted attribute.
-    expect(markup).not.toContain('" onmouseover="');
-    expect(markup).toContain('&quot; onmouseover=&quot;');
-  });
-
-  it('renders counts and empty state', () => {
-    const markup = spatialTreeMarkup([{ modelId: 'm.ifc', levels: [] }]);
-    expect(markup).toContain('m.ifc');
-    expect(markup).toContain('No storeys detected');
-  });
-});
-
-describe('filterListMarkup (A1)', () => {
+describe('filterChipMarkup (A1)', () => {
   it('escapes hostile class/level names in value attributes and labels', () => {
     for (const type of ['class', 'level'] as const) {
-      const markup = filterListMarkup([HOSTILE_NAME, HOSTILE_ATTR], type, 'empty');
+      const markup = filterChipMarkup([HOSTILE_NAME, HOSTILE_ATTR], type, 'empty');
       expect(markup).not.toContain('<img');
       expect(markup).toContain('&lt;img');
       expect(markup).not.toContain('" onmouseover="');
       expect(markup).toContain(`data-filter-type="${type}"`);
+      // Chips are real buttons with aria-pressed (U6).
+      expect(markup).toContain('<button');
+      expect(markup).toContain('aria-pressed="false"');
     }
   });
 
   it('renders the empty message when no names exist', () => {
-    expect(filterListMarkup([], 'class', 'No classes detected')).toContain('No classes detected');
+    expect(filterChipMarkup([], 'class', 'No classes detected')).toContain('No classes detected');
   });
 });
