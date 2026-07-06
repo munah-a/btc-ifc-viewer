@@ -30,6 +30,8 @@ deploy, GitHub Pages retained as demo mirror until W4.
 | C4 | **Paid tier deferred but supported** | All hosting metadata carries `ownerId?`, `tier`, `expiresAt?`; quota/entitlement checks flow through ONE module (`api/_lib/entitlements.ts`) that today returns anon defaults. No auth provider chosen yet — do not build login. |
 | C5 | **Full rebrand from Claude Design** | New shell implemented from `BTC IFC Viewer.dc.html` (import currently **BLOCKED**, see §3). Old CSS is replaced, not patched — don't gold-plate current styles. |
 | C6 | **Field usage on tablets** | Responsive + touch + offline (PWA, W5) are core, not extras. |
+| C7 | **Bilingual EN + DE — launch-blocking (user directive 2026-07-06)** | ALL UI strings externalized to message catalogs (en, de); runtime language switch persisted; DE translations complete for launch. Follow the design brand voice: sentence case, `DD.MM.YYYY` dates, `CHF 1'234.50` numerics, no idiom. The static "EN · CH" status hint becomes a real locale control. New strings in W4/W5 MUST go through the catalog. |
+| C8 | **Full-session local persistence incl. models + modifications (user directive 2026-07-06)** | Save & restore a complete session: the **loaded models** (converted fragments cached in **IndexedDB** — localStorage can't hold them) AND every per-model modification (transform offset/rotation, opacity, visibility, isolation) PLUS view state (selection, section, x-ray/edges, viewpoints, issues, theme, language). Reopening restores models + all applied changes without re-converting. Client-side only (no server, per C2). Built in W5.2 (extends persistence.ts + IndexedDB cache). |
 
 ## 2. Target architecture
 
@@ -95,8 +97,9 @@ late W3.
 | W2 | Modularization & unit tests | Pure/reusable logic → `core/` (unit-tested); e2e green. Engine/tools/panel class-decomposition **folded into W3** (rebuild replaces panel DOM) | ✅ accepted (PO-verified live 2026-07-06): 75 unit tests, e2e 18/18, A4/A8/A5/A11/A12/A16, viewer.ts 4896→4229. viewer.ts <800 target **moved to end-of-W3** |
 | W3 | Rebrand & responsive/a11y | New design shipped; U1–U11 fixed; both themes AA; e2e updated + tablet/axe | ✅ accepted (PO live-verified 2026-07-06): Precision Architect shell, self-hosted fonts/SVG icons, U1–U11, both themes AA, e2e 21/21 (+ **A17 Fit/Section bbox bug found in live-verify & fixed**). Console-clean. |
 | W3.5 | **Decomposition pass** (carved out of W3 — deferred twice) | engine→`core/viewer-core.ts`, tools→`tools/*`, panels→`ui/*`; viewer.ts → <~800-line orchestrator; e2e stays green | 🔄 in progress (WO agent, wave/3.5-decomposition; viewer.ts 4380→<800) |
-| W4 | Embed & sharing platform | /embed live on Vercel with upload→TTL→cleanup loop; GLB export; oEmbed; frame-ancestors; costs within the W4.3 envelope | ☐ not started (after W3.5) |
-| W5 | Performance & field readiness | Split chunks (initial JS ≤ ~350KB gzip shell); IndexedDB model cache; on-demand render; PWA offline shell | ☐ not started |
+| W3.7 | **i18n — EN + DE (C7, launch-blocking)** | all strings externalized to en/de catalogs; runtime language switch persisted; DE complete; brand-voice formats (DD.MM.YYYY, CHF); e2e language-switch test; new W4/W5 strings go through the catalog | ☐ after W3.5 (UI stable) |
+| W4 | Embed & sharing platform | /embed live on Vercel with upload→TTL→cleanup loop; GLB export; oEmbed; frame-ancestors; costs within the W4.3 envelope | ☐ not started (after W3.7) |
+| W5 | Performance & field readiness | Split chunks (initial JS ≤ ~350KB gzip shell); **full-session persistence: models (IndexedDB fragments) + all modifications, save/restore (C8)**; on-demand render; PWA offline shell | ☐ not started |
 | W6 | Deferred backlog | (not scheduled — see §7) | — |
 
 **Program acceptance criteria (user directive, 2026-07-06 — applies to EVERY wave gate from W1 on,
@@ -116,6 +119,14 @@ and to the final program exit):**
    desktop background-picker), the PO must call it out explicitly and get **user approval**. The loop
    MUST NOT exit until the user has confirmed the rebrand look. W3 is not "done-done" until this
    sign-off; the PO holds the W3 merge (or a follow-up) pending it.
+5. **Comprehensive feature verification (user directive 2026-07-06 — LOOP-EXIT GATE):** before loop
+   exit, the PO verifies live (browser + console) that the full feature set works: **open MULTIPLE
+   models (federation)**, section (planes + box), properties shown correctly for a selection,
+   selection (single/multi/canvas-click), measurement (length/area), hide/isolate/show, x-ray/edges,
+   visual styles, search, filters, viewpoints, issues, **EN⇄DE language switch (C7)**, and **the
+   full-session persistence round-trip (C8): save a session with ≥2 models + modifications, reload,
+   and confirm models + all modifications restore**. All with zero console errors/warnings. This is
+   both a per-gate check (W3.5+ where relevant) and the final loop-exit confirmation.
 Wave orchestrators must include a console-capture + viewport sweep + interactive sweep in their gate
 evidence. The PO re-verifies in the live browser before opening each wave PR, and produces the
 rebrand screenshot set for user sign-off (criterion 4).
