@@ -45,6 +45,9 @@ import {
 } from './core/i18n';
 import { bootstrapEngine, createFpsMonitor, ShaderWarningFilter } from './core/viewer-core';
 import { exportObjectsToGlb, hasActiveClipping, isValidGlb } from './core/glb-export';
+import { buildShareUrl, decodeUrlState, type UrlViewpointState } from './core/url-state';
+import { UploadClient } from './core/upload-client';
+import { ShareDialogController } from './ui/share-dialog';
 import type { TestItemRef, ViewerTestApi } from './core/test-api';
 import { getViewCubeAxes, getViewCubeNavigationDistance, resolveViewCubeCameraUp } from './core/view-cube';
 import { buildEdgeOverlays } from './tools/edges';
@@ -180,6 +183,11 @@ class ViewerApp {
   // One registration promise per model id — dedupes the onModelLoaded event
   // and the awaited load path without polling.
   private readonly modelRegistrations = new Map<string, Promise<void>>();
+  // W4.4: share/host — the hosting API client, the dialog controller, and the
+  // hosted `.frag` URL per model id (set after a publish; enables deep links).
+  private readonly uploadClient = new UploadClient();
+  private shareController: ShareDialogController | null = null;
+  private readonly hostedModelUrls = new Map<string, string>();
   private lastHitPoint: THREE.Vector3 | null = null;
   private pendingIssuePoint: THREE.Vector3 | null = null;
   // U4: failed loads are kept so the overlay's Retry can replay them.
@@ -338,6 +346,7 @@ class ViewerApp {
       this.setStatus(t('status.initializing'));
       this.shaderWarningFilter.install();
       await this.initEngine();
+      this.initShareDialog();
       await this.restoreLocalState();
       this.syncVisualSettingsUi();
       this.applySelectionMode(this.selectionMode);
@@ -350,6 +359,9 @@ class ViewerApp {
       this.updateViewpointList();
       this.setStatus(t('status.ready'));
       this.startFpsMonitor();
+      // W4.2: if the app was opened with ?m=<url>, load that hosted model and
+      // apply ?vp=. Errors are surfaced via the normal load-error path.
+      this.fireAndForget(this.loadFromUrlParams(), 'Load model from URL');
     } catch (error) {
       this.showToast(t('status.initFailed', { error: serializeError(error) }), 'error', 8000);
       this.setStatus(t('status.initFailed', { error: serializeError(error) }));
@@ -378,6 +390,7 @@ class ViewerApp {
       this.hideLoadError();
     });
 
+    this.dom.btnShare.addEventListener('click', () => this.shareController?.open());
     this.dom.btnExportGlb.addEventListener('click', () => this.fireAndForget(this.exportGlb(), 'Export GLB'));
     this.dom.btnExportScreenshot.addEventListener('click', () => this.exportScreenshot());
     this.dom.btnExportState.addEventListener('click', () => this.exportViewerState());
@@ -3142,6 +3155,129 @@ class ViewerApp {
     const name = `viewer-state-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
     downloadBlob(name, blob);
     this.setStatus(t('status.stateExported'));
+  }
+
+  // ── W4.4/W4.2: share & host ──────────────────────────────────────────────
+
+  /** Instantiates the share-dialog controller with app-backed callbacks. */
+  private initShareDialog(): void {
+    this.shareController = new ShareDialogController(
+      {
+        dialog: this.dom.shareDialog,
+        close: this.dom.shareClose,
+        tabLink: this.dom.shareTabLink,
+        tabPp: this.dom.shareTabPp,
+        panelLink: this.dom.sharePanelLink,
+        panelPp: this.dom.sharePanelPp,
+        copyLink: this.dom.shareCopyLink,
+        publish: this.dom.sharePublish,
+        published: this.dom.sharePublished,
+        embedUrl: this.dom.shareEmbedUrl,
+        copyEmbed: this.dom.shareCopyEmbed,
+        iframe: this.dom.shareIframe,
+        copyIframe: this.dom.shareCopyIframe,
+        qr: this.dom.shareQr,
+        expiry: this.dom.shareExpiry,
+        delete: this.dom.shareDelete,
+        hostIntro: this.dom.shareHostIntro,
+        ppGlb: this.dom.sharePpGlb,
+      },
+      {
+        getFragForShare: () => this.getFragForShare(),
+        publish: async (bytes, fileName) => {
+          const result = await this.uploadClient.publish(bytes, fileName);
+          // Record the hosted URL against the first model so the "Copy link to
+          // view" deep link works after publishing a local file.
+          const firstId = [...this.federatedModels.keys()][0];
+          if (firstId) this.hostedModelUrls.set(firstId, result.fragUrl);
+          return result;
+        },
+        deleteUpload: (id, token) => this.uploadClient.remove(id, token),
+        buildCopyLink: () => this.buildCopyLink(),
+        exportGlb: () => this.exportGlb(),
+        toast: (message, type) => this.showToast(message, type),
+        status: (message) => this.setStatus(message),
+        confirm: (message) => this.confirm(message),
+      },
+    );
+    this.shareController.init();
+  }
+
+  /** The first loaded model's `.frag` bytes + name for the share/host flow. */
+  private async getFragForShare(): Promise<{ bytes: Uint8Array; fileName: string } | null> {
+    const firstId = [...this.federatedModels.keys()][0];
+    if (!firstId) return null;
+    const model = this.getFragmentsModel(firstId);
+    if (!model) return null;
+    const buffer = await model.getBuffer(false);
+    const record = this.federatedModels.get(firstId);
+    const fileName = record?.fileName ?? `${firstId}.frag`;
+    return { bytes: new Uint8Array(buffer), fileName };
+  }
+
+  /**
+   * Builds a "Copy link to view" deep link for the current model + view, or null
+   * when no hosted URL is known (a purely-local file must be published first).
+   */
+  private buildCopyLink(): string | null {
+    const firstId = [...this.federatedModels.keys()][0];
+    const hosted = firstId ? this.hostedModelUrls.get(firstId) : undefined;
+    if (!hosted) return null;
+    return buildShareUrl(`${window.location.origin}/`, {
+      modelUrl: hosted,
+      viewpoint: this.currentUrlViewpoint(),
+    });
+  }
+
+  /** Snapshots the current camera/section/toggles as a URL viewpoint (deep links). */
+  private currentUrlViewpoint(): UrlViewpointState {
+    const position = this.world.camera.three.position.clone();
+    const target = new THREE.Vector3();
+    this.world.camera.controls.getTarget(target);
+    return {
+      camera: {
+        position: { x: position.x, y: position.y, z: position.z },
+        target: { x: target.x, y: target.y, z: target.z },
+        projection: this.world.camera.projection.current,
+        mode: this.navigationMode,
+      },
+      clippingPlanes: [...this.clipper.list.values()].map((plane) => ({
+        normal: { x: plane.normal.x, y: plane.normal.y, z: plane.normal.z },
+        origin: { x: plane.origin.x, y: plane.origin.y, z: plane.origin.z },
+      })),
+      visualStyle: this.visualStyle,
+      xray: this.xrayEnabled,
+      edges: this.edgesEnabled,
+    };
+  }
+
+  /** W4.2: loads a hosted `.frag` (or `.ifc`) named in ?m= at boot, then applies ?vp=. */
+  private async loadFromUrlParams(): Promise<void> {
+    const urlState = decodeUrlState(window.location.search);
+    if (!urlState.modelUrl) return;
+    try {
+      const response = await fetch(urlState.modelUrl, { mode: 'cors' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const isIfc = /\.ifc(\?|#|$)/i.test(urlState.modelUrl) || isProbablyIfc(bytes);
+      if (isIfc) {
+        const file = new File([bytes], urlState.modelUrl.split('/').pop() ?? 'model.ifc', { type: 'application/octet-stream' });
+        await this.loadIfcFile(file);
+      } else {
+        const modelId = this.modelRegistry.allocateModelId(
+          urlState.modelUrl.split('/').pop() ?? 'model.frag',
+          [...(this.fragments?.list?.keys() ?? []), ...this.federatedModels.keys()],
+        );
+        this.modelRegistry.beginLoad(modelId, { fileName: modelId, sizeBytes: bytes.byteLength });
+        await this.fragments.core.load(bytes, { modelId });
+        this.hostedModelUrls.set(modelId, urlState.modelUrl);
+      }
+      // Remember the source URL so "Copy link to view" works for the first model.
+      const firstId = [...this.federatedModels.keys()][0];
+      if (firstId && !this.hostedModelUrls.has(firstId)) this.hostedModelUrls.set(firstId, urlState.modelUrl);
+    } catch (error) {
+      this.showToast(t('status.loadFailed', { message: serializeError(error) }), 'error');
+    }
   }
 
   private async importViewerState(file: File): Promise<void> {

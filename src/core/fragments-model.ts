@@ -59,6 +59,12 @@ export interface FragmentsModelLike {
   setOpacity(localIds: number[] | undefined, opacity: number): Promise<void>;
   resetOpacity(localIds: number[] | undefined): Promise<void>;
   resetColor(localIds: number[] | undefined): Promise<void>;
+
+  /**
+   * The serialized `.frag` buffer of the model (W4.4 share/host). `raw=false`
+   * returns the compressed form — the exact bytes uploaded to the hosting API.
+   */
+  getBuffer(raw?: boolean): Promise<ArrayBuffer>;
 }
 
 /**
