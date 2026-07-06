@@ -280,6 +280,7 @@ export const en = {
   'embed.errorExpired': 'This embed has expired and is no longer available.',
   'embed.errorNoModel': 'No model was specified for this embed.',
   'embed.errorNetwork': 'The model could not be fetched. Check the link or your connection.',
+  'embed.errorBlockedUrl': 'This model link is not from an allowed source and was blocked for security.',
 
   // ---- share dialog + GLB export (W4.4 / W4.5) ----
   'share.title': 'Share',
@@ -698,6 +699,7 @@ export const de: Record<MessageKey, string> = {
   'embed.errorExpired': 'Diese Einbettung ist abgelaufen und nicht mehr verfügbar.',
   'embed.errorNoModel': 'Für diese Einbettung wurde kein Modell angegeben.',
   'embed.errorNetwork': 'Das Modell konnte nicht abgerufen werden. Prüfen Sie den Link oder Ihre Verbindung.',
+  'embed.errorBlockedUrl': 'Dieser Modell-Link stammt nicht aus einer erlaubten Quelle und wurde aus Sicherheitsgründen blockiert.',
 
   // ---- share dialog + GLB export ----
   'share.title': 'Teilen',

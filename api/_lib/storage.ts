@@ -71,8 +71,11 @@ export interface StorageAdapter {
     opts: { contentType: string; cacheControlMaxAgeSeconds: number },
   ): Promise<{ url: string; path: string }>;
 
-  /** Deletes a stored blob by pathname (idempotent). */
-  deleteFrag(path: string): Promise<void>;
+  /**
+   * Deletes a stored blob (idempotent). S3: `@vercel/blob` deletes BY URL, so
+   * callers pass `meta.fragUrl` (the full Blob-CDN URL), not the pathname.
+   */
+  deleteFrag(fragUrl: string): Promise<void>;
 
   /** Reads an upload's metadata, or null if absent/expired-and-swept. */
   getMeta(id: string): Promise<UploadMeta | null>;
@@ -86,14 +89,19 @@ export interface StorageAdapter {
   /** Deletes an upload's metadata record (idempotent). */
   deleteMeta(id: string): Promise<void>;
 
-  /** Number of non-expired uploads currently owned by `ownerId` (quota check). */
+  /** Number of non-expired uploads currently owned by `ownerId` (read-only view). */
   countActiveByOwner(ownerId: string): Promise<number>;
 
   /**
-   * Registers the id under an owner so countActiveByOwner is accurate. Called
-   * after a successful setMeta. TTL matches the meta so it self-cleans.
+   * S1 (quota TOCTOU fix): ATOMICALLY reserve a quota slot for `ownerId`. Adds
+   * `id` to the owner set and returns true only if the resulting active count is
+   * ≤ `maxActive`; on overflow it removes `id` again and returns false. This is
+   * the single check-and-act step the upload path uses instead of the racy
+   * count-then-track pair (N concurrent POSTs can no longer all pass the check).
+   * The reservation TTL matches the meta so it self-cleans. Caller rolls back
+   * (untrackOwnerUpload) if a later step fails.
    */
-  trackOwnerUpload(ownerId: string, id: string, ttlSeconds: number): Promise<void>;
+  reserveOwnerSlot(ownerId: string, id: string, maxActive: number, ttlSeconds: number): Promise<boolean>;
 
   /** Removes an id from its owner's active set (on delete). */
   untrackOwnerUpload(ownerId: string, id: string): Promise<void>;
@@ -155,7 +163,10 @@ export class InMemoryStorage implements StorageAdapter {
     return Promise.resolve({ url: `${this.host}/${path}`, path });
   }
 
-  deleteFrag(path: string): Promise<void> {
+  deleteFrag(fragUrl: string): Promise<void> {
+    // S3: callers delete BY URL (`${host}/${path}`). Strip the host prefix to
+    // recover the pathname key; tolerate a bare pathname too (idempotent).
+    const path = fragUrl.startsWith(`${this.host}/`) ? fragUrl.slice(this.host.length + 1) : fragUrl;
     this.blobs.delete(path);
     return Promise.resolve();
   }
@@ -191,24 +202,36 @@ export class InMemoryStorage implements StorageAdapter {
         set.delete(id);
         continue;
       }
-      // Only count ids whose metadata is still LIVE — a deleted upload is gone,
-      // and a meta whose own TTL has elapsed no longer counts even if the owner
-      // set entry lingers (mirrors Redis auto-expiring the meta key).
+      // Count live reservations: an entry backed by a live meta, OR an in-flight
+      // reservation whose meta hasn't been written yet (not yet expired). A meta
+      // that was created then DELETED leaves no set entry (untrackOwnerUpload).
       const stored = this.metas.get(id);
-      if (stored && stored.expiresAtMs > nowMs) count += 1;
-      else set.delete(id);
+      if (!stored || stored.expiresAtMs > nowMs) count += 1;
     }
     return Promise.resolve(count);
   }
 
-  trackOwnerUpload(ownerId: string, id: string, ttlSeconds: number): Promise<void> {
+  reserveOwnerSlot(ownerId: string, id: string, maxActive: number, ttlSeconds: number): Promise<boolean> {
     let set = this.ownerSets.get(ownerId);
     if (!set) {
       set = new Map();
       this.ownerSets.set(ownerId, set);
     }
-    set.set(id, this.now() + ttlSeconds * 1000);
-    return Promise.resolve();
+    // Prune only EXPIRED entries so the count reflects live reservations. We do
+    // NOT drop no-meta entries — those are in-flight reservations that must still
+    // occupy a slot (that is the whole point of reserving before the meta write).
+    const nowMs = this.now();
+    for (const [entryId, expiresAtMs] of set) {
+      if (expiresAtMs <= nowMs) set.delete(entryId);
+    }
+    // Atomic (single synchronous turn — no await between add and check): add the
+    // id, then reject if that pushes the owner over the limit, rolling back.
+    set.set(id, nowMs + ttlSeconds * 1000);
+    if (set.size > maxActive) {
+      set.delete(id);
+      return Promise.resolve(false);
+    }
+    return Promise.resolve(true);
   }
 
   untrackOwnerUpload(ownerId: string, id: string): Promise<void> {
@@ -284,6 +307,7 @@ interface RedisLike {
   expire: (key: string, seconds: number) => Promise<unknown>;
   sadd: (key: string, ...members: string[]) => Promise<number>;
   srem: (key: string, ...members: string[]) => Promise<number>;
+  scard: (key: string) => Promise<number>;
   smembers: (key: string) => Promise<string[]>;
 }
 
@@ -321,9 +345,9 @@ export async function createRealStorage(deps?: {
       });
       return { url: result.url, path: result.pathname };
     },
-    async deleteFrag(path) {
-      // @vercel/blob del accepts the pathname or the URL; use the URL if we stored one.
-      await blob.del(path, { token: blobToken });
+    async deleteFrag(fragUrl) {
+      // S3: @vercel/blob `del` deletes BY URL — callers pass meta.fragUrl.
+      await blob.del(fragUrl, { token: blobToken });
     },
     async getMeta(id) {
       const meta = await redis.get<UploadMeta>(META_KEY(id));
@@ -336,20 +360,24 @@ export async function createRealStorage(deps?: {
       await redis.del(META_KEY(id));
     },
     async countActiveByOwner(ownerId) {
-      const ids = await redis.smembers(OWNER_KEY(ownerId));
-      if (ids.length === 0) return 0;
-      let count = 0;
-      for (const id of ids) {
-        const meta = await redis.get<UploadMeta>(META_KEY(id));
-        if (meta) count += 1;
-        else await redis.srem(OWNER_KEY(ownerId), id); // prune stale set entry
-      }
-      return count;
+      // Read-only view (SCARD). Stale entries self-clean via the set TTL and the
+      // delete path (untrackOwnerUpload); we do NOT srem in-flight reservations
+      // here (that would defeat reserveOwnerSlot's atomic slot accounting).
+      return redis.scard(OWNER_KEY(ownerId));
     },
-    async trackOwnerUpload(ownerId, id, ttlSeconds) {
-      await redis.sadd(OWNER_KEY(ownerId), id);
-      // Refresh the set TTL so an idle owner's set eventually self-cleans.
-      await redis.expire(OWNER_KEY(ownerId), ttlSeconds);
+    async reserveOwnerSlot(ownerId, id, maxActive, ttlSeconds) {
+      // S1: atomic reserve. SADD is atomic; SCARD reflects all concurrent adds.
+      // If our add pushed the owner over the limit, roll it back and reject —
+      // so N concurrent POSTs can store at most maxActive.
+      const key = OWNER_KEY(ownerId);
+      await redis.sadd(key, id);
+      await redis.expire(key, ttlSeconds); // set TTL so idle owner sets self-clean
+      const size = await redis.scard(key);
+      if (size > maxActive) {
+        await redis.srem(key, id);
+        return false;
+      }
+      return true;
     },
     async untrackOwnerUpload(ownerId, id) {
       await redis.srem(OWNER_KEY(ownerId), id);

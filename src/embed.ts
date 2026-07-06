@@ -24,7 +24,14 @@ import * as THREE from 'three';
 import { bootstrapEngine, type EngineHandles } from './core/viewer-core';
 import { isProbablyIfc } from './core/ifc-format';
 import { hydrateI18n, initLanguage, t } from './core/i18n';
-import { decodeUrlState, encodeUrlState, type UrlState, type UrlViewpointState } from './core/url-state';
+import {
+  decodeUrlState,
+  encodeUrlState,
+  isAllowedModelUrl,
+  type ModelUrlPolicy,
+  type UrlState,
+  type UrlViewpointState,
+} from './core/url-state';
 import type { FragmentsModelLike } from './core/fragments-model';
 import { hydrateIcons } from './ui/icons';
 
@@ -67,6 +74,29 @@ function wireOEmbedDiscovery(link: HTMLLinkElement | null): void {
   link.href = `/api/oembed?format=json&url=${encodeURIComponent(pageUrl)}`;
 }
 
+/**
+ * S8: builds the model-URL allowlist. Same-origin + the Vercel Blob CDN are
+ * always allowed; extra hosts come from the build-time env
+ * `VITE_ALLOWED_MODEL_HOSTS` (comma-separated origins — e.g. a custom Blob domain
+ * or BTC_EMBED_ORIGIN) so the PO can extend it without a code change.
+ */
+function modelUrlPolicy(): ModelUrlPolicy {
+  return {
+    selfOrigin: typeof window !== 'undefined' ? window.location.origin : undefined,
+    allowedOrigins: allowedModelHosts(),
+    allowVercelBlob: true,
+  };
+}
+
+/** Reads the comma-separated VITE_ALLOWED_MODEL_HOSTS build env (typed narrow). */
+function allowedModelHosts(): string[] {
+  const env = import.meta.env as Record<string, string | undefined>;
+  const configured = env.VITE_ALLOWED_MODEL_HOSTS;
+  return typeof configured === 'string'
+    ? configured.split(',').map((s) => s.trim()).filter(Boolean)
+    : [];
+}
+
 class EmbedViewer {
   private engine: EngineHandles | null = null;
   private activated = false;
@@ -89,6 +119,16 @@ class EmbedViewer {
     if (!this.state.modelUrl) {
       // Nothing to show — surface a friendly state, no engine spun up.
       this.showError(t('embed.errorNoModel'));
+      this.dom.poster.hidden = true;
+      return;
+    }
+
+    // S8: only render models from an allowed host (own origin + configured
+    // hosting/embed origins + the Vercel Blob CDN). A BTC-branded embed must not
+    // load an arbitrary attacker URL (phishing / content-injection). Reject up
+    // front — do NOT even show the poster or spin up the engine.
+    if (!isAllowedModelUrl(this.state.modelUrl, modelUrlPolicy())) {
+      this.showError(t('embed.errorBlockedUrl'));
       this.dom.poster.hidden = true;
       return;
     }

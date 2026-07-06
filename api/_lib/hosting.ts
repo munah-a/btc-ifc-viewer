@@ -26,7 +26,7 @@ import {
   ttlSeconds,
   type Entitlements,
 } from './entitlements';
-import { error, generateId, generateToken, json, methodNotAllowed, ownerIdFromRequest, sha256Hex, verifyToken } from './http';
+import { error, generateId, generateToken, isProduction, json, methodNotAllowed, ownerIdFromRequest, sha256Hex, verifyToken } from './http';
 import type { Clock, StorageAdapter, UploadMeta } from './storage';
 
 /** How embeds/deep-links are built. Config-driven so the host domain is easy to change. */
@@ -35,8 +35,6 @@ export interface HostConfig {
   origin: string;
 }
 
-/** Long cache for immutable `.frag` bytes at Blob put-time (1 year). */
-const FRAG_CACHE_MAX_AGE_SECONDS = 31536000;
 const FRAG_CONTENT_TYPE = 'application/octet-stream';
 
 /** Resolves the host origin from env (BTC_EMBED_ORIGIN) or a request, defaulting to the Vercel project. */
@@ -124,63 +122,74 @@ export async function handleUpload(
     return error(413, 'payload_too_large', `Upload exceeds the ${maxMb} MB limit for the ${entitlements.tier} tier.`);
   }
 
-  // 4) Per-owner active-upload quota (C4). Checked AFTER size so a rejected
-  //    oversize upload doesn't consume a quota slot check needlessly.
-  const activeCount = await storage.countActiveByOwner(ownerId);
-  if (activeCount >= entitlements.maxActiveUploads) {
+  const ttl = ttlSeconds(entitlements);
+  const id = generateId();
+
+  // 4) S1: ATOMICALLY reserve a quota slot BEFORE storing. This single
+  //    check-and-act replaces the old racy count-then-track: N concurrent POSTs
+  //    can reserve at most maxActiveUploads slots, so at most that many are
+  //    stored. On overflow, nothing was stored — reject cleanly.
+  const reserved = await storage.reserveOwnerSlot(ownerId, id, entitlements.maxActiveUploads, ttl);
+  if (!reserved) {
     return error(
       409,
       'quota_exceeded',
-      `You have ${activeCount}/${entitlements.maxActiveUploads} active embeds. Delete one before creating another.`,
+      `You have reached the ${entitlements.maxActiveUploads}-embed limit for the ${entitlements.tier} tier. Delete one before creating another.`,
     );
   }
 
-  // 5) Sanitize the display file name (never trusted for logic/paths).
-  const rawName = request.headers.get('x-file-name') ?? 'model.frag';
-  const fileName = sanitizeFileName(rawName);
+  // From here on, roll back the reservation if any storage step fails so a
+  // failed upload never leaks a permanently-held slot.
+  try {
+    // 5) Sanitize the display file name (never trusted for logic/paths).
+    const rawName = request.headers.get('x-file-name') ?? 'model.frag';
+    const fileName = sanitizeFileName(rawName);
 
-  // 6) Store bytes → Blob CDN, with long immutable cache at put-time.
-  const id = generateId();
-  const blobPath = `frags/${id}.frag`;
-  const { url: fragUrl, path: storedPath } = await storage.putFrag(blobPath, bytes, {
-    contentType: FRAG_CONTENT_TYPE,
-    cacheControlMaxAgeSeconds: FRAG_CACHE_MAX_AGE_SECONDS,
-  });
+    // 6) Store bytes → Blob CDN. S4: cache max-age = TTL (NOT 1 year), so once
+    //    the blob is deleted/expired it also falls out of the CDN cache and can
+    //    no longer be fetched from the direct URL past its lifetime.
+    const blobPath = `frags/${id}.frag`;
+    const { url: fragUrl, path: storedPath } = await storage.putFrag(blobPath, bytes, {
+      contentType: FRAG_CONTENT_TYPE,
+      cacheControlMaxAgeSeconds: ttl,
+    });
 
-  // 7) Mint a delete token (returned once); store only its hash.
-  const deleteToken = generateToken(32);
-  const deleteTokenHash = await sha256Hex(deleteToken);
+    // 7) Mint a delete token (returned once); store only its hash.
+    const deleteToken = generateToken(32);
+    const deleteTokenHash = await sha256Hex(deleteToken);
 
-  const ttl = ttlSeconds(entitlements);
-  const createdAtMs = now();
-  const expiresAtMs = createdAtMs + ttl * 1000;
-  const meta: UploadMeta = {
-    id,
-    fragUrl,
-    blobPath: storedPath,
-    fileName,
-    sizeBytes: bytes.byteLength,
-    createdAt: new Date(createdAtMs).toISOString(),
-    expiresAt: new Date(expiresAtMs).toISOString(),
-    ownerId,
-    tier: entitlements.tier,
-    deleteTokenHash,
-  };
-
-  await storage.setMeta(meta, ttl);
-  await storage.trackOwnerUpload(ownerId, id, ttl);
-
-  return json(
-    {
+    const createdAtMs = now();
+    const expiresAtMs = createdAtMs + ttl * 1000;
+    const meta: UploadMeta = {
       id,
-      embedUrl: embedUrl(host, id, fragUrl),
-      viewerUrl: viewerUrl(host, fragUrl),
       fragUrl,
-      deleteToken, // shown to the uploader ONCE; not recoverable
-      expiresAt: meta.expiresAt,
-    },
-    201,
-  );
+      blobPath: storedPath,
+      fileName,
+      sizeBytes: bytes.byteLength,
+      createdAt: new Date(createdAtMs).toISOString(),
+      expiresAt: new Date(expiresAtMs).toISOString(),
+      ownerId,
+      tier: entitlements.tier,
+      deleteTokenHash,
+    };
+
+    await storage.setMeta(meta, ttl);
+
+    return json(
+      {
+        id,
+        embedUrl: embedUrl(host, id, fragUrl),
+        viewerUrl: viewerUrl(host, fragUrl),
+        fragUrl,
+        deleteToken, // shown to the uploader ONCE; not recoverable
+        expiresAt: meta.expiresAt,
+      },
+      201,
+    );
+  } catch (err) {
+    await storage.untrackOwnerUpload(ownerId, id).catch(() => {});
+    throw err;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -218,7 +227,8 @@ async function deleteEmbed(request: Request, id: string, storage: StorageAdapter
   const ok = await verifyToken(token, meta.deleteTokenHash);
   if (!ok) return error(403, 'forbidden', 'Invalid delete token.');
 
-  await storage.deleteFrag(meta.blobPath);
+  // S3: delete the blob BY URL (@vercel/blob del takes the URL, not the pathname).
+  await storage.deleteFrag(meta.fragUrl);
   await storage.deleteMeta(id);
   await storage.untrackOwnerUpload(meta.ownerId, id);
 
@@ -236,19 +246,26 @@ export async function handleCronCleanup(
 ): Promise<Response> {
   if (request.method !== 'GET') return methodNotAllowed(['GET']);
 
-  // Vercel Cron sends `Authorization: Bearer $CRON_SECRET`. Reject anything else.
+  // Vercel Cron sends `Authorization: Bearer $CRON_SECRET`.
   const secret = typeof process !== 'undefined' ? process.env.CRON_SECRET : undefined;
-  if (secret) {
+  // S5: FAIL CLOSED in production. If the secret is missing on a real deployment
+  // (Vercel sets `process.env.VERCEL`), refuse to run the sweep unauthenticated —
+  // 500 so the misconfiguration is loud, never a silent open door. Off-platform
+  // (local tests) a missing secret is allowed so the suite can exercise the path.
+  if (!secret) {
+    if (isProduction()) return error(500, 'misconfigured', 'CRON_SECRET is not configured.');
+    // local/test: allowed
+  } else {
     const auth = request.headers.get('authorization');
     if (auth !== `Bearer ${secret}`) return error(401, 'unauthorized', 'Invalid cron secret.');
   }
-  // If no secret is configured (local test), allow — the real deploy MUST set it.
 
   const now = (opts.clock ?? (() => Date.now()))();
   const expired = await storage.listExpired(now);
   let deleted = 0;
   for (const meta of expired) {
-    await storage.deleteFrag(meta.blobPath);
+    // S3: delete by URL.
+    await storage.deleteFrag(meta.fragUrl);
     await storage.deleteMeta(meta.id);
     await storage.untrackOwnerUpload(meta.ownerId, meta.id);
     deleted += 1;

@@ -33,6 +33,7 @@ declare module '@upstash/redis' {
     expire(key: string, seconds: number): Promise<unknown>;
     sadd(key: string, ...members: string[]): Promise<number>;
     srem(key: string, ...members: string[]): Promise<number>;
+    scard(key: string): Promise<number>;
     smembers(key: string): Promise<string[]>;
   }
 }

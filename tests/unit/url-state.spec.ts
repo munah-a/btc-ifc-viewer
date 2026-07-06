@@ -7,8 +7,10 @@ import {
   encodeUrlState,
   encodeViewpoint,
   HIDDEN_IDS_CAP,
+  isAllowedModelUrl,
   URL_PARAM_MODEL,
   URL_PARAM_VIEWPOINT,
+  VERCEL_BLOB_HOST_SUFFIX,
   type UrlViewpointState,
 } from '../../src/core/url-state';
 
@@ -183,5 +185,58 @@ describe('url-state · buildShareUrl', () => {
 
   it('returns the bare base when there is nothing to encode', () => {
     expect(buildShareUrl('https://app.example/', {})).toBe('https://app.example/');
+  });
+});
+
+describe('url-state · isAllowedModelUrl (S8 model-URL allowlist)', () => {
+  const SELF = 'https://btc-ifc-viewer-2.vercel.app';
+
+  it('allows the Vercel Blob CDN host', () => {
+    expect(
+      isAllowedModelUrl('https://abc123.public.blob.vercel-storage.com/frags/x.frag', { selfOrigin: SELF }),
+    ).toBe(true);
+    expect(VERCEL_BLOB_HOST_SUFFIX).toBe('.public.blob.vercel-storage.com');
+  });
+
+  it('allows same-origin model URLs', () => {
+    expect(isAllowedModelUrl(`${SELF}/fixtures/x.frag`, { selfOrigin: SELF })).toBe(true);
+  });
+
+  it('allows configured extra origins (e.g. a custom Blob domain / BTC_EMBED_ORIGIN)', () => {
+    expect(
+      isAllowedModelUrl('https://cdn.mycorp.example/x.frag', {
+        selfOrigin: SELF,
+        allowedOrigins: ['https://cdn.mycorp.example'],
+      }),
+    ).toBe(true);
+  });
+
+  it('REJECTS an arbitrary foreign host (phishing / content-injection guard)', () => {
+    expect(isAllowedModelUrl('https://evil.example.com/x.frag', { selfOrigin: SELF })).toBe(false);
+  });
+
+  it('REJECTS non-http(s) schemes (javascript:, data:)', () => {
+    expect(isAllowedModelUrl('javascript:alert(1)', { selfOrigin: SELF })).toBe(false);
+    expect(isAllowedModelUrl('data:text/html,<script>alert(1)</script>', { selfOrigin: SELF })).toBe(false);
+  });
+
+  it('REJECTS a malformed URL', () => {
+    expect(isAllowedModelUrl('not a url', { selfOrigin: SELF })).toBe(false);
+  });
+
+  it('can disable the Vercel Blob default', () => {
+    expect(
+      isAllowedModelUrl('https://abc.public.blob.vercel-storage.com/x.frag', {
+        selfOrigin: SELF,
+        allowVercelBlob: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('does not allow a look-alike host that merely contains the suffix as a substring', () => {
+    // Suffix must be a real host suffix, not appear mid-host.
+    expect(
+      isAllowedModelUrl('https://public.blob.vercel-storage.com.evil.com/x.frag', { selfOrigin: SELF }),
+    ).toBe(false);
   });
 });

@@ -15,8 +15,12 @@ const CONVERT_TIMEOUT = CI ? 240_000 : 120_000;
 const READY_TIMEOUT = CI ? 120_000 : 60_000;
 
 const smallIfc = fs.readFileSync(path.join(process.cwd(), 'e2e', 'fixtures', 'school_str.ifc'));
-// A cross-origin-looking URL the embed treats as a model source; intercepted below.
-const MODEL_URL = 'https://cdn.test.local/frags/sample.ifc';
+// An ALLOWED (Vercel Blob CDN) model URL — passes the S8 allowlist; intercepted
+// below so no real network hit occurs. (A non-allowed host is exercised
+// separately by the S8 "blocked" test.)
+const MODEL_URL = 'https://testblob.public.blob.vercel-storage.com/frags/sample.ifc';
+// A disallowed foreign host for the S8 rejection test.
+const FOREIGN_URL = 'https://evil.example.com/frags/sample.ifc';
 
 /** Fulfills the model fetch with the fixture IFC bytes (embed converts client-side). */
 async function routeModel(page: Page): Promise<void> {
@@ -88,5 +92,20 @@ test.describe('embed · load by URL', () => {
     await expect(page.locator('#embedError')).toBeVisible({ timeout: READY_TIMEOUT });
     const openHref = await page.locator('#embedErrorOpen').getAttribute('href');
     expect(openHref).toContain(encodeURIComponent(MODEL_URL));
+  });
+
+  test('S8: a disallowed foreign ?m= host is blocked (no poster, no engine, no fetch)', async ({ page }) => {
+    let fetched = false;
+    await page.route(FOREIGN_URL, (route) => {
+      fetched = true;
+      return route.fulfill({ status: 200, body: smallIfc });
+    });
+    await page.goto(`/embed.html?m=${encodeURIComponent(FOREIGN_URL)}`);
+    // Blocked up front: error shown, poster hidden, engine never created.
+    await expect(page.locator('#embedError')).toBeVisible();
+    await expect(page.locator('#embedPoster')).toBeHidden();
+    await expect(page.locator('#embed-viewer canvas')).toHaveCount(0);
+    // The foreign URL was never fetched.
+    expect(fetched).toBe(false);
   });
 });

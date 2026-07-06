@@ -37,8 +37,19 @@ describe('InMemoryStorage · blobs', () => {
     expect([...(s.getBlobBytes('frags/x.frag') ?? [])]).toEqual([9, 8, 7]);
     expect(s.getBlobMaxAge('frags/x.frag')).toBe(31536000);
 
-    await s.deleteFrag('frags/x.frag');
+    // S3: deleteFrag takes the full Blob-CDN URL (what meta.fragUrl holds).
+    await s.deleteFrag(url);
     expect(s.hasBlob('frags/x.frag')).toBe(false);
+  });
+
+  it('deleteFrag also tolerates a bare pathname (idempotent)', async () => {
+    const s = new InMemoryStorage();
+    await s.putFrag('frags/y.frag', new Uint8Array([1]), {
+      contentType: 'application/octet-stream',
+      cacheControlMaxAgeSeconds: 60,
+    });
+    await s.deleteFrag('frags/y.frag');
+    expect(s.hasBlob('frags/y.frag')).toBe(false);
   });
 });
 
@@ -66,32 +77,41 @@ describe('InMemoryStorage · metadata TTL', () => {
   });
 });
 
-describe('InMemoryStorage · owner tracking (quota)', () => {
-  it('counts only live, tracked uploads for an owner', async () => {
+describe('InMemoryStorage · owner reservation (quota, S1)', () => {
+  it('reserves slots up to maxActive, then rejects; delete frees a slot', async () => {
     const clock = makeClock();
     const s = new InMemoryStorage(clock.now);
+    expect(await s.reserveOwnerSlot('owner-1', 'a', 3, 1000)).toBe(true);
     await s.setMeta(meta('a'), 1000);
-    await s.trackOwnerUpload('owner-1', 'a', 1000);
+    expect(await s.reserveOwnerSlot('owner-1', 'b', 3, 1000)).toBe(true);
     await s.setMeta(meta('b'), 1000);
-    await s.trackOwnerUpload('owner-1', 'b', 1000);
-    expect(await s.countActiveByOwner('owner-1')).toBe(2);
+    expect(await s.reserveOwnerSlot('owner-1', 'c', 3, 1000)).toBe(true);
+    await s.setMeta(meta('c'), 1000);
+    expect(await s.countActiveByOwner('owner-1')).toBe(3);
+    // 4th over the cap is rejected (and not counted).
+    expect(await s.reserveOwnerSlot('owner-1', 'd', 3, 1000)).toBe(false);
+    expect(await s.countActiveByOwner('owner-1')).toBe(3);
 
-    // Deleting one drops the count.
+    // Deleting one frees a slot.
     await s.deleteMeta('a');
     await s.untrackOwnerUpload('owner-1', 'a');
-    expect(await s.countActiveByOwner('owner-1')).toBe(1);
-
-    // An unknown owner is zero.
-    expect(await s.countActiveByOwner('owner-2')).toBe(0);
+    expect(await s.reserveOwnerSlot('owner-1', 'e', 3, 1000)).toBe(true);
   });
 
-  it('does not count an upload whose meta expired even if still in the owner set', async () => {
+  it('an in-flight reservation (no meta yet) still occupies a slot', async () => {
+    const s = new InMemoryStorage();
+    expect(await s.reserveOwnerSlot('o', 'a', 1, 1000)).toBe(true); // reserved, no setMeta
+    // A second reserve for the same owner must fail while the first is in flight.
+    expect(await s.reserveOwnerSlot('o', 'b', 1, 1000)).toBe(false);
+  });
+
+  it('expired reservations free up over time', async () => {
     const clock = makeClock();
     const s = new InMemoryStorage(clock.now);
-    await s.setMeta(meta('a'), 10);
-    await s.trackOwnerUpload('owner-1', 'a', 1000);
-    clock.advance(20_000); // meta expires, set entry lingers
-    expect(await s.countActiveByOwner('owner-1')).toBe(0);
+    expect(await s.reserveOwnerSlot('o', 'a', 1, 10)).toBe(true);
+    expect(await s.reserveOwnerSlot('o', 'b', 1, 10)).toBe(false);
+    clock.advance(20_000); // first reservation TTL elapses
+    expect(await s.reserveOwnerSlot('o', 'c', 1, 10)).toBe(true);
   });
 });
 
@@ -126,10 +146,14 @@ describe('createRealStorage · adapter mapping (injected fakes, no live Vercel)'
     const sets = new Map<string, Set<string>>();
     const counters = new Map<string, number>();
 
+    const delCalls: string[] = [];
     const fakeBlob = {
       put: (path: string, _bytes: Uint8Array, opts: { cacheControlMaxAge?: number }) =>
         Promise.resolve({ url: `https://blob.cdn/${path}`, pathname: path, _maxAge: opts.cacheControlMaxAge }),
-      del: (_url: string) => Promise.resolve(),
+      del: (url: string) => {
+        delCalls.push(url);
+        return Promise.resolve();
+      },
     };
     const fakeRedis = {
       get: <T>(key: string) => Promise.resolve((kv.get(key) as T) ?? null),
@@ -158,6 +182,7 @@ describe('createRealStorage · adapter mapping (injected fakes, no live Vercel)'
         members.forEach((m) => set?.delete(m));
         return Promise.resolve(members.length);
       },
+      scard: (key: string) => Promise.resolve(sets.get(key)?.size ?? 0),
       smembers: (key: string) => Promise.resolve([...(sets.get(key) ?? [])]),
     };
 
@@ -173,8 +198,16 @@ describe('createRealStorage · adapter mapping (injected fakes, no live Vercel)'
     await storage.setMeta(meta('z'), 100);
     expect((await storage.getMeta('z'))?.id).toBe('z');
 
-    await storage.trackOwnerUpload('owner-x', 'z', 100);
+    // S1: reserveOwnerSlot maps onto sadd+scard (atomic bounded set).
+    expect(await storage.reserveOwnerSlot('owner-x', 'z', 3, 100)).toBe(true);
     expect(await storage.countActiveByOwner('owner-x')).toBe(1);
+    // Over the cap → rolled back via srem, returns false.
+    expect(await storage.reserveOwnerSlot('owner-x', 'z2', 1, 100)).toBe(false);
+    expect(await storage.countActiveByOwner('owner-x')).toBe(1);
+
+    // S3: deleteFrag calls blob.del with the FULL URL (not the pathname).
+    await storage.deleteFrag('https://blob.cdn/frags/z.frag');
+    expect(delCalls).toContain('https://blob.cdn/frags/z.frag');
 
     const r1 = await storage.rateLimit('rk', 1, 60);
     expect(r1.allowed).toBe(true);

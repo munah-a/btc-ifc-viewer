@@ -10,6 +10,7 @@ import {
   type HostConfig,
 } from '../../api/_lib/hosting';
 import { InMemoryStorage } from '../../api/_lib/storage';
+import { ownerIdFromRequest } from '../../api/_lib/http';
 
 const HOST: HostConfig = { origin: 'https://btc-ifc-viewer-2.vercel.app' };
 
@@ -63,8 +64,9 @@ describe('api · upload happy path', () => {
     const blobPath = `frags/${body.id}.frag`;
     expect(storage.hasBlob(blobPath)).toBe(true);
     expect([...(storage.getBlobBytes(blobPath) ?? [])]).toEqual([...FRAG]);
-    // Long immutable cache set at put-time (Blob CDN host ignores vercel.json).
-    expect(storage.getBlobMaxAge(blobPath)).toBe(31536000);
+    // S4: blob cache max-age = the TTL (7 days), NOT 1 year — so expired/deleted
+    // content also falls out of the CDN cache and can't be fetched past its life.
+    expect(storage.getBlobMaxAge(blobPath)).toBe(ANON_DEFAULTS.ttlDays * 24 * 3600);
   });
 
   it('never returns ownerId or the delete-token hash to the client', async () => {
@@ -151,6 +153,59 @@ describe('api · per-owner quota (C4 seam)', () => {
     // A DIFFERENT IP has its own full quota.
     const other = await handleUpload(uploadRequest(FRAG, { 'x-forwarded-for': '198.51.100.2' }), storage, { host: HOST });
     expect(other.status).toBe(201);
+  });
+
+  it('S2: a spoofed left-most X-Forwarded-For does NOT mint a fresh quota bucket', async () => {
+    const storage = new InMemoryStorage();
+    // Attacker prepends a random client value each request, but the platform
+    // appends the true connecting IP as the RIGHT-most hop (constant here).
+    const spoofed = (n: number): Record<string, string> => ({
+      'x-forwarded-for': `10.0.0.${n}, 203.0.113.9`, // left=spoof, right=real
+    });
+    for (let i = 0; i < ANON_DEFAULTS.maxActiveUploads; i += 1) {
+      const res = await handleUpload(uploadRequest(FRAG, spoofed(i)), storage, { host: HOST });
+      expect(res.status).toBe(201);
+    }
+    // The (maxActive+1)th, still spoofing a NEW left-most value, must still be
+    // capped — the trusted right-most hop is unchanged, so it's the same owner.
+    const overflow = await handleUpload(uploadRequest(FRAG, spoofed(999)), storage, { host: HOST });
+    expect(overflow.status).toBe(409);
+  });
+
+  it('S2: x-real-ip (platform-trusted) wins over a client x-forwarded-for', async () => {
+    const storage = new InMemoryStorage();
+    // Fill the quota using x-real-ip as the trusted signal.
+    for (let i = 0; i < ANON_DEFAULTS.maxActiveUploads; i += 1) {
+      await handleUpload(
+        uploadRequest(FRAG, { 'x-real-ip': '198.51.100.50', 'x-forwarded-for': `1.2.3.${i}` }),
+        storage,
+        { host: HOST },
+      );
+    }
+    // A new spoofed XFF but the SAME x-real-ip → same bucket → rejected.
+    const res = await handleUpload(
+      uploadRequest(FRAG, { 'x-real-ip': '198.51.100.50', 'x-forwarded-for': '9.9.9.9' }),
+      storage,
+      { host: HOST },
+    );
+    expect(res.status).toBe(409);
+  });
+
+  it('S1: N CONCURRENT uploads store at most maxActiveUploads (no TOCTOU race)', async () => {
+    const storage = new InMemoryStorage();
+    const N = ANON_DEFAULTS.maxActiveUploads + 5; // fire well over the cap at once
+    // All in flight before any awaits resolve — the old count-then-track would
+    // let every one pass the check. reserveOwnerSlot must cap it atomically.
+    const results = await Promise.all(
+      Array.from({ length: N }, () => handleUpload(uploadRequest(FRAG), storage, { host: HOST })),
+    );
+    const created = results.filter((r) => r.status === 201).length;
+    const rejected = results.filter((r) => r.status === 409).length;
+    expect(created).toBe(ANON_DEFAULTS.maxActiveUploads);
+    expect(rejected).toBe(N - ANON_DEFAULTS.maxActiveUploads);
+    // And the store actually holds ≤ maxActive for the owner.
+    const owner = await ownerIdFromRequest(uploadRequest(FRAG));
+    expect(await storage.countActiveByOwner(owner)).toBeLessThanOrEqual(ANON_DEFAULTS.maxActiveUploads);
   });
 });
 
@@ -294,6 +349,40 @@ describe('api · cron cleanup', () => {
     } finally {
       if (prev === undefined) delete process.env.CRON_SECRET;
       else process.env.CRON_SECRET = prev;
+    }
+  });
+
+  it('S5: FAILS CLOSED in production when CRON_SECRET is unset (500, no sweep)', async () => {
+    const prevSecret = process.env.CRON_SECRET;
+    const prevVercel = process.env.VERCEL;
+    delete process.env.CRON_SECRET;
+    process.env.VERCEL = '1'; // emulate a real Vercel deployment
+    try {
+      const storage = new InMemoryStorage();
+      const req = new Request('https://x/api/cron-cleanup', { method: 'GET' });
+      const res = await handleCronCleanup(req, storage);
+      expect(res.status).toBe(500);
+      expect(((await res.json()) as { error: string }).error).toBe('misconfigured');
+    } finally {
+      if (prevSecret === undefined) delete process.env.CRON_SECRET;
+      else process.env.CRON_SECRET = prevSecret;
+      if (prevVercel === undefined) delete process.env.VERCEL;
+      else process.env.VERCEL = prevVercel;
+    }
+  });
+
+  it('allows the sweep locally (no VERCEL, no secret) so tests can exercise it', async () => {
+    const prevSecret = process.env.CRON_SECRET;
+    const prevVercel = process.env.VERCEL;
+    delete process.env.CRON_SECRET;
+    delete process.env.VERCEL;
+    try {
+      const storage = new InMemoryStorage();
+      const req = new Request('https://x/api/cron-cleanup', { method: 'GET' });
+      expect((await handleCronCleanup(req, storage)).status).toBe(200);
+    } finally {
+      if (prevSecret !== undefined) process.env.CRON_SECRET = prevSecret;
+      if (prevVercel !== undefined) process.env.VERCEL = prevVercel;
     }
   });
 });

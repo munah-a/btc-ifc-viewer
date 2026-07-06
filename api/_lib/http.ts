@@ -11,9 +11,20 @@
  *     no-store caching for the JSON API responses (the `.frag` bytes are cached
  *     separately at Blob put-time).
  *
- * Web-standard only (Request/Response/crypto.subtle) — runs on the Vercel
- * Node.js runtime and is unit-testable in Node without any Vercel packages.
+ * Web-standard (Request/Response/crypto.subtle) plus `node:crypto` for the
+ * constant-time compare — runs on the Vercel Node.js runtime and is
+ * unit-testable in Node without any Vercel packages.
  */
+import { timingSafeEqual } from 'node:crypto';
+
+/**
+ * True on a real Vercel deployment (Vercel sets `VERCEL=1`). Used to FAIL CLOSED
+ * on missing security config (CRON_SECRET / BTC_OWNER_SALT) in production while
+ * still letting local tests exercise the code paths.
+ */
+export function isProduction(): boolean {
+  return typeof process !== 'undefined' && Boolean(process.env.VERCEL);
+}
 
 /** SHA-256 of a string → lowercase hex. */
 export async function sha256Hex(input: string): Promise<string> {
@@ -23,31 +34,55 @@ export async function sha256Hex(input: string): Promise<string> {
 }
 
 /**
- * Derives a non-reversible owner surrogate from the request IP + a server salt.
- * This is the C4 seam value stored as `ownerId`; a real account id replaces it
- * later with no schema change. Falls back to a constant bucket when no IP is
- * available (dev/local), which is safe — it just shares one quota bucket.
+ * Derives a non-reversible owner surrogate from the TRUSTED client IP + a server
+ * salt. This is the C4 seam value stored as `ownerId`. S7: the salt is required
+ * in production — a missing BTC_OWNER_SALT there is a fatal misconfig (throws),
+ * so we never silently fall back to a predictable dev salt on a live deployment.
  */
 export async function ownerIdFromRequest(request: Request): Promise<string> {
   const ip = clientIp(request) ?? 'no-ip';
-  const salt = (typeof process !== 'undefined' && process.env.BTC_OWNER_SALT) || 'btc-ifc-viewer-dev-salt';
+  const salt = ownerSalt();
   const hash = await sha256Hex(`${salt}:${ip}`);
   return `anon_${hash.slice(0, 24)}`;
 }
 
+/** The owner-id salt. Fails closed in production (S7); dev/test gets a fixed salt. */
+function ownerSalt(): string {
+  const configured = typeof process !== 'undefined' ? process.env.BTC_OWNER_SALT : undefined;
+  if (configured) return configured;
+  if (isProduction()) {
+    throw new Error('BTC_OWNER_SALT must be set in production (owner-id salting).');
+  }
+  return 'btc-ifc-viewer-dev-salt';
+}
+
 /**
- * Best-effort client IP from proxy headers Vercel sets. `x-forwarded-for` is a
- * comma list (client first). We take only the first hop; it is used solely to
- * bucket quota/rate-limit and is immediately salted+hashed, never stored raw.
+ * The TRUSTED client IP (S2 — anti-spoof). `x-forwarded-for` is a hop list that
+ * the CLIENT controls at the LEFT; anything the client sends there is untrusted
+ * and would let an attacker mint a fresh quota/rate bucket per request. On
+ * Vercel the platform-set `x-real-ip` (and `x-vercel-forwarded-for`) carry the
+ * actual connecting IP, so we prefer those. If only `x-forwarded-for` is
+ * present we take the RIGHT-MOST hop (the one appended closest to our
+ * infrastructure), never the client-supplied left. Used solely to bucket
+ * quota/rate-limit and immediately salted+hashed — never stored raw.
  */
 export function clientIp(request: Request): string | null {
+  // Platform-trusted single-value headers first.
+  const real = request.headers.get('x-real-ip')?.trim();
+  if (real) return real;
+  const vercelXff = request.headers.get('x-vercel-forwarded-for')?.trim();
+  if (vercelXff) {
+    const hops = vercelXff.split(',').map((h) => h.trim()).filter(Boolean);
+    if (hops.length > 0) return hops[hops.length - 1];
+  }
+  // Fall back to the RIGHT-MOST x-forwarded-for hop (closest to us), NOT the
+  // left-most client-controlled value.
   const xff = request.headers.get('x-forwarded-for');
   if (xff) {
-    const first = xff.split(',')[0]?.trim();
-    if (first) return first;
+    const hops = xff.split(',').map((h) => h.trim()).filter(Boolean);
+    if (hops.length > 0) return hops[hops.length - 1];
   }
-  const real = request.headers.get('x-real-ip');
-  return real?.trim() || null;
+  return null;
 }
 
 /** Generates a URL-safe random token (default 256-bit) for delete auth. */
@@ -60,19 +95,28 @@ export function generateToken(bytes = 32): string {
 }
 
 /**
- * Constant-time-ish comparison of a presented delete token against the stored
- * hash. Hashing the presented token first means both sides are fixed-length
- * hex, so the char-by-char compare doesn't leak length and never short-circuits.
+ * Constant-time comparison of a presented delete token against the stored hash.
+ * S6: both sides are hashed to fixed-length hex, then compared with Node's
+ * `crypto.timingSafeEqual` (a true constant-time primitive) instead of a
+ * hand-rolled XOR loop. Length is equal by construction (SHA-256 hex = 64
+ * chars); a defensive length guard avoids timingSafeEqual throwing.
  */
 export async function verifyToken(presentedToken: string, storedHash: string): Promise<boolean> {
   if (!presentedToken || !storedHash) return false;
   const presentedHash = await sha256Hex(presentedToken);
   if (presentedHash.length !== storedHash.length) return false;
-  let diff = 0;
-  for (let i = 0; i < presentedHash.length; i += 1) {
-    diff |= presentedHash.charCodeAt(i) ^ storedHash.charCodeAt(i);
-  }
-  return diff === 0;
+  const a = new TextEncoder().encode(presentedHash);
+  const b = new TextEncoder().encode(storedHash);
+  return timingSafeEqualBytes(a, b);
+}
+
+/**
+ * Constant-time byte comparison via Node's `crypto.timingSafeEqual` (a true
+ * constant-time primitive). Both inputs must be equal length (guarded here).
+ */
+function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 /** Generates a short, URL-safe public upload id (unpredictable). */

@@ -313,3 +313,55 @@ export function buildShareUrl(baseUrl: string, state: UrlState): string {
   const base = baseUrl.split('#')[0].split('?')[0];
   return `${base}${query}`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// S8: model-URL allowlist. A BTC-branded embed that renders ANY attacker-supplied
+// `?m=` URL is a phishing / content-injection vector. `isAllowedModelUrl` gates
+// which hosts the embed will fetch a model from: the page's own origin, the
+// configured hosting/embed origins, and the Vercel Blob CDN. Pure + unit-tested.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The Vercel Blob CDN host suffix (all hosted `.frag` URLs live under this). */
+export const VERCEL_BLOB_HOST_SUFFIX = '.public.blob.vercel-storage.com';
+
+export interface ModelUrlPolicy {
+  /** The embed page's own origin (same-origin models always allowed). */
+  selfOrigin?: string;
+  /** Extra allowed origins (e.g. BTC_EMBED_ORIGIN / a custom Blob domain). */
+  allowedOrigins?: string[];
+  /** Allow any `*.public.blob.vercel-storage.com` host (default true). */
+  allowVercelBlob?: boolean;
+}
+
+/**
+ * Returns true iff `modelUrl` is a fetchable model source we trust to render in
+ * the embed. Only http(s) URLs on an allowed host pass; everything else
+ * (javascript:, data:, foreign hosts) is rejected.
+ */
+export function isAllowedModelUrl(modelUrl: string, policy: ModelUrlPolicy = {}): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(modelUrl);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+
+  const host = parsed.host.toLowerCase();
+  const allowVercelBlob = policy.allowVercelBlob ?? true;
+  if (allowVercelBlob && host.endsWith(VERCEL_BLOB_HOST_SUFFIX)) return true;
+
+  const allowedHosts = new Set<string>();
+  const addHost = (origin: string | undefined): void => {
+    if (!origin) return;
+    try {
+      allowedHosts.add(new URL(origin).host.toLowerCase());
+    } catch {
+      // ignore malformed configured origin
+    }
+  };
+  addHost(policy.selfOrigin);
+  for (const origin of policy.allowedOrigins ?? []) addHost(origin);
+
+  return allowedHosts.has(host);
+}

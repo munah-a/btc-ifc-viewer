@@ -45,7 +45,7 @@ import {
 } from './core/i18n';
 import { bootstrapEngine, createFpsMonitor, ShaderWarningFilter } from './core/viewer-core';
 import { exportModelsToGlb, hasActiveClipping, isValidGlb } from './core/glb-export';
-import { buildShareUrl, decodeUrlState, type UrlViewpointState } from './core/url-state';
+import { buildShareUrl, decodeUrlState, isAllowedModelUrl, type UrlViewpointState } from './core/url-state';
 import { UploadClient } from './core/upload-client';
 import { ShareDialogController } from './ui/share-dialog';
 import type { TestItemRef, ViewerTestApi } from './core/test-api';
@@ -3275,6 +3275,17 @@ class ViewerApp {
   private async loadFromUrlParams(): Promise<void> {
     const urlState = decodeUrlState(window.location.search);
     if (!urlState.modelUrl) return;
+    // S8: same allowlist as the embed — the full app must not auto-fetch an
+    // arbitrary attacker `?m=` URL at boot either.
+    const envHosts = (import.meta.env as Record<string, string | undefined>).VITE_ALLOWED_MODEL_HOSTS;
+    if (!isAllowedModelUrl(urlState.modelUrl, {
+      selfOrigin: window.location.origin,
+      allowedOrigins: typeof envHosts === 'string' ? envHosts.split(',').map((s) => s.trim()).filter(Boolean) : [],
+      allowVercelBlob: true,
+    })) {
+      this.showToast(t('embed.errorBlockedUrl'), 'error');
+      return;
+    }
     try {
       const response = await fetch(urlState.modelUrl, { mode: 'cors' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
