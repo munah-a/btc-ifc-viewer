@@ -36,6 +36,15 @@ export interface FragmentsModelLike {
   /** The three.js object representing the model in the scene. */
   object: THREE.Object3D;
   /**
+   * Fires when the model's view/meshes update (camera-driven LOD streaming).
+   * P6 (W5.3): the on-demand renderer subscribes to re-arm a render so streamed
+   * geometry always paints. Optional — defensive across library versions.
+   */
+  readonly onViewUpdated?: {
+    add(callback: () => void): void;
+    remove(callback: () => void): void;
+  };
+  /**
    * Data-driven model bounding box (local space) — available right after load,
    * independent of whether geometry has streamed/rendered yet. Prefer this over
    * `expandByObject(object)` for fit/section, which reads empty until the

@@ -64,7 +64,8 @@ import { UploadClient } from './core/upload-client';
 import { ShareDialogController } from './ui/share-dialog';
 import type { TestItemRef, ViewerTestApi } from './core/test-api';
 import { getViewCubeAxes, getViewCubeNavigationDistance, resolveViewCubeCameraUp } from './core/view-cube';
-import { buildEdgeOverlays } from './tools/edges';
+import { buildEdgeOverlays, EdgeGeometryCache } from './tools/edges';
+import { routeKeyboardEvent, type KeyboardActions } from './input/keyboard-router';
 import { sectionBoxPlanes, sectionPlanePoint } from './tools/section';
 import { computeXrayOpacity } from './tools/xray';
 import type {
@@ -187,6 +188,9 @@ class ViewerApp {
 
   private edgeOverlays: THREE.LineSegments[] = [];
   private readonly edgeMaterial = new THREE.LineBasicMaterial({ color: 0xc8145c, transparent: true, opacity: 0.65 });
+  // P3 (W5.3): cache EdgesGeometry per source geometry so applyEdges doesn't
+  // rebuild O(triangles) edges on every opacity/gizmo tick — reposition matrices.
+  private readonly edgeGeometryCache = new EdgeGeometryCache();
   private modelObjects: THREE.Object3D[] = [];
   private readonly federatedModels = new Map<string, FederatedModelRecord>();
   private modelIndices = new Map<string, ModelIndex>();
@@ -238,6 +242,11 @@ class ViewerApp {
   // W5.1: the dynamically-imported engine module (three/@thatopen/web-ifc live
   // here). Loaded once in initEngine so its enum/helper values are reusable.
   private engineModule!: ViewerCoreModule;
+  // P6 (W5.3): on-demand rendering. `requestRender` re-arms the MANUAL-mode
+  // PostproductionRenderer on any visual change; `onDemand.stop` detaches on
+  // destroy. requestRender is a no-op until initEngine wires it.
+  private requestRender: () => void = () => {};
+  private onDemandRender: { requestRender: () => void; stop: () => void } | null = null;
 
   constructor() {
     // C7: resolve the persisted language (default EN) and localize the static
@@ -331,17 +340,18 @@ class ViewerApp {
     // 1. Abort all event listeners at once
     this.abortController.abort();
 
-    // 2. Cancel animation frames
+    // 2. Cancel animation frames + detach the on-demand render listeners (P6)
     this.fpsMonitor?.stop();
     this.fpsMonitor = null;
+    this.onDemandRender?.stop();
+    this.onDemandRender = null;
 
     // 3. Dispose THREE.js resources
     this.edgeMaterial.dispose();
-    for (const overlay of this.edgeOverlays) {
-      overlay.geometry.dispose();
-      if (overlay.material instanceof THREE.Material) overlay.material.dispose();
-    }
+    // P3: overlay geometries are owned by the cache — remove overlays but let
+    // the cache free the shared EdgesGeometry.
     this.edgeOverlays = [];
+    this.edgeGeometryCache.dispose();
 
     // Dispose transform controls
     if (this.transformControls) {
@@ -626,7 +636,7 @@ class ViewerApp {
     this.xrayEnabled = !this.xrayEnabled;
     this.setRailPressed(this.dom.btnTransparency, this.xrayEnabled);
     this.applyXRay();
-    this.fireAndForget(this.fragments.core.update(true), 'Toggle x-ray');
+    this.fireAndForget(this.updateFragments(true), 'Toggle x-ray');
     this.persistLocalState();
     this.setStatus(this.xrayEnabled ? t('status.xrayEnabled') : t('status.xrayDisabled'));
     this.syncMobileSheet();
@@ -664,10 +674,20 @@ class ViewerApp {
     if (button.hasAttribute('aria-pressed')) button.setAttribute('aria-pressed', String(active));
   }
 
+  // P3 (W5.3): the section slider fires `input` per pixel of drag; recreating
+  // the clip plane + fragments update each tick is expensive. Update the label
+  // immediately (responsive), debounce the heavy re-section.
+  private readonly debouncedSetSectionPosition = debounce((pct: number) => this.setSectionPosition(pct), 40);
+  // P3: debounced per-model opacity apply for the slider drag (label stays live).
+  private readonly debouncedApplyModelOpacity = debounce(
+    (modelId: string, opacity: number) => this.applyModelOpacity(modelId, opacity),
+    40,
+  );
+
   private onSectionSliderInput(): void {
     const pct = Number(this.dom.sectionPos.value);
     this.dom.sectionPosLabel.textContent = t('label.percent', { value: pct });
-    this.setSectionPosition(pct);
+    this.debouncedSetSectionPosition(pct);
   }
 
   private onFilterChipClick(event: Event): void {
@@ -996,10 +1016,12 @@ class ViewerApp {
       const modelId = opacityInput.dataset.modelId;
       if (!modelId) return;
       const opacity = Number(opacityInput.value) / 100;
-      this.applyModelOpacity(modelId, opacity);
+      // P3: the label updates instantly for feedback; the heavy opacity apply
+      // (fragments update + persist) is debounced so a drag doesn't thrash it.
       const card = opacityInput.closest<HTMLElement>('.federated-opacity');
       const valueLabel = card?.querySelector<HTMLElement>('[data-opacity-value]');
       if (valueLabel) valueLabel.textContent = t('label.percent', { value: Math.round(this.clamp(opacity, 0, 1) * 100) });
+      this.debouncedApplyModelOpacity(modelId, opacity);
     });
 
     this.dom.federationTree.addEventListener('change', (event) => {
@@ -1108,13 +1130,22 @@ class ViewerApp {
       window.__viewerTestApi = this.buildTestApi();
     }
 
+    // P6 (W5.3): switch to on-demand rendering — the MANUAL-mode renderer only
+    // composites when requestRender() re-arms it, so an idle viewport stops
+    // burning the GPU (battery, C6) while a static frame stays on the canvas.
+    this.onDemandRender = this.engineModule.enableOnDemandRendering(engine);
+    this.requestRender = this.onDemandRender.requestRender;
+
     this.world.camera.controls.addEventListener('update', () => {
       this.fireAndForget(this.fragments.core.update(), 'Camera update');
+      this.requestRender();
     });
 
     this.fragments.core.onModelLoaded.add((model) => {
       const modelId = String(model?.modelId ?? '');
       if (!modelId) return;
+      // Streamed LOD/mesh updates for this model → paint the new geometry.
+      model.onViewUpdated?.add?.(() => this.requestRender());
       this.fireAndForget(this.registerModel(modelId, model), 'Register model');
     });
 
@@ -1129,7 +1160,7 @@ class ViewerApp {
       if (!model) return;
       this.updateModelOffsetsFromObject(model);
       if (this.edgesEnabled) this.applyEdges();
-      this.fireAndForget(this.fragments.core.update(true), 'Gizmo update');
+      this.fireAndForget(this.updateFragments(true), 'Gizmo update');
     });
     this.transformControls.addEventListener('mouseUp', () => {
       if (!this.activeGizmoModelId) return;
@@ -1213,7 +1244,7 @@ class ViewerApp {
     this.renderLevelFilters();
     this.updateElementCounter();
     await this.updateVisibilityCount();
-    await this.fragments.core.update(true);
+    await this.updateFragments(true);
     this.dom.emptyState.hidden = this.federatedModels.size > 0;
     this.setStatus(t('status.modelUnloaded', { name: record.fileName }));
   }
@@ -1261,8 +1292,9 @@ class ViewerApp {
 
     // C8 (W5.2): cache the converted `.frag` bytes in IndexedDB so the model can
     // be restored next session without re-conversion. During a restore the bytes
-    // came FROM the cache, so reuse the known key and skip the re-write.
-    await this.cacheFragForModel(modelRecord, model);
+    // came FROM the cache, so reuse the known key and skip the re-write. Run it
+    // in the background — it must never delay model registration / the load flow.
+    this.fireAndForget(this.cacheFragForModel(modelRecord, model), 'Cache fragments');
 
     await this.indexModel(modelId, model);
     // F5: resolve the model's display units from its own unit entities;
@@ -1484,6 +1516,7 @@ class ViewerApp {
     this.gridVisible = visible;
     if (this.gridHelper) this.gridHelper.visible = visible;
     this.setRailPressed(this.dom.btnToggleGrid, visible);
+    this.requestRender();
     if (updateStatus) this.setStatus(visible ? t('status.gridEnabled') : t('status.gridHidden'));
   }
 
@@ -1506,6 +1539,7 @@ class ViewerApp {
       post.basePass.clearColor = threeColor;
       post.basePass.clearAlpha = 1;
     }
+    this.requestRender();
     if (updateStatus) this.setStatus(t('status.backgroundSet', { color: normalized }));
   }
 
@@ -1629,8 +1663,10 @@ class ViewerApp {
     this.applyEdges();
 
     if (this.fragments.list.size > 0 || this.federatedModels.size > 0) {
-      await this.fragments.core.update(true);
+      await this.updateFragments(true);
     }
+    // Postprocessing style changed even when no model is loaded — repaint.
+    this.requestRender();
 
     if (persist) this.persistLocalState();
     if (updateStatus) this.setStatus(t('status.visualStyle', { style: this.getVisualStyleLabel(resolvedStyle) }));
@@ -1648,6 +1684,18 @@ class ViewerApp {
 
   private fireAndForget(task: Promise<unknown>, context: string): void {
     task.catch((error) => this.handleAsyncError(context, error));
+  }
+
+  /**
+   * P6 (W5.3): updates the fragments engine AND re-arms the on-demand renderer,
+   * so every visual mutation that touches geometry paints a frame. requestRender
+   * is fired both now (the change is visible immediately) and again when the
+   * async update settles (streamed meshes). Replaces bare fragments.core.update
+   * calls so no visual change is left unpainted under MANUAL-mode rendering.
+   */
+  private updateFragments(force = false): Promise<void> {
+    this.requestRender();
+    return this.fragments.core.update(force).then(() => this.requestRender());
   }
 
   private handleAsyncError(context: string, error: unknown): void {
@@ -1711,7 +1759,7 @@ class ViewerApp {
     if (!model.visible && this.activeGizmoModelId === modelId) this.detachModelGizmo();
     this.applyXRay();
     if (this.edgesEnabled) this.applyEdges();
-    this.fireAndForget(this.fragments.core.update(true), 'Toggle visibility');
+    this.fireAndForget(this.updateFragments(true), 'Toggle visibility');
     this.fireAndForget(this.updateVisibilityCount(), 'Update visibility');
     this.renderModelBrowser();
     this.renderFederatedTree();
@@ -1725,7 +1773,7 @@ class ViewerApp {
     model.opacity = this.clamp(opacity, 0, 1);
     this.applyXRay();
     if (this.edgesEnabled) this.applyEdges();
-    this.fireAndForget(this.fragments.core.update(true), 'Adjust opacity');
+    this.fireAndForget(this.updateFragments(true), 'Adjust opacity');
     this.persistLocalState();
   }
 
@@ -1833,7 +1881,7 @@ class ViewerApp {
     }
 
     if (this.edgesEnabled) this.applyEdges();
-    this.fireAndForget(this.fragments.core.update(true), 'Apply transform');
+    this.fireAndForget(this.updateFragments(true), 'Apply transform');
   }
 
   private resetModelOffsets(modelId: string): void {
@@ -2403,6 +2451,7 @@ class ViewerApp {
         child.renderOrder = 999;
       });
     }
+    this.requestRender();
   }
 
   // Active single-plane section state, for the glass slider (position + normal).
@@ -2447,7 +2496,7 @@ class ViewerApp {
     const point = sectionPlanePoint(this.activeSectionBox, this.activeSectionNormal, pct);
     this.clipper.deleteAll();
     this.createClipPlane(this.activeSectionNormal.clone(), point);
-    this.fireAndForget(this.fragments.core.update(true), 'Section move');
+    this.fireAndForget(this.updateFragments(true), 'Section move');
   }
 
   private createSectionBox(): void {
@@ -2461,6 +2510,7 @@ class ViewerApp {
     for (const { normal, point } of sectionBoxPlanes(bbox)) {
       this.clipper.createFromNormalAndCoplanarPoint(this.world, normal, point);
     }
+    this.requestRender();
     this.setStatus(t('status.sectionBoxCreated'));
   }
 
@@ -2473,6 +2523,7 @@ class ViewerApp {
     this.activeSectionNormal = null;
     this.activeSectionBox = null;
     this.dom.sectionSlider.hidden = true;
+    this.requestRender();
     if (updateStatus) this.setStatus(t('status.sectionsCleared'));
   }
 
@@ -2504,15 +2555,17 @@ class ViewerApp {
   }
 
   private applyEdges(): void {
+    // P3: overlay geometries are owned by edgeGeometryCache (shared, reused),
+    // so remove overlays from the scene but do NOT dispose their geometry here.
     for (const overlay of this.edgeOverlays) {
       this.world.scene.three.remove(overlay);
-      overlay.geometry.dispose();
     }
     this.edgeOverlays.length = 0;
     if (!this.edgesEnabled) return;
 
-    this.edgeOverlays = buildEdgeOverlays(this.modelObjects, this.edgeMaterial);
+    this.edgeOverlays = buildEdgeOverlays(this.modelObjects, this.edgeMaterial, this.edgeGeometryCache);
     for (const overlay of this.edgeOverlays) this.world.scene.three.add(overlay);
+    this.requestRender();
   }
 
   private async onViewerClick(_event: MouseEvent): Promise<void> {
@@ -2532,6 +2585,7 @@ class ViewerApp {
     if (this.measureMode !== 'none') {
       if (this.measureMode === 'length') await this.lengthMeasurement.create();
       if (this.measureMode === 'area') await this.areaMeasurement.create();
+      this.requestRender();
       return null;
     }
 
@@ -2599,7 +2653,7 @@ class ViewerApp {
         cloneMap(validSelection),
       );
     }
-    await this.fragments.core.update(true);
+    await this.updateFragments(true);
     this.updateCounters();
     await this.updatePropertiesPanel();
   }
@@ -3011,6 +3065,7 @@ class ViewerApp {
       }
       this.createIssueMarker(issue);
     }
+    this.requestRender();
   }
 
   private updateIssuesList(): void {
@@ -3140,6 +3195,9 @@ class ViewerApp {
   private captureCanvas(type = 'image/png', quality?: number): string | null {
     const renderer = this.world?.renderer;
     if (!renderer) return null;
+    // P6 (W5.3): under MANUAL-mode rendering, update() only paints when
+    // needsUpdate is armed — force a fresh frame before the readback (F2).
+    this.requestRender();
     renderer.update();
     return renderer.three.domElement.toDataURL(type, quality);
   }
@@ -3148,6 +3206,8 @@ class ViewerApp {
   private captureViewpointThumbnail(): string | undefined {
     const renderer = this.world?.renderer;
     if (!renderer) return undefined;
+    // P6 (W5.3): force a fresh frame under MANUAL-mode rendering (F2).
+    this.requestRender();
     renderer.update();
     const source = renderer.three.domElement;
     const largest = Math.max(source.width, source.height);
@@ -3375,7 +3435,9 @@ class ViewerApp {
       // minimal `{"version":1}` import is crash-free.
       const state = normalizePersistedState(JSON.parse(text));
       if (!state) throw new Error('Unsupported or invalid viewer state file');
-      await this.applyPersistedState(state);
+      // File import restores view state only — the referenced model `.frag`
+      // bytes live in the exporting browser's IndexedDB, not this one (C8).
+      await this.applyPersistedState(state, false);
       this.persistLocalState();
       this.setStatus(t('status.stateImported'));
     } catch (error) {
@@ -3538,7 +3600,7 @@ class ViewerApp {
    * restoreLocalState (localStorage) and importViewerState (file import).
    * Expects a state produced by normalizePersistedState.
    */
-  private async applyPersistedState(state: PersistedViewerState): Promise<void> {
+  private async applyPersistedState(state: PersistedViewerState, restoreModels = true): Promise<void> {
     // C7: restore the UI language first so any status text produced below is
     // already localized. setLanguage no-ops when unchanged, and re-hydrates +
     // re-renders (harmless during boot). Only applied when the state carries one.
@@ -3586,8 +3648,11 @@ class ViewerApp {
 
     // C8 (W5.2): restore the full session — reload the cached models (no
     // re-conversion), re-apply per-model modifications, then camera/section/
-    // selection. Only when the engine is ready and models were persisted.
-    if (this.fragments && state.models.length > 0) {
+    // selection. Only on boot / manual restore (restoreModels), not on file
+    // import: an imported state references `.frag` bytes cached in the ORIGINATING
+    // browser's IndexedDB, which this browser does not have, so a file import
+    // restores view state (viewpoints/issues/theme/…) only — as it did pre-C8.
+    if (restoreModels && this.fragments && state.models.length > 0) {
       await this.restoreSession(state);
     }
   }
@@ -3729,7 +3794,7 @@ class ViewerApp {
     this.renderClassFilters();
     this.renderLevelFilters();
     this.updateElementCounter();
-    await this.fragments.core.update(true);
+    await this.updateFragments(true);
   }
 
   /** U7: real tab activation — aria-selected + roving tabindex + panel title. */
@@ -3794,17 +3859,13 @@ class ViewerApp {
     this.dom.selectionCount.textContent = t('label.selected', { count: countMapItems(this.selectedItems) });
   }
 
-  private onKeyDown(event: KeyboardEvent): void {
-    const target = event.target as HTMLElement | null;
-    const isFormTarget = !!target && (
-      target.tagName === 'INPUT'
-      || target.tagName === 'TEXTAREA'
-      || target.tagName === 'SELECT'
-      || target.isContentEditable
-    );
-    if (isFormTarget) return;
-
-    if (event.key === 'Escape') {
+  /**
+   * The keyboard action bindings the extracted router dispatches to (W5.3). Each
+   * mirrors the original inline onKeyDown branch exactly — the router only owns
+   * the form-target guard + key→action mapping (input/keyboard-router.ts).
+   */
+  private readonly keyboardActions: KeyboardActions = {
+    cancel: () => {
       this.setMeasureMode('none');
       this.issuePinMode = false;
       this.dom.viewerHint.hidden = true;
@@ -3813,69 +3874,42 @@ class ViewerApp {
       if (this.dom.root.classList.contains('sheet-open')) this.closeSheet();
       else if (this.isSmallScreen() && this.dom.root.classList.contains('panel-open')) this.closePanel();
       this.setStatus(t('status.toolCanceled'));
-      return;
-    }
+    },
+    fitToModel: () => this.fitToModel(),
+    setNavigationMode: (mode) => this.applyNavigationMode(mode),
+    toggleSelectionMode: () => this.applySelectionMode(this.selectionMode === 'single' ? 'multi' : 'single'),
+    toggleMeasure: (mode) => this.setMeasureMode(this.measureMode === mode ? 'none' : mode),
+    toggleGrid: () => this.dom.btnToggleGrid.click(),
+    toggleXray: () => this.dom.btnTransparency.click(),
+    edgesOrGizmoRotate: () => {
+      if (this.activeGizmoModelId) {
+        this.transformControls?.setMode('rotate');
+        this.setStatus(t('status.gizmoModeRotate'));
+      } else {
+        this.dom.btnWireframe.click();
+      }
+    },
+    gizmoTranslate: () => {
+      if (this.activeGizmoModelId) {
+        this.transformControls?.setMode('translate');
+        this.setStatus(t('status.gizmoModeTranslate'));
+      }
+    },
+    gizmoReset: () => {
+      if (this.activeGizmoModelId) {
+        this.resetModelOffsets(this.activeGizmoModelId);
+        this.setStatus(t('status.gizmoTransformReset'));
+      }
+    },
+    toggleIssuePin: () => this.dom.btnIssuePinMode.click(),
+    deleteSelectedIssue: () => this.fireAndForget(this.deleteSelectedIssue(), 'Delete issue'),
+    finishAreaMeasurement: () => {
+      if (this.measureMode === 'area') this.areaMeasurement.endCreation();
+    },
+  };
 
-    switch (event.key.toLowerCase()) {
-      case 'f':
-        this.fitToModel();
-        break;
-      case '1':
-        this.applyNavigationMode('Orbit');
-        break;
-      case '2':
-        this.applyNavigationMode('Plan');
-        break;
-      case '3':
-        this.applyNavigationMode('FirstPerson');
-        break;
-      case 'm':
-        this.applySelectionMode(this.selectionMode === 'single' ? 'multi' : 'single');
-        break;
-      case 'l':
-        this.setMeasureMode(this.measureMode === 'length' ? 'none' : 'length');
-        break;
-      case 'a':
-        this.setMeasureMode(this.measureMode === 'area' ? 'none' : 'area');
-        break;
-      case 'g':
-        this.dom.btnToggleGrid.click();
-        break;
-      case 'x':
-        this.dom.btnTransparency.click();
-        break;
-      case 'e':
-        if (this.activeGizmoModelId) {
-          this.transformControls?.setMode('rotate');
-          this.setStatus(t('status.gizmoModeRotate'));
-        } else {
-          this.dom.btnWireframe.click();
-        }
-        break;
-      case 'w':
-        if (this.activeGizmoModelId) {
-          this.transformControls?.setMode('translate');
-          this.setStatus(t('status.gizmoModeTranslate'));
-        }
-        break;
-      case 'r':
-        if (this.activeGizmoModelId) {
-          this.resetModelOffsets(this.activeGizmoModelId);
-          this.setStatus(t('status.gizmoTransformReset'));
-        }
-        break;
-      case 'i':
-        this.dom.btnIssuePinMode.click();
-        break;
-      case 'delete':
-        this.fireAndForget(this.deleteSelectedIssue(), 'Delete issue');
-        break;
-      case 'enter':
-        if (this.measureMode === 'area') this.areaMeasurement.endCreation();
-        break;
-      default:
-        break;
-    }
+  private onKeyDown(event: KeyboardEvent): void {
+    routeKeyboardEvent(event, this.keyboardActions);
   }
 
   private setStatus(message: string): void {
@@ -4086,7 +4120,12 @@ class ViewerApp {
   }
 
   private startFpsMonitor(): void {
-    this.fpsMonitor = this.engineModule.createFpsMonitor(this.dom.perfInfo);
+    // A15 (W5.3): count real rendered frames via the renderer's onAfterUpdate
+    // (fires only on an actual paint) rather than the rAF cadence.
+    const renderer = this.world?.renderer as unknown as
+      | { onAfterUpdate: { add(cb: () => void): void; remove(cb: () => void): void } }
+      | undefined;
+    this.fpsMonitor = this.engineModule.createFpsMonitor(this.dom.perfInfo, renderer);
   }
 }
 

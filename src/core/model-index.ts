@@ -71,16 +71,29 @@ export async function buildModelIndex(modelId: string, model: FragmentsModelLike
   const spatial = await model.getSpatialStructure();
 
   // Read element names + level assignment from ContainedInStructure relation.
+  // P7 (W5.3): the chunk round-trips to the fragments worker are independent, so
+  // fire them in PARALLEL (Promise.all) instead of awaiting one at a time —
+  // hundreds of sequential round-trips were the dominant indexing cost. The
+  // per-chunk results are then applied in chunk order so the maps are identical
+  // to the sequential build (deterministic).
+  const chunks: number[][] = [];
   for (let start = 0; start < itemIds.length; start += CHUNK_SIZE) {
-    const chunk = itemIds.slice(start, start + CHUNK_SIZE);
-    const itemsData = await model.getItemsData(chunk, {
-      attributesDefault: true,
-      relations: {
-        ContainedInStructure: { attributes: true, relations: true },
-      },
-      relationsDefault: { attributes: false, relations: false },
-    });
-
+    chunks.push(itemIds.slice(start, start + CHUNK_SIZE));
+  }
+  const chunkResults = await Promise.all(
+    chunks.map((chunk) =>
+      model.getItemsData(chunk, {
+        attributesDefault: true,
+        relations: {
+          ContainedInStructure: { attributes: true, relations: true },
+        },
+        relationsDefault: { attributes: false, relations: false },
+      }),
+    ),
+  );
+  for (let c = 0; c < chunks.length; c += 1) {
+    const chunk = chunks[c];
+    const itemsData = chunkResults[c];
     for (let i = 0; i < chunk.length; i += 1) {
       const localId = chunk[i];
       const data = (itemsData[i] || {}) as Record<string, unknown>;

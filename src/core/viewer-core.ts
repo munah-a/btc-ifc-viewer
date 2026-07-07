@@ -180,6 +180,60 @@ export async function bootstrapEngine(options: BootstrapEngineOptions): Promise<
 }
 
 /**
+ * P6 (W5.3): switches the world's PostproductionRenderer to on-demand (MANUAL)
+ * rendering and returns a `requestRender()` the orchestrator calls on any visual
+ * change. In MANUAL mode the renderer only composites a frame when `needsUpdate`
+ * is set, so an idle viewport stops burning the GPU on continuous postprocessing
+ * (battery — a field/tablet win, C6) while a static frame stays on the canvas
+ * (required for e2e/page.screenshot capture).
+ *
+ * Visual parity: `turnOffOnManualMode` drops the heavy postprocessing DURING
+ * navigation for fluidity and restores it `manualModeDelay` ms after the last
+ * change — so the settled frame carries full outlines/gloss exactly as before.
+ *
+ * The renderer keeps rendering while the camera controls animate (their `update`
+ * event fires each frame and re-arms `needsUpdate`). Mesh streaming (LOD) and
+ * all other visual changes are re-armed by the orchestrator calling the returned
+ * `requestRender()` — after each `fragments.core.update()`, on each model's
+ * `onViewUpdated`, and on selection/tool/marker changes.
+ *
+ * Returns a `requestRender` fn AND a `stop` to detach the camera listener
+ * (destroy()).
+ */
+export function enableOnDemandRendering(engine: EngineHandles): {
+  requestRender: () => void;
+  stop: () => void;
+} {
+  const renderer = engine.world.renderer as OBCF.PostproductionRenderer & {
+    mode: OBC.RendererMode;
+    needsUpdate: boolean;
+    turnOffOnManualMode?: boolean;
+    manualModeDelay?: number;
+  };
+
+  const requestRender = (): void => {
+    renderer.needsUpdate = true;
+  };
+
+  renderer.mode = OBC.RendererMode.MANUAL;
+  // Keep full postprocessing on the settled frame; only relax it while moving.
+  renderer.turnOffOnManualMode = true;
+  renderer.manualModeDelay = 200;
+  requestRender();
+
+  // Camera animation frames + user navigation → re-arm each tick while moving.
+  const onCameraUpdate = (): void => requestRender();
+  engine.world.camera.controls.addEventListener('update', onCameraUpdate);
+
+  return {
+    requestRender,
+    stop: () => {
+      engine.world.camera.controls.removeEventListener('update', onCameraUpdate);
+    },
+  };
+}
+
+/**
  * Visual-style → PostproductionAspect mapping (W5.1). Kept in viewer-core so the
  * `OBCF.PostproductionAspect` enum — a runtime *value* from @thatopen — stays
  * inside this dynamically-imported engine module. Were viewer.ts to reference the
@@ -235,28 +289,46 @@ export function applyPostproductionStyle(post: PostproductionLike, style: Postpr
 export { ShaderWarningFilter } from './engine-lite';
 
 /**
- * rAF FPS counter (A15). Writes `<n> FPS` into `output` roughly once a second.
- * Returns a stop() to cancel the loop (wired to destroy()).
+ * Real-rendered-frame FPS counter (A15, W5.3). Counts the renderer's actual
+ * `onAfterUpdate` firings — which happen ONLY on a real `three.render()` — and
+ * samples the count into `output` once a second. Under on-demand rendering this
+ * reads the true rendered rate (≈0 when idle, the real value while interacting),
+ * not the rAF cadence the old counter measured (AUDIT A15). The 1 s sampler runs
+ * off setInterval, so it needs no rAF of its own.
+ *
+ * `renderer` is loosely typed to the `onAfterUpdate` event it exposes so this
+ * stays decoupled from the concrete renderer class.
  */
-export function createFpsMonitor(output: HTMLElement): { stop: () => void } {
+export function createFpsMonitor(
+  output: HTMLElement,
+  renderer?: { onAfterUpdate: { add(cb: () => void): void; remove(cb: () => void): void } },
+): { stop: () => void } {
   let frameCount = 0;
-  let lastTs = performance.now();
-  let frameId: number | null = null;
-
-  const tick = (): void => {
+  const onFrame = (): void => {
     frameCount += 1;
-    const now = performance.now();
-    if (now - lastTs >= 1000) {
-      output.textContent = `${frameCount} FPS`;
-      frameCount = 0;
-      lastTs = now;
-    }
-    frameId = requestAnimationFrame(tick);
   };
-  frameId = requestAnimationFrame(tick);
+
+  // Fallback (no renderer given): count rAF ticks as before.
+  let frameId: number | null = null;
+  if (renderer) {
+    renderer.onAfterUpdate.add(onFrame);
+  } else {
+    const tick = (): void => {
+      frameCount += 1;
+      frameId = requestAnimationFrame(tick);
+    };
+    frameId = requestAnimationFrame(tick);
+  }
+
+  const sampler = setInterval(() => {
+    output.textContent = `${frameCount} FPS`;
+    frameCount = 0;
+  }, 1000);
 
   return {
     stop: () => {
+      clearInterval(sampler);
+      if (renderer) renderer.onAfterUpdate.remove(onFrame);
       if (frameId !== null) {
         cancelAnimationFrame(frameId);
         frameId = null;
