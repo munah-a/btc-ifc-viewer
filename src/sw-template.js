@@ -22,6 +22,27 @@ const SW_VERSION = '__SW_VERSION__';
 const CACHE_NAME = `btc-viewer-shell-${SW_VERSION}`;
 const PRECACHE = __PRECACHE_MANIFEST__;
 
+/**
+ * P1 (W5-fixups): the precached shell for a navigation, chosen by PATH. A
+ * navigation whose path contains `/embed` falls back to the precached
+ * `embed.html` (the chromeless embed shell); everything else falls back to
+ * `index.html` (the full app). Before this, every offline navigation — including
+ * /embed — served index.html, so an offline embed rendered the full-app chrome.
+ * Tries base-prefixed, `./`-relative and bare forms so it matches regardless of
+ * the configured base.
+ */
+async function matchShell(url) {
+  const isEmbed = /(^|\/)embed(\.html)?(\/|$)/.test(url.pathname);
+  const name = isEmbed ? 'embed.html' : 'index.html';
+  return (
+    (await caches.match(`./${name}`)) ||
+    (await caches.match(name)) ||
+    // Fall back to whatever base-prefixed entry was precached (e.g. /base/name).
+    (await caches.match(new URL(name, url).pathname)) ||
+    null
+  );
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
@@ -62,16 +83,25 @@ self.addEventListener('fetch', (event) => {
   if (request.mode === 'navigate') {
     event.respondWith(
       (async () => {
+        const cache = await caches.open(CACHE_NAME);
         try {
           const response = await fetch(request);
-          const cache = await caches.open(CACHE_NAME);
-          cache.put(request, response.clone());
-          return response;
+          // P2 (W5-fixups): only cache a GOOD navigation. The old code cached
+          // unconditionally, so a transient 500/503 overwrote the good cached
+          // shell and was then served offline. Guard on response.ok AND a basic
+          // (same-origin, non-opaque) type; on a non-ok response fall through to
+          // the precached shell rather than poisoning the cache with an error.
+          if (response.ok && response.type === 'basic') {
+            cache.put(request, response.clone());
+            return response;
+          }
+          if (response.ok) return response; // ok but non-basic — serve, don't cache
+          const shell = await matchShell(url);
+          return shell || response; // prefer the good shell over a cached error
         } catch {
           const cached = await caches.match(request);
           if (cached) return cached;
-          // Fall back to the app shell entry (index.html) for any navigation.
-          const shell = await caches.match('./index.html') || await caches.match('index.html');
+          const shell = await matchShell(url);
           if (shell) return shell;
           throw new Error('offline and no cached shell');
         }

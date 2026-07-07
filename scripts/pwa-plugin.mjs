@@ -10,9 +10,30 @@
  * Only applies to `vite build` (apply:'build'); dev serving is unaffected.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { resolve, join, relative } from 'node:path';
+import { resolve, join, relative, basename } from 'node:path';
 
 const PUBLIC_DIR = resolve(process.cwd(), 'public');
+
+/**
+ * P1 (W5-fixups): the HTML entry file names (e.g. `index.html`, `embed.html`)
+ * from the resolved rollupOptions.input, so the precache manifest enumerates
+ * EVERY navigable shell instead of hard-coding `index.html`. Vite emits the HTML
+ * assets AFTER generateBundle, so we cannot read them off the bundle — derive
+ * them from the configured inputs. Falls back to ['index.html'].
+ */
+export function htmlEntriesFromInput(input) {
+  const values = Array.isArray(input)
+    ? input
+    : input && typeof input === 'object'
+      ? Object.values(input)
+      : input
+        ? [input]
+        : [];
+  const htmls = values
+    .filter((value) => typeof value === 'string' && value.endsWith('.html'))
+    .map((value) => basename(value));
+  return htmls.length > 0 ? [...new Set(htmls)] : ['index.html'];
+}
 
 /** Recursively lists files under a dir as base-relative POSIX paths. */
 function listFiles(dir, root = dir) {
@@ -30,11 +51,13 @@ function listFiles(dir, root = dir) {
 
 export function pwaPlugin() {
   let base = '/';
+  let htmlEntries = ['index.html'];
   return {
     name: 'btc-pwa',
     apply: 'build',
     configResolved(config) {
       base = config.base || '/';
+      htmlEntries = htmlEntriesFromInput(config.build?.rollupOptions?.input);
     },
     generateBundle(_options, bundle) {
       // 1. Every emitted chunk/asset (hashed JS, CSS, HTML, copied public assets).
@@ -50,8 +73,11 @@ export function pwaPlugin() {
       }
       for (const file of publicFiles) emitted.add(`${base}${file}`);
 
-      // Always include the app entry HTML for the navigation fallback.
-      emitted.add(`${base}index.html`);
+      // P1 (W5-fixups): precache EVERY configured HTML entry (index.html AND
+      // embed.html) so an offline navigation to /embed falls back to the real
+      // chromeless embed shell — not the full-app index.html. Enumerated from the
+      // resolved rollupOptions.input rather than hard-coded.
+      for (const html of htmlEntries) emitted.add(`${base}${html}`);
       emitted.add(base); // the start_url itself
 
       // Do NOT precache the SW itself or source maps.
