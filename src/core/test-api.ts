@@ -48,6 +48,8 @@ export interface ViewerTestApi {
   firstModelContext(): { modelId: string; searchTerm: string; firstItemId: number } | null;
   /** The id of the first loaded model, or null. */
   firstModelId(): string | null;
+  /** All loaded model ids, in load order (C8 multi-model assertions). */
+  allModelIds(): string[];
   /**
    * A class name + level name from the first model whose element sets do NOT
    * overlap (for the F11 disjoint-filter test). Null if none exists.
@@ -116,6 +118,29 @@ export interface ViewerTestApi {
    * file download — so the e2e can assert a non-empty, valid .glb is produced.
    */
   exportGlbBytes(): Promise<{ byteLength: number; valid: boolean }>;
+
+  // ---- C8 full-session persistence (W5.2) ----
+  /**
+   * The per-model modifications currently persisted for the given model id
+   * (transform offsets, opacity, visibility), read straight from the live
+   * federation record — so the e2e can assert modifications survived a reload.
+   * Null when no such model is loaded.
+   */
+  modelModifications(modelId: string): {
+    offsetPosition: TestVec3;
+    offsetRotation: TestVec3;
+    opacity: number;
+    visible: boolean;
+    fragKey: string | null;
+  } | null;
+  /** How many models the saved session in localStorage would restore. */
+  persistedModelCount(): number;
+  /** Applies the given per-model opacity (0–1) via the same path as the slider. */
+  setModelOpacity(modelId: string, opacity: number): void;
+  /** Applies a translation offset (metres) to a model via the transform path. */
+  setModelOffset(modelId: string, x: number, y: number, z: number): void;
+  /** Persists the current session immediately (the explicit Save affordance). */
+  saveSession(): void;
 }
 
 declare global {

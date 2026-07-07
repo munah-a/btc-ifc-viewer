@@ -9,13 +9,22 @@ import { escapeHtml, filterChipMarkup } from './core/markup';
 import { buildModelIndex } from './core/model-index';
 import { ModelRegistry } from './core/model-registry';
 import {
+  buildPersistedState,
   normalizePersistedState,
   type NavigationMode,
+  type PersistedCamera,
+  type PersistedModelRecord,
   type PersistedViewerState,
   type SavedViewpoint,
   type SelectionMode,
+  type Vector3Record,
   type VisualStyle,
 } from './core/persistence';
+import {
+  hashFragBytes,
+  IndexedDbFragCache,
+  type FragCacheAdapter,
+} from './core/frag-cache';
 import { DEFAULT_MODEL_UNITS, resolveModelUnits, type ModelUnits } from './core/units';
 import {
   clearMap,
@@ -172,6 +181,9 @@ class ViewerApp {
   };
   private gridHelper: THREE.Object3D | null = null;
   private readonly appliedModelOpacity = new Map<string, number>();
+  // C8 (W5.2): per-model hidden element ids, refreshed from the hider whenever
+  // visibility changes, so the synchronous session serializer can persist them.
+  private readonly hiddenIdsByModel = new Map<string, number[]>();
 
   private edgeOverlays: THREE.LineSegments[] = [];
   private readonly edgeMaterial = new THREE.LineBasicMaterial({ color: 0xc8145c, transparent: true, opacity: 0.65 });
@@ -193,6 +205,15 @@ class ViewerApp {
   private readonly uploadClient = new UploadClient();
   private shareController: ShareDialogController | null = null;
   private readonly hostedModelUrls = new Map<string, string>();
+  // C8 (W5.2): IndexedDB cache of converted `.frag` bytes for full-session
+  // restore. Injectable so unit tests can swap in an in-memory adapter.
+  private fragCache: FragCacheAdapter = new IndexedDbFragCache();
+  // Guards persistLocalState during a restore so re-applying state doesn't churn
+  // localStorage, and suppresses the auto-fit/status spam while models stream in.
+  private restoringSession = false;
+  // C8: fragKeys for models loaded FROM the cache during restore — onModelAdded
+  // reuses these instead of re-hashing/re-caching bytes it just read from IDB.
+  private readonly restoreFragKeys = new Map<string, string>();
   private lastHitPoint: THREE.Vector3 | null = null;
   private pendingIssuePoint: THREE.Vector3 | null = null;
   // U4: failed loads are kept so the overlay's Retry can replay them.
@@ -403,6 +424,10 @@ class ViewerApp {
     this.dom.btnExportScreenshot.addEventListener('click', () => this.exportScreenshot());
     this.dom.btnExportState.addEventListener('click', () => this.exportViewerState());
     this.dom.btnImportState.addEventListener('click', () => this.dom.importStateInput.click());
+    // C8 (W5.2): explicit save/restore-session controls (the session also
+    // auto-saves on every change and auto-restores on boot).
+    this.dom.btnSaveSession.addEventListener('click', () => this.saveSession());
+    this.dom.btnRestoreSession.addEventListener('click', () => this.fireAndForget(this.restoreSavedSession(), 'Restore session'));
     this.dom.importStateInput.addEventListener('change', (event) => {
       const file = (event.target as HTMLInputElement).files?.[0];
       if (!file) return;
@@ -568,6 +593,7 @@ class ViewerApp {
     this.fireAndForget((async () => {
       await this.hider.isolate(cloneMap(selectionMap));
       await this.updateVisibilityCount();
+      this.persistLocalState();
       this.setStatus(t('status.selectionIsolated'));
     })(), 'Isolate selection');
   }
@@ -581,6 +607,7 @@ class ViewerApp {
     this.fireAndForget((async () => {
       await this.hider.set(false, cloneMap(selectionMap));
       await this.updateVisibilityCount();
+      this.persistLocalState();
       this.setStatus(t('status.selectionHidden'));
     })(), 'Hide selection');
   }
@@ -590,6 +617,7 @@ class ViewerApp {
       await this.hider.set(true);
       this.clearFilterChecks();
       await this.updateVisibilityCount();
+      this.persistLocalState();
       this.setStatus(t('status.visibilityReset'));
     })(), 'Reset visibility');
   }
@@ -1110,6 +1138,7 @@ class ViewerApp {
       this.updateModelOffsetsFromObject(model);
       this.renderModelBrowser();
       this.renderFederatedTree();
+      this.persistLocalState();
       this.setStatus(t('status.gizmoUpdated', { name: model.fileName }));
     });
 
@@ -1230,6 +1259,11 @@ class ViewerApp {
     this.renderModelBrowser();
     this.renderFederatedTree();
 
+    // C8 (W5.2): cache the converted `.frag` bytes in IndexedDB so the model can
+    // be restored next session without re-conversion. During a restore the bytes
+    // came FROM the cache, so reuse the known key and skip the re-write.
+    await this.cacheFragForModel(modelRecord, model);
+
     await this.indexModel(modelId, model);
     // F5: resolve the model's display units from its own unit entities;
     // failures fall back to the metric defaults.
@@ -1256,6 +1290,37 @@ class ViewerApp {
 
   private async indexModel(modelId: string, model: FragmentsModelLike): Promise<void> {
     this.modelIndices.set(modelId, await buildModelIndex(modelId, model));
+  }
+
+  /**
+   * C8 (W5.2): caches the model's converted `.frag` bytes in IndexedDB and stamps
+   * the record's fragKey so the session serializer can reference it. During a
+   * restore the key is already known (bytes came from the cache) — reuse it and
+   * skip the write. Failures (private mode / quota / no IDB) degrade gracefully:
+   * the model still works this session, it just won't be restorable.
+   */
+  private async cacheFragForModel(record: FederatedModelRecord, model: FragmentsModelLike): Promise<void> {
+    const restoreKey = this.restoreFragKeys.get(record.modelId);
+    if (restoreKey) {
+      record.fragKey = restoreKey;
+      this.restoreFragKeys.delete(record.modelId);
+      return;
+    }
+    try {
+      const buffer = await model.getBuffer(false);
+      const bytes = new Uint8Array(buffer);
+      const key = hashFragBytes(bytes);
+      record.fragKey = key;
+      await this.fragCache.put({
+        key,
+        fileName: record.fileName,
+        sizeBytes: bytes.byteLength,
+        storedAt: Date.now(),
+        bytes,
+      });
+    } catch (error) {
+      console.debug(`Frag cache write failed for ${record.modelId}; model not restorable`, error);
+    }
   }
 
   private renderClassFilters(): void {
@@ -1650,6 +1715,7 @@ class ViewerApp {
     this.fireAndForget(this.updateVisibilityCount(), 'Update visibility');
     this.renderModelBrowser();
     this.renderFederatedTree();
+    this.persistLocalState();
     this.setStatus(model.visible ? t('status.modelShown', { name: model.fileName }) : t('status.modelHidden', { name: model.fileName }));
   }
 
@@ -1660,6 +1726,7 @@ class ViewerApp {
     this.applyXRay();
     if (this.edgesEnabled) this.applyEdges();
     this.fireAndForget(this.fragments.core.update(true), 'Adjust opacity');
+    this.persistLocalState();
   }
 
   private toggleModelGizmo(modelId: string): void {
@@ -1745,6 +1812,7 @@ class ViewerApp {
     }
 
     this.applyModelTransform(model);
+    this.persistLocalState();
     this.setStatus(t('status.transformUpdated', { name: model.fileName }));
   }
 
@@ -1776,6 +1844,7 @@ class ViewerApp {
     this.applyModelTransform(model);
     this.renderModelBrowser();
     this.renderFederatedTree();
+    this.persistLocalState();
     this.setStatus(t('status.transformReset', { name: model.fileName }));
   }
 
@@ -3315,37 +3384,14 @@ class ViewerApp {
     }
   }
 
+  /**
+   * Projects the current viewer state into the persisted v2 schema via the pure
+   * serializer in core/persistence.ts (the W3.5-deferred persistence-serializer
+   * extraction, folded into W5.2). Gathers the C8 full-session fields (loaded
+   * models + per-model modifications, camera, section, selection) here.
+   */
   private getPersistedState(): PersistedViewerState {
-    const issues = this.issues.map((issue) => ({
-      id: issue.id,
-      title: issue.title,
-      description: issue.description,
-      priority: issue.priority,
-      status: issue.status,
-      assignee: issue.assignee,
-      createdAt: issue.createdAt,
-      updatedAt: issue.updatedAt,
-      modelId: issue.modelId,
-      localIds: [...issue.localIds],
-      elementsByModel: issue.elementsByModel
-        ? Object.fromEntries(Object.entries(issue.elementsByModel).map(([modelId, ids]) => [modelId, [...ids]]))
-        : undefined,
-      point: issue.point ? { ...issue.point } : null,
-      comments: issue.comments.map((comment) => ({ ...comment })),
-    }));
-
-    // F2 size guard: only downscaled thumbnails are persisted — any snapshot
-    // above the cap (e.g. a full-res capture from an imported legacy state)
-    // is dropped from the localStorage payload.
-    const viewpoints = this.viewpoints.map((viewpoint) => ({
-      ...viewpoint,
-      snapshot: viewpoint.snapshot && viewpoint.snapshot.length <= MAX_PERSISTED_SNAPSHOT_CHARS
-        ? viewpoint.snapshot
-        : undefined,
-    }));
-
-    return {
-      version: 1,
+    return buildPersistedState({
       selectionMode: this.selectionMode,
       navigationMode: this.navigationMode,
       visualStyle: this.visualStyle,
@@ -3356,12 +3402,74 @@ class ViewerApp {
       backgroundByTheme: { ...this.backgroundByTheme },
       theme: this.themeMode,
       language: getLanguage(),
-      viewpoints,
-      issues,
+      viewpoints: this.viewpoints,
+      issues: this.issues,
+      models: this.collectPersistedModels(),
+      camera: this.currentPersistedCamera(),
+      sectionPlanes: this.currentSectionPlanes(),
+      selection: this.currentSelectionRecord(),
+      activeTab: this.activeTab,
+      maxSnapshotChars: MAX_PERSISTED_SNAPSHOT_CHARS,
+    });
+  }
+
+  /** C8: the loaded models + per-model modifications (only cacheable ones). */
+  private collectPersistedModels(): PersistedModelRecord[] {
+    const records: PersistedModelRecord[] = [];
+    for (const record of this.federatedModels.values()) {
+      // A model with no cached fragKey can't be restored — skip it.
+      if (!record.fragKey) continue;
+      records.push({
+        modelId: record.modelId,
+        fileName: record.fileName,
+        sizeBytes: record.sizeBytes,
+        fragKey: record.fragKey,
+        offsetPosition: { ...record.offsetPosition },
+        offsetRotation: { ...record.offsetRotation },
+        opacity: record.opacity,
+        visible: record.visible,
+        hiddenIds: this.hiddenIdsByModel.get(record.modelId) ?? [],
+      });
+    }
+    return records;
+  }
+
+  /** C8: current camera pose (skipped before the engine exists). */
+  private currentPersistedCamera(): PersistedCamera | undefined {
+    if (!this.world) return undefined;
+    const position = this.world.camera.three.position;
+    const target = new THREE.Vector3();
+    this.world.camera.controls.getTarget(target);
+    return {
+      position: { x: position.x, y: position.y, z: position.z },
+      target: { x: target.x, y: target.y, z: target.z },
+      projection: this.world.camera.projection.current,
     };
   }
 
+  /** C8: active section planes (normal + coplanar origin). */
+  private currentSectionPlanes(): Array<{ normal: Vector3Record; origin: Vector3Record }> {
+    if (!this.clipper) return [];
+    return [...this.clipper.list.values()].map((plane) => ({
+      normal: { x: plane.normal.x, y: plane.normal.y, z: plane.normal.z },
+      origin: { x: plane.origin.x, y: plane.origin.y, z: plane.origin.z },
+    }));
+  }
+
+  /** C8: the current selection as a plain per-model id record. */
+  private currentSelectionRecord(): Record<string, number[]> {
+    const selection: Record<string, number[]> = {};
+    for (const [modelId, ids] of Object.entries(this.selectedItems)) {
+      const list = [...ids];
+      if (list.length > 0) selection[modelId] = list;
+    }
+    return selection;
+  }
+
   private persistLocalState(): void {
+    // C8: don't churn localStorage while a restore is re-applying state — the
+    // final state is persisted once when the restore completes.
+    if (this.restoringSession) return;
     const payload = this.getPersistedState();
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
@@ -3392,6 +3500,37 @@ class ViewerApp {
       this.showToast(t('status.restoreFailed', { error: serializeError(error) }), 'error');
       this.setStatus(t('status.restoreFailed', { error: serializeError(error) }));
     }
+  }
+
+  /**
+   * C8 (W5.2): explicit "Save session" — persists the full session (state is
+   * already written on every change; this is the obvious, user-facing affordance)
+   * and confirms with a toast. Model `.frag` bytes are already cached in IDB as
+   * they load, so this is a fast metadata write.
+   */
+  private saveSession(): void {
+    try {
+      this.persistLocalState();
+      const count = this.collectPersistedModels().length;
+      this.showToast(t('status.sessionSaved', { count }), 'success');
+      this.setStatus(t('status.sessionSaved', { count }));
+    } catch (error) {
+      this.showToast(t('status.sessionSaveFailed', { error: serializeError(error) }), 'error');
+    }
+  }
+
+  /**
+   * C8 (W5.2): explicit "Restore session" — re-applies the saved session from
+   * localStorage (models reload from the IDB `.frag` cache, no re-conversion).
+   * Same path as the boot auto-restore.
+   */
+  private async restoreSavedSession(): Promise<void> {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      this.showToast(t('status.noSessionToRestore'), 'info');
+      return;
+    }
+    await this.restoreLocalState();
   }
 
   /**
@@ -3442,6 +3581,155 @@ class ViewerApp {
     this.updateIssuesList();
     this.updateIssueComments();
     this.refreshIssueMarkers();
+
+    if (state.activeTab) this.activateTab(state.activeTab);
+
+    // C8 (W5.2): restore the full session — reload the cached models (no
+    // re-conversion), re-apply per-model modifications, then camera/section/
+    // selection. Only when the engine is ready and models were persisted.
+    if (this.fragments && state.models.length > 0) {
+      await this.restoreSession(state);
+    }
+  }
+
+  /**
+   * C8 (W5.2): reloads each persisted model from the IndexedDB `.frag` cache via
+   * the fragments loader (NO re-conversion), then re-applies every stored
+   * per-model modification and the view state (camera, section, selection).
+   * Models whose cached bytes are gone are skipped with a toast.
+   */
+  private async restoreSession(state: PersistedViewerState): Promise<void> {
+    this.restoringSession = true;
+    this.suppressAutoFit = true;
+    let restored = 0;
+    let missing = 0;
+    try {
+      for (const persisted of state.models) {
+        // Already loaded (a ?m= boot load, or a manual re-restore): don't reload
+        // the fragments, just re-apply the persisted per-model modifications.
+        if (this.federatedModels.has(persisted.modelId)) {
+          this.applyPersistedModelModifications(persisted);
+          restored += 1;
+          continue;
+        }
+        const entry = await this.fragCache.get(persisted.fragKey).catch(() => null);
+        if (!entry) {
+          missing += 1;
+          continue;
+        }
+        // Reload from cached fragments bytes — the loader re-adds the model and
+        // fires onModelLoaded → registerModel → onModelAdded (which reuses the
+        // known fragKey via restoreFragKeys, so no re-cache).
+        this.restoreFragKeys.set(persisted.modelId, persisted.fragKey);
+        this.modelRegistry.beginLoad(persisted.modelId, {
+          fileName: persisted.fileName,
+          sizeBytes: persisted.sizeBytes,
+        });
+        try {
+          const loaded = (await this.fragments.core.load(new Uint8Array(entry.bytes), {
+            modelId: persisted.modelId,
+          })) as unknown as FragmentsModelLike;
+          // Register explicitly (mirrors loadIfcFile) rather than racing the
+          // onModelLoaded event, so onModelAdded has completed before we modify.
+          await this.registerModel(persisted.modelId, loaded);
+          this.applyPersistedModelModifications(persisted);
+          restored += 1;
+        } catch (error) {
+          this.restoreFragKeys.delete(persisted.modelId);
+          this.modelRegistry.failLoad(persisted.modelId);
+          console.error(`Failed to restore model ${persisted.modelId}`, error);
+          missing += 1;
+        }
+      }
+
+      await this.applyRestoredViewState(state);
+    } finally {
+      this.restoringSession = false;
+      this.suppressAutoFit = false;
+    }
+
+    this.dom.emptyState.hidden = this.federatedModels.size > 0;
+    if (restored > 0) {
+      this.setStatus(t('status.sessionRestored', { count: restored }));
+    }
+    if (missing > 0) {
+      this.showToast(t('status.sessionModelsMissing', { count: missing }), 'warning');
+    }
+  }
+
+  /** C8: re-applies one persisted model's transform / opacity / visibility / hide. */
+  private applyPersistedModelModifications(persisted: PersistedModelRecord): void {
+    const record = this.federatedModels.get(persisted.modelId);
+    if (!record) return;
+    record.offsetPosition = { ...persisted.offsetPosition };
+    record.offsetRotation = { ...persisted.offsetRotation };
+    record.opacity = Math.min(1, Math.max(0, persisted.opacity));
+    record.visible = persisted.visible;
+    record.object.visible = persisted.visible;
+    this.applyModelTransform(record);
+    if (persisted.hiddenIds.length > 0) {
+      this.hiddenIdsByModel.set(persisted.modelId, [...persisted.hiddenIds]);
+      this.fireAndForget(
+        this.hider.set(false, { [persisted.modelId]: new Set(persisted.hiddenIds) }),
+        'Restore hidden ids',
+      );
+    }
+  }
+
+  /** C8: re-applies camera pose, section planes and selection after models load. */
+  private async applyRestoredViewState(state: PersistedViewerState): Promise<void> {
+    // Section planes.
+    if (state.sectionPlanes.length > 0) {
+      this.clipper.enabled = true;
+      for (const plane of state.sectionPlanes) {
+        this.createClipPlane(
+          new THREE.Vector3(plane.normal.x, plane.normal.y, plane.normal.z),
+          new THREE.Vector3(plane.origin.x, plane.origin.y, plane.origin.z),
+        );
+      }
+    }
+
+    // Selection.
+    if (Object.keys(state.selection).length > 0) {
+      clearMap(this.selectedItems);
+      for (const [modelId, ids] of Object.entries(state.selection)) {
+        if (this.federatedModels.has(modelId) && ids.length > 0) {
+          this.selectedItems[modelId] = new Set(ids);
+        }
+      }
+      await this.refreshSelectionVisuals();
+      this.updateCounters();
+    }
+
+    // Opacity/edges reflect the restored per-model state.
+    this.applyXRay();
+    this.applyEdges();
+    await this.updateVisibilityCount();
+
+    // Camera pose — restored last so it isn't overwritten by a fit.
+    if (state.camera && this.world) {
+      if (this.world.camera.projection.current !== state.camera.projection) {
+        await this.world.camera.projection.set(state.camera.projection);
+      }
+      await this.world.camera.controls.setLookAt(
+        state.camera.position.x,
+        state.camera.position.y,
+        state.camera.position.z,
+        state.camera.target.x,
+        state.camera.target.y,
+        state.camera.target.z,
+        false,
+      );
+    } else if (this.federatedModels.size > 0) {
+      this.fitToModel();
+    }
+
+    this.renderModelBrowser();
+    this.renderFederatedTree();
+    this.renderClassFilters();
+    this.renderLevelFilters();
+    this.updateElementCounter();
+    await this.fragments.core.update(true);
   }
 
   /** U7: real tab activation — aria-selected + roving tabindex + panel title. */
@@ -3484,6 +3772,22 @@ class ViewerApp {
       visibleCount += ids.length;
     }
     this.dom.visibleCount.textContent = t('label.visible', { count: visibleCount });
+    // C8 (W5.2): refresh the per-model hidden-id snapshot so the (synchronous)
+    // session serializer persists the current hide/isolate state.
+    await this.refreshHiddenIdsSnapshot();
+  }
+
+  /** C8: caches hidden element ids per model from the hider (for persistence). */
+  private async refreshHiddenIdsSnapshot(): Promise<void> {
+    try {
+      const hiddenMap = await this.hider.getVisibilityMap(false);
+      this.hiddenIdsByModel.clear();
+      for (const [modelId, ids] of Object.entries(hiddenMap)) {
+        if (ids.length > 0) this.hiddenIdsByModel.set(modelId, [...ids]);
+      }
+    } catch (error) {
+      console.debug('Hidden-id snapshot refresh failed', error);
+    }
   }
 
   private updateCounters(): void {
@@ -3649,6 +3953,7 @@ class ViewerApp {
         for (const modelId of this.federatedModels.keys()) return modelId;
         return null;
       },
+      allModelIds: (): string[] => [...this.federatedModels.keys()],
       findDisjointClassLevel: () => {
         const index = this.modelIndices.values().next().value;
         if (!index) return null;
@@ -3743,6 +4048,39 @@ class ViewerApp {
         const buffer = await exportModelsToGlb(await this.collectExportModels());
         return { byteLength: buffer.byteLength, valid: isValidGlb(buffer) };
       },
+      // ---- C8 (W5.2) ----
+      modelModifications: (modelId: string) => {
+        const record = this.federatedModels.get(modelId);
+        if (!record) return null;
+        return {
+          offsetPosition: { ...record.offsetPosition },
+          offsetRotation: { ...record.offsetRotation },
+          opacity: record.opacity,
+          visible: record.visible,
+          fragKey: record.fragKey ?? null,
+        };
+      },
+      persistedModelCount: (): number => {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (!raw) return 0;
+          const state = normalizePersistedState(JSON.parse(raw));
+          return state?.models.length ?? 0;
+        } catch {
+          return 0;
+        }
+      },
+      setModelOpacity: (modelId: string, opacity: number): void => {
+        this.applyModelOpacity(modelId, opacity);
+      },
+      setModelOffset: (modelId: string, x: number, y: number, z: number): void => {
+        const record = this.federatedModels.get(modelId);
+        if (!record) return;
+        record.offsetPosition = { x, y, z };
+        this.applyModelTransform(record);
+        this.persistLocalState();
+      },
+      saveSession: (): void => this.saveSession(),
     };
     return Object.freeze(api);
   }

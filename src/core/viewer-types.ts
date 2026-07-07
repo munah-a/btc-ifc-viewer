@@ -62,4 +62,10 @@ export interface FederatedModelRecord {
   baseRotation: TransformVector3;
   offsetPosition: TransformVector3;
   offsetRotation: TransformVector3;
+  /**
+   * C8 (W5.2): content-hash key of this model's cached `.frag` bytes in
+   * IndexedDB. Set after the fragments are available; empty until then (a model
+   * with no fragKey is skipped by session persistence — it can't be restored).
+   */
+  fragKey?: string;
 }

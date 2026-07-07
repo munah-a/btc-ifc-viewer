@@ -1,23 +1,27 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizePersistedState } from '../../src/core/persistence';
+import {
+  buildPersistedState,
+  normalizePersistedState,
+  type PersistedStateInput,
+} from '../../src/core/persistence';
 
-describe('normalizePersistedState (AUDIT A7 — W1.6)', () => {
-  it('rejects values that are not a v1 state', () => {
+describe('normalizePersistedState (AUDIT A7 — W1.6; C8 v2 — W5.2)', () => {
+  it('rejects values that are not a recognizable state', () => {
     expect(normalizePersistedState(null)).toBeNull();
     expect(normalizePersistedState(undefined)).toBeNull();
     expect(normalizePersistedState('viewer')).toBeNull();
     expect(normalizePersistedState([])).toBeNull();
     expect(normalizePersistedState({})).toBeNull();
-    expect(normalizePersistedState({ version: 2 })).toBeNull();
+    expect(normalizePersistedState({ version: 3 })).toBeNull();
+    expect(normalizePersistedState({ version: 0 })).toBeNull();
   });
 
-  it('accepts the minimal `{"version":1}` import crash-free with full defaults', () => {
-    // The old importViewerState crashed on parsed.viewpoints being undefined.
-    const state = normalizePersistedState(JSON.parse('{"version":1}'));
+  it('accepts the minimal `{"version":2}` import crash-free with full defaults', () => {
+    const state = normalizePersistedState(JSON.parse('{"version":2}'));
     expect(state).not.toBeNull();
     expect(state).toMatchObject({
-      version: 1,
+      version: 2,
       selectionMode: 'single',
       navigationMode: 'Orbit',
       visualStyle: 'color-pen-shadows',
@@ -27,7 +31,24 @@ describe('normalizePersistedState (AUDIT A7 — W1.6)', () => {
       theme: 'dark',
       viewpoints: [],
       issues: [],
+      models: [],
+      sectionPlanes: [],
+      selection: {},
     });
+  });
+
+  it('migrates a legacy v1 blob to v2 with empty C8 defaults (W5.2)', () => {
+    // v1 had no models/camera/section/selection — those default to empty and
+    // the version is bumped to 2, so an existing user's saved state still loads.
+    const state = normalizePersistedState({ version: 1, xray: true, theme: 'light' });
+    expect(state).not.toBeNull();
+    expect(state?.version).toBe(2);
+    expect(state?.xray).toBe(true);
+    expect(state?.theme).toBe('light');
+    expect(state?.models).toEqual([]);
+    expect(state?.camera).toBeUndefined();
+    expect(state?.sectionPlanes).toEqual([]);
+    expect(state?.selection).toEqual({});
   });
 
   it('coerces malformed field types to defaults instead of crashing', () => {
@@ -170,5 +191,149 @@ describe('normalizePersistedState (AUDIT A7 — W1.6)', () => {
       backgroundByTheme: { dark: '#1b1f24', light: '#e9ecef' },
       theme: 'light',
     });
+  });
+});
+
+describe('normalizePersistedState — C8 full-session fields (W5.2)', () => {
+  it('normalizes model records; drops records without an identity or fragKey', () => {
+    const state = normalizePersistedState({
+      version: 2,
+      models: [
+        {
+          modelId: 'a.ifc',
+          fileName: 'A.ifc',
+          sizeBytes: 1024,
+          fragKey: 'deadbeef-400',
+          offsetPosition: { x: 1, y: 2, z: 3 },
+          offsetRotation: { x: 0, y: 90, z: 0 },
+          opacity: 0.5,
+          visible: false,
+          hiddenIds: [10, 20, 'x'],
+        },
+        { modelId: 'no-key.ifc' }, // dropped: no fragKey
+        { fragKey: 'orphan' }, // dropped: no modelId
+        'garbage',
+      ],
+    });
+    expect(state?.models).toHaveLength(1);
+    const model = state?.models[0];
+    expect(model?.modelId).toBe('a.ifc');
+    expect(model?.fragKey).toBe('deadbeef-400');
+    expect(model?.offsetPosition).toEqual({ x: 1, y: 2, z: 3 });
+    expect(model?.offsetRotation).toEqual({ x: 0, y: 90, z: 0 });
+    expect(model?.opacity).toBe(0.5);
+    expect(model?.visible).toBe(false);
+    expect(model?.hiddenIds).toEqual([10, 20]); // non-number dropped
+  });
+
+  it('clamps opacity and defaults missing per-model fields', () => {
+    const state = normalizePersistedState({
+      version: 2,
+      models: [{ modelId: 'm', fragKey: 'k', opacity: 5 }],
+    });
+    const model = state?.models[0];
+    expect(model?.opacity).toBe(1); // clamped
+    expect(model?.visible).toBe(true); // default
+    expect(model?.offsetPosition).toEqual({ x: 0, y: 0, z: 0 });
+    expect(model?.hiddenIds).toEqual([]);
+  });
+
+  it('restores a valid camera and drops an incomplete one', () => {
+    const good = normalizePersistedState({
+      version: 2,
+      camera: { position: { x: 1, y: 2, z: 3 }, target: { x: 0, y: 0, z: 0 }, projection: 'Orthographic' },
+    });
+    expect(good?.camera).toEqual({
+      position: { x: 1, y: 2, z: 3 },
+      target: { x: 0, y: 0, z: 0 },
+      projection: 'Orthographic',
+    });
+    const bad = normalizePersistedState({ version: 2, camera: { position: { x: 1, y: 2, z: 3 } } });
+    expect(bad?.camera).toBeUndefined();
+  });
+
+  it('normalizes section planes and selection, dropping malformed entries', () => {
+    const state = normalizePersistedState({
+      version: 2,
+      sectionPlanes: [
+        { normal: { x: 0, y: 1, z: 0 }, origin: { x: 0, y: 5, z: 0 } },
+        { normal: null, origin: { x: 0, y: 0, z: 0 } }, // dropped
+      ],
+      selection: { 'a.ifc': [1, 2, 'x'], 'b.ifc': [], 'c.ifc': 'nope' },
+    });
+    expect(state?.sectionPlanes).toHaveLength(1);
+    expect(state?.selection).toEqual({ 'a.ifc': [1, 2] }); // empty + non-array dropped
+  });
+});
+
+describe('buildPersistedState — pure serializer (W3.5 extraction, W5.2)', () => {
+  const baseInput = (): PersistedStateInput => ({
+    selectionMode: 'multi',
+    navigationMode: 'Plan',
+    visualStyle: 'color-pen',
+    xray: true,
+    edges: false,
+    gridVisible: true,
+    backgroundColor: '#0b1220',
+    backgroundByTheme: { dark: '#0b1220', light: '#c6d5e8' },
+    theme: 'dark',
+    language: 'de',
+    viewpoints: [],
+    issues: [],
+    models: [
+      {
+        modelId: 'a.ifc',
+        fileName: 'A.ifc',
+        sizeBytes: 2048,
+        fragKey: 'k1-800',
+        offsetPosition: { x: 5, y: 0, z: 0 },
+        offsetRotation: { x: 0, y: 0, z: 0 },
+        opacity: 0.7,
+        visible: true,
+        hiddenIds: [3, 4],
+      },
+    ],
+    camera: { position: { x: 10, y: 10, z: 10 }, target: { x: 0, y: 0, z: 0 }, projection: 'Perspective' },
+    sectionPlanes: [{ normal: { x: 1, y: 0, z: 0 }, origin: { x: 2, y: 0, z: 0 } }],
+    selection: { 'a.ifc': [7, 8] },
+    activeTab: 'models',
+    maxSnapshotChars: 150_000,
+  });
+
+  it('projects the input into a valid v2 state that survives normalize()', () => {
+    const built = buildPersistedState(baseInput());
+    expect(built.version).toBe(2);
+    // A build → serialize → parse → normalize round-trip is lossless in fields.
+    const roundTripped = normalizePersistedState(JSON.parse(JSON.stringify(built)));
+    expect(roundTripped).toEqual(built);
+  });
+
+  it('deep-copies models/selection so the live objects are not aliased', () => {
+    const input = baseInput();
+    const built = buildPersistedState(input);
+    input.models[0].offsetPosition.x = 999;
+    input.selection['a.ifc'].push(99);
+    expect(built.models[0].offsetPosition.x).toBe(5);
+    expect(built.selection['a.ifc']).toEqual([7, 8]);
+  });
+
+  it('drops viewpoint snapshots above the size cap (F2 guard)', () => {
+    const input = baseInput();
+    const big = 'data:image/jpeg;base64,' + 'A'.repeat(200_000);
+    input.viewpoints = [
+      {
+        id: 'v1', name: 'big', createdAt: '2026-07-07T00:00:00.000Z',
+        camera: { position: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, projection: 'Perspective', mode: 'Orbit' },
+        clippingPlanes: [], hiddenItems: {}, xray: false, edges: false, snapshot: big,
+      },
+      {
+        id: 'v2', name: 'small', createdAt: '2026-07-07T00:00:00.000Z',
+        camera: { position: { x: 0, y: 0, z: 0 }, target: { x: 0, y: 0, z: 0 }, projection: 'Perspective', mode: 'Orbit' },
+        clippingPlanes: [], hiddenItems: {}, xray: false, edges: false, snapshot: 'data:image/jpeg;base64,AAAA',
+      },
+    ];
+    const built = buildPersistedState(input);
+    expect(built.viewpoints[0].snapshot).toBeUndefined();
+    expect(built.viewpoints[1].snapshot).toBe('data:image/jpeg;base64,AAAA');
   });
 });
