@@ -75,10 +75,35 @@ export class IfcConversionClient {
     }
   }
 
-  /** A worker-level failure rejects every in-flight job (rare; e.g. worker crash). */
+  /**
+   * A worker-level failure rejects every in-flight job (rare; e.g. worker crash).
+   *
+   * W1 (W5-fixups): the worker's `self.onmessage` is fully try/caught and reports
+   * handler errors as `{type:'error'}` messages, so an `onerror` almost always
+   * means the worker is DEAD. Reusing it via ensureWorker() would hang every
+   * later convert(). So after rejecting pending jobs, terminate + null the worker
+   * so the next convert() spawns a fresh one.
+   */
   private onWorkerError(message: string): void {
     for (const job of this.pending.values()) job.reject(new Error(message));
     this.pending.clear();
+    this.worker?.terminate();
+    this.worker = null;
+  }
+
+  /**
+   * W2 (W5-fixups): a real cancel path. On a load timeout the worker keeps
+   * parsing (doubled web-ifc memory) and stays busy so a retry queues behind it,
+   * and its stale progress callbacks keep mutating the loading overlay. Cancelling
+   * terminates + nulls the worker (freeing the abandoned parse) and rejects/removes
+   * every pending job so no stale progress or completion fires; the next convert()
+   * spawns a fresh worker.
+   */
+  cancel(reason = 'IFC conversion cancelled'): void {
+    for (const job of this.pending.values()) job.reject(new Error(reason));
+    this.pending.clear();
+    this.worker?.terminate();
+    this.worker = null;
   }
 
   /**
@@ -107,8 +132,6 @@ export class IfcConversionClient {
   }
 
   terminate(): void {
-    this.worker?.terminate();
-    this.worker = null;
-    this.onWorkerError('IFC conversion client terminated');
+    this.cancel('IFC conversion client terminated');
   }
 }

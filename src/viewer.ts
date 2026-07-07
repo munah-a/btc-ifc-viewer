@@ -2344,13 +2344,18 @@ class ViewerApp {
         loadedModel = await Promise.race([loadPromise, timeoutPromise]);
       } catch (error) {
         if (timedOut) {
-          // A10: the worker keeps converting after the race is lost — record
-          // the stale id and dispose the model if the abandoned load lands.
+          // A10 + W2 (W5-fixups): the worker keeps converting after the race is
+          // lost. Cancel it — terminate + null the worker to free the abandoned
+          // web-ifc parse and reject the abandoned pending job, so a retry spawns
+          // a fresh worker instead of queueing behind (or reusing) a busy one, and
+          // stale progress callbacks stop mutating the loading overlay.
           this.modelRegistry.markStale(modelId);
+          this.ifcConversionClient.cancel('Model loading timed out');
           loadPromise
             .then(() => this.disposeStaleModel(modelId))
             .catch(() => {
-              // The abandoned load itself failed — nothing arrived to dispose.
+              // The abandoned load was cancelled/failed — nothing arrived to
+              // dispose, so consume the stale flag (keeps disposeStaleModel sound).
               this.modelRegistry.consumeStale(modelId);
             });
         }
