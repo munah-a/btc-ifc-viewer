@@ -25,6 +25,7 @@ import {
   IndexedDbFragCache,
   type FragCacheAdapter,
 } from './core/frag-cache';
+import { IfcConversionClient } from './core/ifc-conversion-client';
 import { DEFAULT_MODEL_UNITS, resolveModelUnits, type ModelUnits } from './core/units';
 import {
   clearMap,
@@ -149,7 +150,9 @@ class ViewerApp {
 
   private components!: OBC.Components;
   private world!: OBC.SimpleWorld<OBC.SimpleScene, OBC.OrthoPerspectiveCamera, OBCF.PostproductionRenderer>;
-  private ifcLoader!: OBC.IfcLoader;
+  // NOTE: the IFC parse no longer runs through OBC.IfcLoader in the full app —
+  // P4 (W5.4) moved conversion to ifcConversionClient (a dedicated worker). The
+  // engine still bootstraps IfcLoader (shared with the embed's ?m=.ifc path).
   private fragments!: OBC.FragmentsManager;
   private clipper!: OBC.Clipper;
   private hider!: OBC.Hider;
@@ -212,6 +215,10 @@ class ViewerApp {
   // C8 (W5.2): IndexedDB cache of converted `.frag` bytes for full-session
   // restore. Injectable so unit tests can swap in an in-memory adapter.
   private fragCache: FragCacheAdapter = new IndexedDbFragCache();
+  // P4 (W5.4): IFC→fragments conversion runs in a dedicated worker so the UI
+  // stays responsive on big models (the @thatopen fragments worker only streams;
+  // it does NOT parse IFC).
+  private readonly ifcConversionClient = new IfcConversionClient();
   // Guards persistLocalState during a restore so re-applying state doesn't churn
   // localStorage, and suppresses the auto-fit/status spam while models stream in.
   private restoringSession = false;
@@ -345,6 +352,8 @@ class ViewerApp {
     this.fpsMonitor = null;
     this.onDemandRender?.stop();
     this.onDemandRender = null;
+    // P4 (W5.4): free the IFC-conversion worker.
+    this.ifcConversionClient.terminate();
 
     // 3. Dispose THREE.js resources
     this.edgeMaterial.dispose();
@@ -1109,7 +1118,6 @@ class ViewerApp {
     const engine: EngineHandles = await this.engineModule.bootstrapEngine(engineOptions);
     this.components = engine.components;
     this.world = engine.world;
-    this.ifcLoader = engine.ifcLoader;
     this.fragments = engine.fragments;
     this.clipper = engine.clipper;
     this.hider = engine.hider;
@@ -2193,21 +2201,40 @@ class ViewerApp {
         this.dom.loadingPct.textContent = '25%';
       }
 
-      const loadPromise = this.ifcLoader.load(data, true, modelId, {
-        instanceCallback: (importer: any) => {
-          if (typeof importer?.addAllAttributes === 'function') importer.addAllAttributes();
-          if (typeof importer?.addAllRelations === 'function') importer.addAllRelations();
-        },
-        processData: {
-          progressCallback: (progress: number) => {
+      // P4 (W5.4): convert IFC→fragments in the dedicated worker (off the main
+      // thread), then stream-load the resulting `.frag` via fragments.core.load.
+      // Behaviour matches the previous ifcLoader.load: addAllAttributes/Relations
+      // for a full property/spatial index, same 25→95% progress mapping.
+      const wasmPath = new URL(import.meta.env.BASE_URL, window.location.origin).href;
+      const loadPromise = (async (): Promise<FragmentsModelLike> => {
+        const fragBytes = await this.ifcConversionClient.convert(data, {
+          wasmPath,
+          addAllAttributes: true,
+          addAllRelations: true,
+          onProgress: (progress: number) => {
             if (requestId !== this.loadRequestId) return;
             const percentage = Math.round(25 + progress * 70);
             this.dom.loadingProgress.style.width = `${percentage}%`;
             this.dom.loadingPct.textContent = `${percentage}%`;
             this.dom.loadingText.textContent = t('load.buildingIndex');
           },
-        },
-      });
+        });
+        // C8: the converted bytes are already in hand — cache them now so a fresh
+        // load is restorable without re-hashing later (onModelAdded reuses the key).
+        const fragKey = hashFragBytes(fragBytes);
+        this.restoreFragKeys.set(modelId, fragKey);
+        this.fireAndForget(
+          this.fragCache.put({
+            key: fragKey,
+            fileName: file.name,
+            sizeBytes: fragBytes.byteLength,
+            storedAt: Date.now(),
+            bytes: fragBytes,
+          }),
+          'Cache fragments',
+        );
+        return this.fragments.core.load(fragBytes, { modelId });
+      })();
 
       let timedOut = false;
       const timeoutPromise = new Promise<never>((_resolve, reject) => {
@@ -2222,7 +2249,7 @@ class ViewerApp {
         loadedModel = await Promise.race([loadPromise, timeoutPromise]);
       } catch (error) {
         if (timedOut) {
-          // A10: the engine keeps converting after the race is lost — record
+          // A10: the worker keeps converting after the race is lost — record
           // the stale id and dispose the model if the abandoned load lands.
           this.modelRegistry.markStale(modelId);
           loadPromise
@@ -3691,9 +3718,9 @@ class ViewerApp {
           sizeBytes: persisted.sizeBytes,
         });
         try {
-          const loaded = (await this.fragments.core.load(new Uint8Array(entry.bytes), {
+          const loaded = await this.fragments.core.load(new Uint8Array(entry.bytes), {
             modelId: persisted.modelId,
-          })) as unknown as FragmentsModelLike;
+          });
           // Register explicitly (mirrors loadIfcFile) rather than racing the
           // onModelLoaded event, so onModelAdded has completed before we modify.
           await this.registerModel(persisted.modelId, loaded);
