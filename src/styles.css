@@ -147,7 +147,11 @@ button {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 0;
+  /* Never shrink the brand cluster below its content: with the eyebrow set to
+     nowrap, flex-shrinking it (min-width:0) let "IFC viewer" overflow right into
+     the model name at tablet width (768px). Hold its width; the model name
+     (min-width:0 + ellipsis) and the spacer absorb tight layouts instead. */
+  flex: 0 0 auto;
 }
 
 .brand-logo {
@@ -194,6 +198,7 @@ button {
 .topbar-model-empty {
   color: var(--on-surface-variant);
   font-size: 13px;
+  white-space: nowrap;
 }
 
 .model-chip {

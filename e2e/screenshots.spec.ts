@@ -59,7 +59,7 @@ const setTheme = async (page: Page, theme: 'dark' | 'light'): Promise<void> => {
 
 test('capture rebrand screenshots', async ({ browser }) => {
   test.skip(!process.env.CAPTURE, 'Capture scaffold — run with CAPTURE=1 only.');
-  test.setTimeout(10 * 60 * 1000);
+  test.setTimeout(18 * 60 * 1000);
 
   // ---- Desktop 1440x900 ----
   const desktop = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -82,6 +82,45 @@ test('capture rebrand screenshots', async ({ browser }) => {
   await shot(dp, 'desktop-04-loaded-properties-dark');
   await setTheme(dp, 'light');
   await shot(dp, 'desktop-05-loaded-light');
+
+  // ---- Criterion-5 feature shots (end verification) ----
+  await setTheme(dp, 'dark');
+  // Section cut (A17: fit/section works right after load). Verify a plane exists.
+  await dp.locator('#btnSectionX').click().catch(() => undefined);
+  await dp.evaluate(() => new Promise((r) => setTimeout(r, 700)));
+  const planes = await dp.evaluate(() => {
+    const a = (window as unknown as { __viewerTestApi?: { sectionPlaneCount(): number } }).__viewerTestApi;
+    return a?.sectionPlaneCount() ?? 0;
+  });
+  expect(planes).toBeGreaterThanOrEqual(1);
+  await shot(dp, 'desktop-06-section-dark');
+  await dp.locator('#btnSectionX').click().catch(() => undefined); // clear the section
+  await dp.evaluate(() => new Promise((r) => setTimeout(r, 400)));
+
+  // German UI (C7 i18n): toggle to DE, capture, then back to EN.
+  await dp.locator('#btnLangToggle').click().catch(() => undefined);
+  await dp.waitForFunction(
+    () => (document.querySelector('#langCode')?.textContent || '').trim().toUpperCase() === 'DE',
+    undefined,
+    { timeout: 5000 },
+  ).catch(() => undefined);
+  await dp.evaluate(() => new Promise((r) => setTimeout(r, 400)));
+  await shot(dp, 'desktop-07-german-dark');
+  await dp.locator('#btnLangToggle').click().catch(() => undefined); // back to EN
+  await dp.evaluate(() => new Promise((r) => setTimeout(r, 400)));
+
+  // Multi-model federation (load a 2nd model into the same session).
+  await dp.setInputFiles('#fileInput', path.join(process.cwd(), 'e2e', 'fixtures', 'Ifc4_Revit_ARC.ifc'));
+  await dp.waitForFunction(
+    () => {
+      const a = (window as unknown as { __viewerTestApi?: { modelCount(): number } }).__viewerTestApi;
+      return !!a && a.modelCount() === 2;
+    },
+    undefined,
+    { timeout: 300_000 },
+  ).catch(() => undefined);
+  await dp.evaluate(() => new Promise((r) => setTimeout(r, 2500)));
+  await shot(dp, 'desktop-08-federation-two-models-dark');
   await desktop.close();
 
   // ---- Tablet 768x1024 ----
@@ -106,5 +145,5 @@ test('capture rebrand screenshots', async ({ browser }) => {
   await shot(pp, 'phone-03-sheet-dark');
   await phone.close();
 
-  expect(fs.readdirSync(outDir).filter((f) => f.endsWith('.png')).length).toBeGreaterThanOrEqual(10);
+  expect(fs.readdirSync(outDir).filter((f) => f.endsWith('.png')).length).toBeGreaterThanOrEqual(13);
 });
