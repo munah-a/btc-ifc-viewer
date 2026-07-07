@@ -13,6 +13,13 @@ import type { BrowserTreeNode, ModelIndex } from './viewer-types';
 
 // Chunk size for the getItemsData round-trips (P7: batched, not per-item).
 const CHUNK_SIZE = 360;
+// M1 (W5-fixups): cap how many chunk getItemsData round-trips are in flight at
+// once. An unbounded Promise.all over hundreds of chunks materializes every
+// chunk's ItemData in memory simultaneously — a peak-memory spike on large
+// models (tablet/field persona). Fold each batch into the maps before starting
+// the next so peak resident ItemData stays bounded, while keeping deterministic
+// chunk-order reassembly.
+const INDEX_CHUNK_CONCURRENCY = 12;
 
 function collectSpatialTreeIds(node: SpatialTreeItem, target: Set<number>): void {
   if (node.localId !== null) target.add(node.localId);
@@ -72,38 +79,44 @@ export async function buildModelIndex(modelId: string, model: FragmentsModelLike
 
   // Read element names + level assignment from ContainedInStructure relation.
   // P7 (W5.3): the chunk round-trips to the fragments worker are independent, so
-  // fire them in PARALLEL (Promise.all) instead of awaiting one at a time —
-  // hundreds of sequential round-trips were the dominant indexing cost. The
-  // per-chunk results are then applied in chunk order so the maps are identical
-  // to the sequential build (deterministic).
+  // fire them in PARALLEL instead of awaiting one at a time — hundreds of
+  // sequential round-trips were the dominant indexing cost.
+  // M1 (W5-fixups): bound the parallelism to INDEX_CHUNK_CONCURRENCY-sized
+  // batches (an unbounded Promise.all materialized every chunk's ItemData at
+  // once). Each batch's results are folded into the maps IN CHUNK ORDER before
+  // the next batch starts, so the maps are identical to the sequential build
+  // (deterministic) while peak resident ItemData stays capped.
   const chunks: number[][] = [];
   for (let start = 0; start < itemIds.length; start += CHUNK_SIZE) {
     chunks.push(itemIds.slice(start, start + CHUNK_SIZE));
   }
-  const chunkResults = await Promise.all(
-    chunks.map((chunk) =>
-      model.getItemsData(chunk, {
-        attributesDefault: true,
-        relations: {
-          ContainedInStructure: { attributes: true, relations: true },
-        },
-        relationsDefault: { attributes: false, relations: false },
-      }),
-    ),
-  );
-  for (let c = 0; c < chunks.length; c += 1) {
-    const chunk = chunks[c];
-    const itemsData = chunkResults[c];
-    for (let i = 0; i < chunk.length; i += 1) {
-      const localId = chunk[i];
-      const data = (itemsData[i] || {}) as Record<string, unknown>;
-      const category = itemClassById.get(localId) ?? 'Element';
-      itemNames.set(localId, getModelTreeItemLabel(data, localId, category));
-      const levelName = extractStoreyNameFromItemData(data);
-      if (!levelName) continue;
-      itemToLevel.set(localId, levelName);
-      if (!levels.has(levelName)) levels.set(levelName, new Set<number>());
-      levels.get(levelName)?.add(localId);
+  for (let batchStart = 0; batchStart < chunks.length; batchStart += INDEX_CHUNK_CONCURRENCY) {
+    const batch = chunks.slice(batchStart, batchStart + INDEX_CHUNK_CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map((chunk) =>
+        model.getItemsData(chunk, {
+          attributesDefault: true,
+          relations: {
+            ContainedInStructure: { attributes: true, relations: true },
+          },
+          relationsDefault: { attributes: false, relations: false },
+        }),
+      ),
+    );
+    for (let c = 0; c < batch.length; c += 1) {
+      const chunk = batch[c];
+      const itemsData = batchResults[c];
+      for (let i = 0; i < chunk.length; i += 1) {
+        const localId = chunk[i];
+        const data = (itemsData[i] || {}) as Record<string, unknown>;
+        const category = itemClassById.get(localId) ?? 'Element';
+        itemNames.set(localId, getModelTreeItemLabel(data, localId, category));
+        const levelName = extractStoreyNameFromItemData(data);
+        if (!levelName) continue;
+        itemToLevel.set(localId, levelName);
+        if (!levels.has(levelName)) levels.set(levelName, new Set<number>());
+        levels.get(levelName)?.add(localId);
+      }
     }
   }
 

@@ -146,8 +146,10 @@ class EmbedViewer {
 
     try {
       // W5.1 (P1): dynamically import the engine so the embed's initial shell
-      // (poster + chrome) excludes three/@thatopen/web-ifc — they load only when
-      // the user activates the embed.
+      // (poster + chrome) defers @thatopen + web-ifc — they load only when the
+      // user activates the embed. NOTE: `three` (~146KB gz) is statically
+      // imported by this module (see the top-of-file `import * as THREE`), so it
+      // DOES ship in the shell; only @thatopen/web-ifc are deferred here.
       const { bootstrapEngine } = await import('./core/viewer-core');
       const engine = await bootstrapEngine({
         container: this.dom.viewer,

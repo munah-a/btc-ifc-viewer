@@ -37,9 +37,10 @@ export default defineConfig({
                 // cacheable chunks. Each is content-hashed independently, so an app
                 // code change no longer invalidates the ~5.7MB engine download.
                 // `web-ifc` (the ~5.9MB embind glue) is only reached via the IFC
-                // conversion path, which is dynamically imported (see
-                // core/ifc-conversion.ts) so it lands in its own async chunk that
-                // the initial shell does NOT pull.
+                // conversion path — the conversion runs in a dedicated worker
+                // (workers/ifc-conversion.worker.ts, spawned from
+                // core/ifc-conversion-client.ts), which Vite bundles as its own
+                // chunk, so web-ifc lands off the initial shell.
                 manualChunks(id: string) {
                     if (id.includes('node_modules/web-ifc/')) return 'web-ifc';
                     if (id.includes('node_modules/three/')) return 'three';
