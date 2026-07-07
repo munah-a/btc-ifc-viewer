@@ -2,6 +2,8 @@ import { resolve } from 'node:path';
 
 import { defineConfig, type Plugin } from 'vite';
 
+import { pwaPlugin } from './scripts/pwa-plugin.mjs';
+
 // Dev-server-only CSP relax (A1): Vite's HMR runs over ws:// which CSP3
 // 'self' does not cover. The built artifact keeps the strict policy from
 // index.html — this transform never applies to `vite build`.
@@ -17,7 +19,7 @@ const devCspRelax = (): Plugin => ({
 // Pages mirror sets VITE_BASE=/btc-ifc-viewer/ in its workflow.
 export default defineConfig({
     base: process.env.VITE_BASE ?? '/',
-    plugins: [devCspRelax()],
+    plugins: [devCspRelax(), pwaPlugin()],
     root: './src',
     publicDir: '../public',
     build: {

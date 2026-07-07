@@ -187,9 +187,10 @@ export async function bootstrapEngine(options: BootstrapEngineOptions): Promise<
  * (battery — a field/tablet win, C6) while a static frame stays on the canvas
  * (required for e2e/page.screenshot capture).
  *
- * Visual parity: `turnOffOnManualMode` drops the heavy postprocessing DURING
- * navigation for fluidity and restores it `manualModeDelay` ms after the last
- * change — so the settled frame carries full outlines/gloss exactly as before.
+ * Visual parity: postprocessing stays ON for every rendered frame (full
+ * outlines/gloss), so the look is unchanged from AUTO mode — we do NOT use the
+ * library's `turnOffOnManualMode`, whose deferred re-enable reads the throwing
+ * `basePass` getter and can crash if the composer isn't built yet.
  *
  * The renderer keeps rendering while the camera controls animate (their `update`
  * event fires each frame and re-arms `needsUpdate`). Mesh streaming (LOD) and
@@ -208,7 +209,6 @@ export function enableOnDemandRendering(engine: EngineHandles): {
     mode: OBC.RendererMode;
     needsUpdate: boolean;
     turnOffOnManualMode?: boolean;
-    manualModeDelay?: number;
   };
 
   const requestRender = (): void => {
@@ -216,9 +216,11 @@ export function enableOnDemandRendering(engine: EngineHandles): {
   };
 
   renderer.mode = OBC.RendererMode.MANUAL;
-  // Keep full postprocessing on the settled frame; only relax it while moving.
-  renderer.turnOffOnManualMode = true;
-  renderer.manualModeDelay = 200;
+  // Keep postprocessing ON for every frame (visual parity). Do NOT enable
+  // turnOffOnManualMode: its deferred re-enable sets postproduction.enabled,
+  // which reads the throwing basePass getter and crashes if the composer isn't
+  // built yet ("Base pass not initialized").
+  renderer.turnOffOnManualMode = false;
   requestRender();
 
   // Camera animation frames + user navigation → re-arm each tick while moving.

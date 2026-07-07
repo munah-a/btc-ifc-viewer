@@ -24,6 +24,9 @@
     content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' data: blob:; worker-src 'self' blob:" />
   <title>BTC IFC Viewer</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <!-- PWA (W5.5 / C6): installable + offline. The service worker is registered
+       from bundled app code (CSP script-src 'self' blocks inline scripts). -->
+  <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 

@@ -407,18 +407,45 @@ Title Case buttons, `—` for empty values, tabular numerics.)*
 
 ### Wave 5 — Performance & field readiness
 
-- [ ] W5.1 **P1** code split: `manualChunks` (three/thatopen/web-ifc) + dynamic-import IFC-load path;
-  measure & record initial-shell gzip in Status Log.
-- [ ] W5.2 IndexedDB fragments cache keyed by file hash (instant re-open; C1); localStorage →
-  IndexedDB migration for viewpoints/issues (quota headroom for F2 thumbnails).
-- [ ] W5.3 **P6** on-demand rendering in full app (render-on-interaction/change, FPS meter per A15
-  reads real frames); **P3** edge-geometry cache + debounced slider; **P7** parallel indexing,
-  single render; **P9** batched hotspot transforms.
-- [ ] W5.4 **P4** move web-ifc conversion into a dedicated worker (uploader path & drag-drop) —
-  keeps UI live during big conversions; progress events already exist.
-- [ ] W5.5 PWA: manifest + service worker (precache shell incl. wasm/worker; runtime cache for
-  cached models); offline = open previously cached models (C6). Verify with Playwright offline mode.
-- [ ] W5.6 Update plan + Status Log; re-run bundle/perf measurements table.
+- [x] W5.1 **P1** code split: `build.rollupOptions.output.manualChunks` splits three/thatopen/web-ifc
+  into separate cacheable chunks + the engine (`core/viewer-core`) is dynamically imported in
+  initEngine (full app) and activate() (embed). Initial-shell gzip: **main ~205KB** (three 146 + main
+  42 + icons 16 + engine-lite), **embed ~165KB** — both under the ~350KB target. Async engine chunks:
+  thatopen 429KB gz, web-ifc 411KB gz, three 146KB gz.
+  > Deviation: `@thatopen/components` STATICALLY imports `web-ifc` at its module top, so web-ifc can't
+  > be split to a first-file-open import independently — it rides the same async engine chunk (loaded
+  > at initEngine, non-blocking) rather than the initial shell. New `core/engine-lite.ts` holds the
+  > dependency-free `ShaderWarningFilter` so the shell installs it before the engine loads; OBC/OBCF are
+  > now type-only imports in viewer.ts/embed.ts; the PostproductionAspect enum mapping moved to
+  > `applyPostproductionStyle` in viewer-core (keeps the enum value in the async chunk).
+- [x] W5.2 **FULL-SESSION PERSISTENCE (C8 — headline).** `core/frag-cache.ts` IndexedDB cache of
+  converted `.frag` bytes keyed by a stable content hash (`hashFragBytes`); on restore models reload
+  via the fragments loader (NO re-conversion) + re-add to the scene. Per-model modifications
+  (transform offset/rotation, opacity, visibility, hidden ids) + view state (camera, section, selection,
+  active tab, + viewpoints/issues/theme/language/style) persisted & re-applied. `persistence.ts` bumped
+  to **schema v2** with transparent v1→v2 migration; the W3.5-deferred persistence-serializer
+  extraction folded in as the pure `buildPersistedState(input)`. Save/Restore session topbar controls
+  + auto-restore on boot + persist-on-load. `FragCacheAdapter` seam (InMemory[tests]/IndexedDb[prod],
+  no fake-indexeddb dep, C1). **e2e round-trip proven** (2 models + mods → reload → both restored from
+  IDB, fragKeys matched = no re-conversion, mods restored).
+- [x] W5.3 **P6** on-demand rendering (MANUAL-mode PostproductionRenderer + `requestRender()` on every
+  visual change; postprocessing stays on each frame for visual parity — `turnOffOnManualMode` disabled
+  as its deferred re-enable crashed on the throwing `basePass` getter); a static frame stays for
+  capture (capture paths force a render). **P3** `EdgeGeometryCache` (per-source-uuid EdgesGeometry
+  reuse) + debounced section/opacity sliders. **P7** parallel indexing chunks (`Promise.all`), render
+  once. **A15** real-frame FPS via renderer `onAfterUpdate`. Keyboard-router extraction
+  (`input/keyboard-router.ts`) folded in. (**P9** hotspot batching not separately done — the on-demand
+  render + marker requestRender covers the P9 battery/redraw intent.)
+- [x] W5.4 **P4** IFC→fragments conversion moved to a dedicated worker
+  (`src/workers/ifc-conversion.worker.ts` + `core/ifc-conversion-client.ts`). Verified the @thatopen
+  fragments worker only streams/culls (no web-ifc), so the parse ran on the main thread — now off it
+  (uploader + drag-drop both via loadIfcFile). Same timeout/stale-id/progress behaviour preserved.
+- [x] W5.5 PWA: `public/manifest.webmanifest` + a dependency-free service worker
+  (`src/sw-template.js` + build-time `scripts/pwa-plugin.mjs` injecting the precache manifest of the
+  actual hashed assets incl. self-hosted wasm/worker/fonts/icons). Registered from bundled code
+  (`core/pwa.ts`; CSP-safe). Offline = shell boots + previously-cached models open from IndexedDB —
+  **Playwright offline test proves it** (`e2e/pwa.spec.ts`). C1: SW never touches a CDN.
+- [x] W5.6 Plan checkboxes + Status Log + §2 map updated; final chunk sizes / counts recorded.
 
 ## 6. Orchestration model
 

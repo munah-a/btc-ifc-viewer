@@ -1,0 +1,20 @@
+{
+  "name": "BTC IFC Viewer",
+  "short_name": "IFC Viewer",
+  "description": "Zero-install, field-ready IFC/BIM model viewer — open and review models offline on any device.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#14151b",
+  "theme_color": "#14151b",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

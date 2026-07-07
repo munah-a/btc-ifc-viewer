@@ -26,6 +26,7 @@ import {
   type FragCacheAdapter,
 } from './core/frag-cache';
 import { IfcConversionClient } from './core/ifc-conversion-client';
+import { registerServiceWorker } from './core/pwa';
 import { DEFAULT_MODEL_UNITS, resolveModelUnits, type ModelUnits } from './core/units';
 import {
   clearMap,
@@ -254,6 +255,7 @@ class ViewerApp {
   // destroy. requestRender is a no-op until initEngine wires it.
   private requestRender: () => void = () => {};
   private onDemandRender: { requestRender: () => void; stop: () => void } | null = null;
+  private engineHandles: EngineHandles | null = null;
 
   constructor() {
     // C7: resolve the persisted language (default EN) and localize the static
@@ -406,7 +408,18 @@ class ViewerApp {
       this.updateIssueComments();
       this.updateViewpointList();
       this.setStatus(t('status.ready'));
+      // P6 (W5.3): NOW switch to on-demand rendering. Postproduction has been
+      // configured (setVisualStyle, above) and the AUTO loop that started in
+      // components.init() has rendered a few frames, so the composer/basePass is
+      // built — safe to go MANUAL. Wait two rAFs to be sure a frame landed.
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+      this.enableOnDemandRendering();
       this.startFpsMonitor();
+      // W5.5 (C6): register the PWA service worker so the shell + self-hosted
+      // wasm/worker/fonts precache and the app works offline.
+      registerServiceWorker();
       // W4.2: if the app was opened with ?m=<url>, load that hosted model and
       // apply ?vp=. Errors are surfaced via the normal load-error path.
       this.fireAndForget(this.loadFromUrlParams(), 'Load model from URL');
@@ -1116,6 +1129,7 @@ class ViewerApp {
       getPostproductionRenderer: () => this.getPostproductionRenderer(),
     };
     const engine: EngineHandles = await this.engineModule.bootstrapEngine(engineOptions);
+    this.engineHandles = engine;
     this.components = engine.components;
     this.world = engine.world;
     this.fragments = engine.fragments;
@@ -1138,12 +1152,12 @@ class ViewerApp {
       window.__viewerTestApi = this.buildTestApi();
     }
 
-    // P6 (W5.3): switch to on-demand rendering — the MANUAL-mode renderer only
-    // composites when requestRender() re-arms it, so an idle viewport stops
-    // burning the GPU (battery, C6) while a static frame stays on the canvas.
-    this.onDemandRender = this.engineModule.enableOnDemandRendering(engine);
-    this.requestRender = this.onDemandRender.requestRender;
-
+    // P6 (W5.3): on-demand rendering is enabled LATER (end of init) so the
+    // engine renders a few AUTO frames first — the PostproductionRenderer lazily
+    // builds its composer/basePass on those frames, and its `enabled` setter
+    // reads the throwing `basePass` getter, so configuring postproduction before
+    // the first render would throw ("Base pass not initialized"). Until then
+    // requestRender() stays a no-op (AUTO renders every frame anyway).
     this.world.camera.controls.addEventListener('update', () => {
       this.fireAndForget(this.fragments.core.update(), 'Camera update');
       this.requestRender();
@@ -1325,6 +1339,10 @@ class ViewerApp {
     this.renderLevelFilters();
 
     this.refreshIssueMarkers();
+    // C8 (W5.2): persist the session now that the model is registered with its
+    // fragKey — so a plain load (no further edits) is restorable next session /
+    // offline. Skipped during a restore (restoringSession guards persist).
+    this.persistLocalState();
     this.setStatus(t('status.modelLoaded', { name: fileName }));
   }
 
@@ -1540,12 +1558,14 @@ class ViewerApp {
     if (renderer) {
       renderer.setClearColor(threeColor, 1);
     }
-    // Also sync the postproduction basePass clear color
+    // Also sync the postproduction basePass clear color (defensive: the getter
+    // throws until the composer's first render — P6 on-demand, see safeBasePass).
     const postRenderer = this.getPostproductionRenderer();
     const post = postRenderer?.postproduction;
-    if (post?.basePass) {
-      post.basePass.clearColor = threeColor;
-      post.basePass.clearAlpha = 1;
+    const basePass = post ? this.safeBasePass(post) : null;
+    if (basePass) {
+      basePass.clearColor = threeColor;
+      basePass.clearAlpha = 1;
     }
     this.requestRender();
     if (updateStatus) this.setStatus(t('status.backgroundSet', { color: normalized }));
@@ -1636,17 +1656,42 @@ class ViewerApp {
       baseRenderer.autoClear = true;
     }
 
-    // Sync the postproduction basePass clear color with the user's background
-    if (post.basePass) {
-      post.basePass.clearColor = new THREE.Color(this.backgroundColor);
-      post.basePass.clearAlpha = 1;
-      post.basePass.clearDepth = true;
+    // Sync the postproduction basePass clear color with the user's background.
+    // NOTE: `post.basePass` is a getter that THROWS ("Base pass not initialized")
+    // until the composer has run once. Under P6 on-demand (MANUAL) rendering the
+    // first render may not have happened yet at boot, so read it defensively.
+    const basePass = this.safeBasePass(post);
+    if (basePass) {
+      basePass.clearColor = new THREE.Color(this.backgroundColor);
+      basePass.clearAlpha = 1;
+      basePass.clearDepth = true;
     }
 
     // Map directly to ThatOpen PostproductionAspect enum. The enum is a runtime
     // value from @thatopen, so the mapping lives in the dynamically-imported
     // engine module (W5.1) to keep @thatopen out of the initial shell.
     this.engineModule.applyPostproductionStyle(post, style);
+  }
+
+  /**
+   * Safely reads the postproduction basePass. The library getter throws until
+   * the composer is initialized (its first render) — under on-demand rendering
+   * (P6) that may not have happened yet, so we swallow the throw and return null.
+   */
+  private safeBasePass(post: { basePass?: unknown }): {
+    clearColor: THREE.Color;
+    clearAlpha: number;
+    clearDepth: boolean;
+  } | null {
+    try {
+      return (post.basePass as {
+        clearColor: THREE.Color;
+        clearAlpha: number;
+        clearDepth: boolean;
+      }) ?? null;
+    } catch {
+      return null;
+    }
   }
 
   private async setVisualStyle(style: VisualStyle, updateStatus: boolean, persist: boolean, resetToggles = false): Promise<void> {
@@ -4144,6 +4189,18 @@ class ViewerApp {
       saveSession: (): void => this.saveSession(),
     };
     return Object.freeze(api);
+  }
+
+  /**
+   * P6 (W5.3): switch the world's renderer to on-demand (MANUAL) rendering.
+   * Called at the end of init() — after postproduction is configured and the
+   * initial AUTO frames built the composer/basePass — so the `enabled` setter's
+   * basePass read never throws.
+   */
+  private enableOnDemandRendering(): void {
+    if (!this.engineHandles) return;
+    this.onDemandRender = this.engineModule.enableOnDemandRendering(this.engineHandles);
+    this.requestRender = this.onDemandRender.requestRender;
   }
 
   private startFpsMonitor(): void {

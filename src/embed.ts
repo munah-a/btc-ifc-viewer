@@ -24,6 +24,7 @@ import * as THREE from 'three';
 import type { EngineHandles } from './core/viewer-core';
 import { isProbablyIfc } from './core/ifc-format';
 import { hydrateI18n, initLanguage, t } from './core/i18n';
+import { registerServiceWorker } from './core/pwa';
 import {
   decodeUrlState,
   encodeUrlState,
@@ -392,6 +393,7 @@ function bootstrap(): void {
   initLanguage();
   hydrateIcons(document);
   hydrateI18n(document);
+  registerServiceWorker();
 
   const dom: EmbedDom = {
     root: query('btc-embed-root'),
