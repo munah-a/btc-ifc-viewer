@@ -23,6 +23,7 @@ import {
 import {
   hashFragBytes,
   IndexedDbFragCache,
+  shouldEvictFragKey,
   type FragCacheAdapter,
 } from './core/frag-cache';
 import { IfcConversionClient } from './core/ifc-conversion-client';
@@ -1368,30 +1369,54 @@ class ViewerApp {
     return keys;
   }
 
+  /** C2 (W5-fixups): live + persisted fragKeys — the current keep set. */
+  private referencedFragKeys(): Set<string> {
+    const referenced = this.liveFragKeys();
+    for (const key of this.persistedFragKeys()) referenced.add(key);
+    return referenced;
+  }
+
   /**
    * C2 (W5-fixups): eviction after an unload. Deletes the just-removed model's
    * cached frag when nothing else references it, then prunes any IDB entries whose
    * key is referenced by neither a live model nor the persisted session (bounds
    * the unbounded frag cache — targets the tablet/field persona). Never deletes a
    * frag still referenced by a saved session.
+   *
+   * C2-race hardening (W5-fixups review): the referenced set + `keys()` snapshot
+   * can go stale across the awaits — if the user unloads A then immediately loads
+   * a DIFFERENT model B whose `fragCache.put` completes mid-prune, a set snapshotted
+   * at the start would wrongly delete B's fresh frag (B works this session but a
+   * future restore silently re-converts). Two guards: (1) RE-COMPUTE the referenced
+   * set immediately before each delete (from current in-memory + persisted state),
+   * and (2) skip any entry whose `storedAt` is newer than the moment the prune
+   * began (a just-written frag from a concurrent load).
    */
   private async evictUnreferencedFrag(removedFragKey: string | null): Promise<void> {
-    const referenced = this.liveFragKeys();
-    for (const key of this.persistedFragKeys()) referenced.add(key);
+    const pruneStartedAt = Date.now();
 
-    // Fast path: the removed model's own key, if now unreferenced.
-    if (removedFragKey && !referenced.has(removedFragKey)) {
+    // Fast path: the removed model's own key, if now unreferenced. (Recompute the
+    // set here too — a concurrent load may have re-referenced the very same hash.)
+    if (removedFragKey && !this.referencedFragKeys().has(removedFragKey)) {
       await this.fragCache.delete(removedFragKey).catch(() => {});
     }
 
     // Prune any other orphaned entries (dead code before C2 — keys()/delete()).
     try {
       const stored = await this.fragCache.keys();
-      await Promise.all(
-        stored
-          .filter((key) => !referenced.has(key))
-          .map((key) => this.fragCache.delete(key).catch(() => {})),
-      );
+      // Candidates as of the keys() snapshot; each is re-checked just before delete.
+      const candidates = stored.filter((key) => !this.referencedFragKeys().has(key));
+      for (const key of candidates) {
+        // Re-check at delete time via the pure guard: references may have changed
+        // while awaiting keys()/an earlier delete, and a frag written AFTER the
+        // prune began belongs to a load racing this eviction (its record's fragKey
+        // isn't stamped yet). Fetch the entry only for candidates (small set).
+        const entry = await this.fragCache.get(key).catch(() => null);
+        if (!shouldEvictFragKey(key, this.referencedFragKeys(), entry?.storedAt ?? null, pruneStartedAt)) {
+          continue;
+        }
+        await this.fragCache.delete(key).catch(() => {});
+      }
     } catch {
       // keys() unsupported / IDB unavailable — eviction is best-effort.
     }

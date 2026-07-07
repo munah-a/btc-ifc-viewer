@@ -27,6 +27,26 @@ export interface FragCacheEntry {
   bytes: Uint8Array;
 }
 
+/**
+ * C2-race guard (W5-fixups review): the pure decision for whether a candidate
+ * frag key may be evicted during a prune. A key is evictable ONLY when it is not
+ * referenced (by any live model or the persisted session) AND its stored entry is
+ * not newer than the moment the prune began. The `storedAt` guard protects a frag
+ * written by a load that raced the eviction — it isn't referenced yet only because
+ * its model record's fragKey hasn't been stamped. `referenced` is passed freshly
+ * re-computed at decision time (not a stale start-of-prune snapshot).
+ */
+export function shouldEvictFragKey(
+  key: string,
+  referenced: ReadonlySet<string>,
+  entryStoredAt: number | null,
+  pruneStartedAt: number,
+): boolean {
+  if (referenced.has(key)) return false;
+  if (entryStoredAt !== null && entryStoredAt > pruneStartedAt) return false;
+  return true;
+}
+
 /** Minimal async KV contract over `.frag` byte blobs. */
 export interface FragCacheAdapter {
   get(key: string): Promise<FragCacheEntry | null>;
