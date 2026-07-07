@@ -141,6 +141,12 @@ export interface ViewerTestApi {
   setModelOffset(modelId: string, x: number, y: number, z: number): void;
   /** Persists the current session immediately (the explicit Save affordance). */
   saveSession(): void;
+  /**
+   * W5-fixups: monotonic count of requestRender() calls. In MANUAL-mode
+   * on-demand rendering a visual mutation must re-arm a frame; this lets an e2e
+   * assert render parity (e.g. a measurement/section tool action bumped it).
+   */
+  renderRequestCount(): number;
 }
 
 declare global {

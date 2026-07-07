@@ -541,14 +541,21 @@ test.describe('visibility, measure, section & visual tools', () => {
   });
 
   test('measurement, section and visual style tools toggle', async ({ appPage: page }) => {
+    const renderCount = () => page.evaluate(() => window.__viewerTestApi?.renderRequestCount() ?? 0);
+
     await page.click('#btnMeasureLength');
     await waitForStatus(page, 'Length measurement enabled');
 
     await page.click('#btnMeasureArea');
     await waitForStatus(page, 'Area measurement enabled');
 
+    // R3 (W5-fixups): clearing measurements removes lines/labels with no camera
+    // motion — in MANUAL mode it must explicitly re-arm a frame or the stale
+    // measurement lines linger. Assert the render request count advanced.
+    const beforeClearMeasure = await renderCount();
     await page.click('#btnClearMeasurements');
     await waitForStatus(page, 'Measurements cleared');
+    expect(await renderCount()).toBeGreaterThan(beforeClearMeasure);
 
     await page.click('#btnSectionX');
     await waitForStatus(page, 'Section plane added');
@@ -556,8 +563,12 @@ test.describe('visibility, measure, section & visual tools', () => {
     await page.click('#btnSectionBox');
     await waitForStatus(page, 'Section box created');
 
+    // R3 (W5-fixups): clearing sections re-shows clipped geometry with no camera
+    // motion — same MANUAL-mode render-parity requirement.
+    const beforeClearSection = await renderCount();
     await page.click('#btnClearSections');
     await waitForStatus(page, 'Sections cleared');
+    expect(await renderCount()).toBeGreaterThan(beforeClearSection);
 
     await page.click('#btnTransparency');
     await waitForStatus(page, 'X-ray enabled');

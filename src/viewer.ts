@@ -256,6 +256,16 @@ class ViewerApp {
   private requestRender: () => void = () => {};
   private onDemandRender: { requestRender: () => void; stop: () => void } | null = null;
   private engineHandles: EngineHandles | null = null;
+  // R1 (W5-fixups): while a section-plane gizmo is dragged the camera controls
+  // are disabled, so the camera 'update' render pump does NOT fire and the
+  // re-clipped view freezes. A per-frame rAF pump (armed on the clipper's
+  // onBeforeDrag, cancelled on onAfterDrag) calls requestRender every frame so
+  // the clipped geometry repaints live during the drag. 0 = not running.
+  private sectionDragRaf = 0;
+  // W5-fixups: monotonically-incrementing count of requestRender() calls, so an
+  // e2e can assert MANUAL-mode render parity (a visual mutation re-armed a
+  // frame). Only observable via the VITE_E2E test API.
+  private renderRequestCount = 0;
 
   constructor() {
     // C7: resolve the persisted language (default EN) and localize the static
@@ -354,6 +364,8 @@ class ViewerApp {
     this.fpsMonitor = null;
     this.onDemandRender?.stop();
     this.onDemandRender = null;
+    // R1 (W5-fixups): cancel any in-flight section-drag render pump.
+    this.stopSectionDragPump();
     // P4 (W5.4): free the IFC-conversion worker.
     this.ifcConversionClient.terminate();
 
@@ -1195,7 +1207,45 @@ class ViewerApp {
       this.setStatus(t('status.gizmoUpdated', { name: model.fileName }));
     });
 
+    // R1 (W5-fixups): dragging a section-plane arrow disables the camera controls
+    // (no 'update' pump), so re-clipped geometry would freeze mid-drag. Run a
+    // per-frame rAF render pump for the duration of the drag. onBeforeDrag /
+    // onAfterDrag are the component-level hooks (they wrap each plane's
+    // onDraggingStarted/onDraggingEnded in this pinned @thatopen version).
+    this.clipper.onBeforeDrag.add(() => this.startSectionDragPump());
+    this.clipper.onAfterDrag.add(() => this.stopSectionDragPump());
+
+    // R2 (W5-fixups): the live measurement rubber-band mutates on pointer move
+    // between clicks, but MANUAL mode only repaints on requestRender. Subscribe
+    // the measurements' pointer events so the in-progress preview repaints.
+    for (const measurement of [this.lengthMeasurement, this.areaMeasurement]) {
+      measurement.onPointerMove.add(() => this.requestRender());
+      measurement.onPointerStop.add(() => this.requestRender());
+    }
+
     await this.updateVisibilityCount();
+  }
+
+  /**
+   * R1 (W5-fixups): starts a bounded per-frame render pump for a section-plane
+   * gizmo drag (camera controls are disabled during the drag, so the camera
+   * pump doesn't fire). Cancelled by stopSectionDragPump on drag end / destroy.
+   */
+  private startSectionDragPump(): void {
+    if (this.sectionDragRaf) return;
+    const pump = (): void => {
+      this.requestRender();
+      this.sectionDragRaf = requestAnimationFrame(pump);
+    };
+    this.sectionDragRaf = requestAnimationFrame(pump);
+  }
+
+  private stopSectionDragPump(): void {
+    if (!this.sectionDragRaf) return;
+    cancelAnimationFrame(this.sectionDragRaf);
+    this.sectionDragRaf = 0;
+    // Paint one final frame at the drag's resting position.
+    this.requestRender();
   }
 
   /**
@@ -2495,6 +2545,9 @@ class ViewerApp {
     this.lengthMeasurement.cancelCreation();
     this.areaMeasurement.cancelCreation();
     this.setMeasureMode('none');
+    // R3 (W5-fixups): removing the lines/labels mutates the scene with no camera
+    // motion, so MANUAL mode needs an explicit repaint to clear the stale frame.
+    this.requestRender();
   }
 
   /**
@@ -3976,7 +4029,11 @@ class ViewerApp {
     toggleIssuePin: () => this.dom.btnIssuePinMode.click(),
     deleteSelectedIssue: () => this.fireAndForget(this.deleteSelectedIssue(), 'Delete issue'),
     finishAreaMeasurement: () => {
-      if (this.measureMode === 'area') this.areaMeasurement.endCreation();
+      if (this.measureMode !== 'area') return;
+      this.areaMeasurement.endCreation();
+      // R3 (W5-fixups): committing the area fill mutates the scene with no camera
+      // motion — repaint so the finished fill shows without a camera nudge.
+      this.requestRender();
     },
   };
 
@@ -4187,6 +4244,7 @@ class ViewerApp {
         this.persistLocalState();
       },
       saveSession: (): void => this.saveSession(),
+      renderRequestCount: (): number => this.renderRequestCount,
     };
     return Object.freeze(api);
   }
@@ -4200,7 +4258,12 @@ class ViewerApp {
   private enableOnDemandRendering(): void {
     if (!this.engineHandles) return;
     this.onDemandRender = this.engineModule.enableOnDemandRendering(this.engineHandles);
-    this.requestRender = this.onDemandRender.requestRender;
+    const rawRequestRender = this.onDemandRender.requestRender;
+    // W5-fixups: count every render request so the e2e can assert render parity.
+    this.requestRender = () => {
+      this.renderRequestCount += 1;
+      rawRequestRender();
+    };
   }
 
   private startFpsMonitor(): void {
