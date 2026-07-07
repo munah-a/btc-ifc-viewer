@@ -94,8 +94,11 @@ export function pwaPlugin() {
         /^export\s+/gm,
         '',
       );
+      // Replace the ENTIRE marker line (not just the token) so any trailing
+      // prose on that comment line can't leak into the emitted SW as bare,
+      // uncommented text — which would be a syntax error and abort SW install.
       const source = template
-        .replace('// __SW_LOGIC__', swLogic)
+        .replace(/^.*__SW_LOGIC__.*$/m, swLogic)
         .replaceAll('__SW_VERSION__', version)
         .replaceAll('__PRECACHE_MANIFEST__', JSON.stringify(precache));
 
