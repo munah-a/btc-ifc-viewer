@@ -18,22 +18,22 @@
  *    fall back to network + cache on a miss).
  *  - cross-origin / non-GET: passthrough (never cached).
  */
+// __SW_LOGIC__ — scripts/pwa-plugin.mjs inlines the pure decision helpers from
+// src/sw-logic.js here (pickShellName, shouldCacheNavigation), so the SW and its
+// unit tests share ONE source of truth (no drift).
+
 const SW_VERSION = '__SW_VERSION__';
 const CACHE_NAME = `btc-viewer-shell-${SW_VERSION}`;
 const PRECACHE = __PRECACHE_MANIFEST__;
 
 /**
- * P1 (W5-fixups): the precached shell for a navigation, chosen by PATH. A
- * navigation whose path contains `/embed` falls back to the precached
- * `embed.html` (the chromeless embed shell); everything else falls back to
- * `index.html` (the full app). Before this, every offline navigation — including
- * /embed — served index.html, so an offline embed rendered the full-app chrome.
+ * P1 (W5-fixups): resolves the precached shell for a navigation using the
+ * path-aware `pickShellName` (embed.html for a /embed path, else index.html).
  * Tries base-prefixed, `./`-relative and bare forms so it matches regardless of
  * the configured base.
  */
 async function matchShell(url) {
-  const isEmbed = /(^|\/)embed(\.html)?(\/|$)/.test(url.pathname);
-  const name = isEmbed ? 'embed.html' : 'index.html';
+  const name = pickShellName(url.pathname);
   return (
     (await caches.match(`./${name}`)) ||
     (await caches.match(name)) ||
@@ -86,12 +86,12 @@ self.addEventListener('fetch', (event) => {
         const cache = await caches.open(CACHE_NAME);
         try {
           const response = await fetch(request);
-          // P2 (W5-fixups): only cache a GOOD navigation. The old code cached
-          // unconditionally, so a transient 500/503 overwrote the good cached
-          // shell and was then served offline. Guard on response.ok AND a basic
-          // (same-origin, non-opaque) type; on a non-ok response fall through to
-          // the precached shell rather than poisoning the cache with an error.
-          if (response.ok && response.type === 'basic') {
+          // P2 (W5-fixups): only cache a GOOD navigation (shouldCacheNavigation =
+          // response.ok && type === 'basic'). The old code cached unconditionally,
+          // so a transient 500/503 overwrote the good cached shell and was then
+          // served offline. On a non-ok response fall through to the precached
+          // shell rather than poisoning the cache with an error.
+          if (shouldCacheNavigation(response)) {
             cache.put(request, response.clone());
             return response;
           }

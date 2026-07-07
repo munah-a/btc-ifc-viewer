@@ -86,7 +86,16 @@ export function pwaPlugin() {
 
       const version = Date.now().toString(36);
       const template = readFileSync(resolve(process.cwd(), 'src/sw-template.js'), 'utf8');
+      // P1/P2 (W5-fixups): inline the pure SW decision helpers so the SW and the
+      // unit tests share one source of truth. `sw-logic.js` uses `export` for the
+      // test import; strip the keyword so the injected SW stays a classic worker
+      // (no module semantics). Only leading `export ` on declarations is removed.
+      const swLogic = readFileSync(resolve(process.cwd(), 'src/sw-logic.js'), 'utf8').replace(
+        /^export\s+/gm,
+        '',
+      );
       const source = template
+        .replace('// __SW_LOGIC__', swLogic)
         .replaceAll('__SW_VERSION__', version)
         .replaceAll('__PRECACHE_MANIFEST__', JSON.stringify(precache));
 
