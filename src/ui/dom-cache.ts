@@ -29,6 +29,8 @@ export function createDomCache() {
     btnExportScreenshot: required<HTMLButtonElement>('btnExportScreenshot'),
     btnExportState: required<HTMLButtonElement>('btnExportState'),
     btnImportState: required<HTMLButtonElement>('btnImportState'),
+    btnSaveSession: required<HTMLButtonElement>('btnSaveSession'),
+    btnRestoreSession: required<HTMLButtonElement>('btnRestoreSession'),
     importStateInput: required<HTMLInputElement>('importStateInput'),
     btnThemeToggle: required<HTMLButtonElement>('btnThemeToggle'),
     btnLangToggle: required<HTMLButtonElement>('btnLangToggle'),

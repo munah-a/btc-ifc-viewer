@@ -52,6 +52,31 @@ export default tseslint.config(
     },
   },
   {
+    // The PWA service-worker template (W5.5) runs in the ServiceWorkerGlobalScope,
+    // not Node. Its build-time-injected tokens (__PRECACHE_MANIFEST__ /
+    // __SW_VERSION__) are declared as readonly globals so `no-undef` is satisfied.
+    // The pure decision helpers (pickShellName/shouldCacheNavigation) are inlined
+    // from src/sw-logic.js by the plugin at the __SW_LOGIC__ marker before use
+    // (W5-fixups P1/P2), so they too are readonly globals here.
+    files: ['src/sw-template.js'],
+    languageOptions: {
+      globals: {
+        self: 'readonly',
+        caches: 'readonly',
+        fetch: 'readonly',
+        Request: 'readonly',
+        URL: 'readonly',
+        Error: 'readonly',
+        Promise: 'readonly',
+        Boolean: 'readonly',
+        console: 'readonly',
+        __PRECACHE_MANIFEST__: 'readonly',
+        pickShellName: 'readonly',
+        shouldCacheNavigation: 'readonly',
+      },
+    },
+  },
+  {
     // src/viewer.ts: the ThatOpen boundary is untyped by design until W2.2
     // extracts core/fragments-model.ts (AUDIT A8). e2e/: specs reach into raw
     // window.__viewer internals until W2.5 ships the frozen, typed

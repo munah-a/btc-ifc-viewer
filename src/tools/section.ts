@@ -23,6 +23,36 @@ export function sectionPlanePoint(box: THREE.Box3, normal: THREE.Vector3, pct: n
 }
 
 /**
+ * Inverse of {@link sectionPlanePoint} (C5, W5-fixups): the slider percentage
+ * (0–100) for a plane whose coplanar `origin` sits along the box's dominant axis.
+ * Used to re-populate the section slider after a session restore recreates a
+ * single-axis plane geometrically. Clamped to 0–100; degenerate (zero-extent)
+ * axes return 50 (the neutral mid position).
+ */
+export function sectionPlanePercent(box: THREE.Box3, normal: THREE.Vector3, origin: THREE.Vector3): number {
+  const { min, max } = box;
+  let value: number;
+  let lo: number;
+  let hi: number;
+  if (Math.abs(normal.x) > 0.5) {
+    value = origin.x;
+    lo = min.x;
+    hi = max.x;
+  } else if (Math.abs(normal.y) > 0.5) {
+    value = origin.y;
+    lo = min.y;
+    hi = max.y;
+  } else {
+    value = origin.z;
+    lo = min.z;
+    hi = max.z;
+  }
+  const span = hi - lo;
+  if (span <= 0) return 50;
+  return Math.min(100, Math.max(0, ((value - lo) / span) * 100));
+}
+
+/**
  * The six {normal, point} plane definitions that clip to the model bounding
  * box (a "section box"). Point coordinates match the original inline creation
  * so behaviour is identical.

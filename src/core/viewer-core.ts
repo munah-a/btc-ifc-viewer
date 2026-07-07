@@ -180,63 +180,157 @@ export async function bootstrapEngine(options: BootstrapEngineOptions): Promise<
 }
 
 /**
- * A5: scoped console.warn filter. Suppresses ONLY the known three.js WebGL
- * program info-log noise; everything else passes through. install/uninstall are
- * paired so destroy() can restore the original console.warn rather than leaving
- * it permanently monkey-patched.
+ * P6 (W5.3): switches the world's PostproductionRenderer to on-demand (MANUAL)
+ * rendering and returns a `requestRender()` the orchestrator calls on any visual
+ * change. In MANUAL mode the renderer only composites a frame when `needsUpdate`
+ * is set, so an idle viewport stops burning the GPU on continuous postprocessing
+ * (battery — a field/tablet win, C6) while a static frame stays on the canvas
+ * (required for e2e/page.screenshot capture).
+ *
+ * Visual parity: postprocessing stays ON for every rendered frame (full
+ * outlines/gloss), so the look is unchanged from AUTO mode — we do NOT use the
+ * library's `turnOffOnManualMode`, whose deferred re-enable reads the throwing
+ * `basePass` getter and can crash if the composer isn't built yet.
+ *
+ * The renderer keeps rendering while the camera controls animate (their `update`
+ * event fires each frame and re-arms `needsUpdate`). Mesh streaming (LOD) and
+ * all other visual changes are re-armed by the orchestrator calling the returned
+ * `requestRender()` — after each `fragments.core.update()`, on each model's
+ * `onViewUpdated`, and on selection/tool/marker changes.
+ *
+ * Returns a `requestRender` fn AND a `stop` to detach the camera listener
+ * (destroy()).
  */
-export class ShaderWarningFilter {
-  private originalConsoleWarn: typeof console.warn | null = null;
-  private installed = false;
+export function enableOnDemandRendering(engine: EngineHandles): {
+  requestRender: () => void;
+  stop: () => void;
+} {
+  const renderer = engine.world.renderer as OBCF.PostproductionRenderer & {
+    mode: OBC.RendererMode;
+    needsUpdate: boolean;
+    turnOffOnManualMode?: boolean;
+  };
 
-  install(): void {
-    if (this.installed) return;
-    const originalWarn = console.warn.bind(console);
-    this.originalConsoleWarn = originalWarn;
-    console.warn = (...args: unknown[]) => {
-      const header = typeof args[0] === 'string' ? args[0] : '';
-      const payload = args
-        .map((entry) => (typeof entry === 'string' ? entry : ''))
-        .join(' ');
-      const isThreeProgramLog = header.includes('THREE.WebGLProgram: Program Info Log:');
-      const isKnownNoise = payload.includes('dyn_index_vec4_float4_int');
-      if (isThreeProgramLog && isKnownNoise) return;
-      originalWarn(...args);
-    };
-    this.installed = true;
-  }
+  const requestRender = (): void => {
+    renderer.needsUpdate = true;
+  };
 
-  uninstall(): void {
-    if (!this.installed || !this.originalConsoleWarn) return;
-    console.warn = this.originalConsoleWarn;
-    this.originalConsoleWarn = null;
-    this.installed = false;
-  }
+  renderer.mode = OBC.RendererMode.MANUAL;
+  // Keep postprocessing ON for every frame (visual parity). Do NOT enable
+  // turnOffOnManualMode: its deferred re-enable sets postproduction.enabled,
+  // which reads the throwing basePass getter and crashes if the composer isn't
+  // built yet ("Base pass not initialized").
+  renderer.turnOffOnManualMode = false;
+  requestRender();
+
+  // Camera animation frames + user navigation → re-arm each tick while moving.
+  const onCameraUpdate = (): void => requestRender();
+  engine.world.camera.controls.addEventListener('update', onCameraUpdate);
+
+  return {
+    requestRender,
+    stop: () => {
+      engine.world.camera.controls.removeEventListener('update', onCameraUpdate);
+    },
+  };
 }
 
 /**
- * rAF FPS counter (A15). Writes `<n> FPS` into `output` roughly once a second.
- * Returns a stop() to cancel the loop (wired to destroy()).
+ * Visual-style → PostproductionAspect mapping (W5.1). Kept in viewer-core so the
+ * `OBCF.PostproductionAspect` enum — a runtime *value* from @thatopen — stays
+ * inside this dynamically-imported engine module. Were viewer.ts to reference the
+ * enum directly, its static import of @thatopen would pin the (large) engine
+ * chunk into the initial shell, defeating the P1 code-split.
+ *
+ * Applies the style's aspect + the outline/gloss flags to a postproduction
+ * instance. `post` is typed loosely because @thatopen does not export the
+ * postproduction shape as a public type; the members used here are stable.
  */
-export function createFpsMonitor(output: HTMLElement): { stop: () => void } {
-  let frameCount = 0;
-  let lastTs = performance.now();
-  let frameId: number | null = null;
+export type PostproductionStyle =
+  | 'basic'
+  | 'pen'
+  | 'color-pen'
+  | 'color-shadows'
+  | 'color-pen-shadows';
 
-  const tick = (): void => {
+interface PostproductionLike {
+  style: number;
+  outlinesEnabled: boolean;
+  glossEnabled: boolean;
+}
+
+export function applyPostproductionStyle(post: PostproductionLike, style: PostproductionStyle): void {
+  switch (style) {
+    case 'basic':
+      post.style = OBCF.PostproductionAspect.COLOR;
+      break;
+    case 'pen':
+      post.style = OBCF.PostproductionAspect.PEN;
+      post.outlinesEnabled = true;
+      break;
+    case 'color-pen':
+      post.style = OBCF.PostproductionAspect.COLOR_PEN;
+      post.outlinesEnabled = true;
+      break;
+    case 'color-shadows':
+      post.style = OBCF.PostproductionAspect.COLOR_SHADOWS;
+      post.glossEnabled = true;
+      break;
+    case 'color-pen-shadows':
+    default:
+      post.style = OBCF.PostproductionAspect.COLOR_PEN_SHADOWS;
+      post.outlinesEnabled = true;
+      post.glossEnabled = true;
+      break;
+  }
+}
+
+// A5 ShaderWarningFilter now lives in the dependency-free core/engine-lite.ts
+// (W5.1) so the app shell can install it before the heavy engine chunk loads.
+// Re-exported here for consumers that already import it from viewer-core.
+export { ShaderWarningFilter } from './engine-lite';
+
+/**
+ * Real-rendered-frame FPS counter (A15, W5.3). Counts the renderer's actual
+ * `onAfterUpdate` firings — which happen ONLY on a real `three.render()` — and
+ * samples the count into `output` once a second. Under on-demand rendering this
+ * reads the true rendered rate (≈0 when idle, the real value while interacting),
+ * not the rAF cadence the old counter measured (AUDIT A15). The 1 s sampler runs
+ * off setInterval, so it needs no rAF of its own.
+ *
+ * `renderer` is loosely typed to the `onAfterUpdate` event it exposes so this
+ * stays decoupled from the concrete renderer class.
+ */
+export function createFpsMonitor(
+  output: HTMLElement,
+  renderer?: { onAfterUpdate: { add(cb: () => void): void; remove(cb: () => void): void } },
+): { stop: () => void } {
+  let frameCount = 0;
+  const onFrame = (): void => {
     frameCount += 1;
-    const now = performance.now();
-    if (now - lastTs >= 1000) {
-      output.textContent = `${frameCount} FPS`;
-      frameCount = 0;
-      lastTs = now;
-    }
-    frameId = requestAnimationFrame(tick);
   };
-  frameId = requestAnimationFrame(tick);
+
+  // Fallback (no renderer given): count rAF ticks as before.
+  let frameId: number | null = null;
+  if (renderer) {
+    renderer.onAfterUpdate.add(onFrame);
+  } else {
+    const tick = (): void => {
+      frameCount += 1;
+      frameId = requestAnimationFrame(tick);
+    };
+    frameId = requestAnimationFrame(tick);
+  }
+
+  const sampler = setInterval(() => {
+    output.textContent = `${frameCount} FPS`;
+    frameCount = 0;
+  }, 1000);
 
   return {
     stop: () => {
+      clearInterval(sampler);
+      if (renderer) renderer.onAfterUpdate.remove(onFrame);
       if (frameId !== null) {
         cancelAnimationFrame(frameId);
         frameId = null;
