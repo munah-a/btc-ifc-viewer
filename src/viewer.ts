@@ -1,7 +1,7 @@
 ﻿import * as THREE from 'three';
-import * as OBC from '@thatopen/components';
-import * as OBCF from '@thatopen/components-front';
-import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+import type * as OBC from '@thatopen/components';
+import type * as OBCF from '@thatopen/components-front';
+import type { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 
 import { isModelNotFoundError, serializeError } from './core/errors';
 import { isProbablyIfc } from './core/ifc-format';
@@ -43,7 +43,12 @@ import {
   formatDateTime,
   type Language,
 } from './core/i18n';
-import { bootstrapEngine, createFpsMonitor, ShaderWarningFilter } from './core/viewer-core';
+import { ShaderWarningFilter } from './core/engine-lite';
+// The engine module (core/viewer-core) statically pulls three + @thatopen +
+// web-ifc (~1MB gzip). It is dynamically imported in initEngine (W5.1 / P1) so
+// the initial app shell excludes it — type-only imports here are erased.
+import type { BootstrapEngineOptions, EngineHandles } from './core/viewer-core';
+type ViewerCoreModule = typeof import('./core/viewer-core');
 import { exportModelsToGlb, hasActiveClipping, isValidGlb } from './core/glb-export';
 import { buildShareUrl, decodeUrlState, isAllowedModelUrl, type UrlViewpointState } from './core/url-state';
 import { UploadClient } from './core/upload-client';
@@ -209,6 +214,9 @@ class ViewerApp {
   // A5: scoped console.warn filter (install/uninstall paired; restored in
   // destroy() rather than leaving console.warn permanently monkey-patched).
   private readonly shaderWarningFilter = new ShaderWarningFilter();
+  // W5.1: the dynamically-imported engine module (three/@thatopen/web-ifc live
+  // here). Loaded once in initEngine so its enum/helper values are reusable.
+  private engineModule!: ViewerCoreModule;
 
   constructor() {
     // C7: resolve the persisted language (default EN) and localize the static
@@ -1034,17 +1042,21 @@ class ViewerApp {
   }
 
   private async initEngine(): Promise<void> {
-    // Engine construction lives in core/viewer-core.ts (shared with the future
-    // /embed entry, W4). The `this`-coupled callbacks (model registration,
+    // Engine construction lives in core/viewer-core.ts (shared with the /embed
+    // entry). W5.1 (P1): the module is DYNAMICALLY imported here so three +
+    // @thatopen + web-ifc (~1MB gzip) form async chunks the initial shell does
+    // not download. The `this`-coupled callbacks (model registration,
     // camera->fragments update, gizmo->panel re-render) are wired here against
-    // the returned handles so behaviour matches the pre-extraction inline setup.
-    const engine = await bootstrapEngine({
+    // the returned handles so behaviour matches the pre-split inline setup.
+    this.engineModule = await import('./core/viewer-core');
+    const engineOptions: BootstrapEngineOptions = {
       container: this.dom.viewerContainer,
       backgroundColor: this.backgroundColor,
       gridVisible: this.gridVisible,
       getBackgroundColor: () => this.backgroundColor,
       getPostproductionRenderer: () => this.getPostproductionRenderer(),
-    });
+    };
+    const engine: EngineHandles = await this.engineModule.bootstrapEngine(engineOptions);
     this.components = engine.components;
     this.world = engine.world;
     this.ifcLoader = engine.ifcLoader;
@@ -1524,34 +1536,10 @@ class ViewerApp {
       post.basePass.clearDepth = true;
     }
 
-    // Map directly to ThatOpen PostproductionAspect enum
-    switch (style) {
-      case 'basic':
-        post.style = OBCF.PostproductionAspect.COLOR;
-        break;
-      case 'pen':
-        post.style = OBCF.PostproductionAspect.PEN;
-        post.outlinesEnabled = true;
-        break;
-      case 'color-pen':
-        post.style = OBCF.PostproductionAspect.COLOR_PEN;
-        post.outlinesEnabled = true;
-        break;
-      case 'color-shadows':
-        post.style = OBCF.PostproductionAspect.COLOR_SHADOWS;
-        post.glossEnabled = true;
-        break;
-      case 'color-pen-shadows':
-        post.style = OBCF.PostproductionAspect.COLOR_PEN_SHADOWS;
-        post.outlinesEnabled = true;
-        post.glossEnabled = true;
-        break;
-      default:
-        post.style = OBCF.PostproductionAspect.COLOR_PEN_SHADOWS;
-        post.outlinesEnabled = true;
-        post.glossEnabled = true;
-        break;
-    }
+    // Map directly to ThatOpen PostproductionAspect enum. The enum is a runtime
+    // value from @thatopen, so the mapping lives in the dynamically-imported
+    // engine module (W5.1) to keep @thatopen out of the initial shell.
+    this.engineModule.applyPostproductionStyle(post, style);
   }
 
   private async setVisualStyle(style: VisualStyle, updateStatus: boolean, persist: boolean, resetToggles = false): Promise<void> {
@@ -3760,7 +3748,7 @@ class ViewerApp {
   }
 
   private startFpsMonitor(): void {
-    this.fpsMonitor = createFpsMonitor(this.dom.perfInfo);
+    this.fpsMonitor = this.engineModule.createFpsMonitor(this.dom.perfInfo);
   }
 }
 

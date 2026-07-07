@@ -30,6 +30,21 @@ export default defineConfig({
                 main: resolve(__dirname, 'src/index.html'),
                 embed: resolve(__dirname, 'src/embed.html'),
             },
+            output: {
+                // W5.1 (P1): split the heavy engine deps into separate, long-lived
+                // cacheable chunks. Each is content-hashed independently, so an app
+                // code change no longer invalidates the ~5.7MB engine download.
+                // `web-ifc` (the ~5.9MB embind glue) is only reached via the IFC
+                // conversion path, which is dynamically imported (see
+                // core/ifc-conversion.ts) so it lands in its own async chunk that
+                // the initial shell does NOT pull.
+                manualChunks(id: string) {
+                    if (id.includes('node_modules/web-ifc/')) return 'web-ifc';
+                    if (id.includes('node_modules/three/')) return 'three';
+                    if (id.includes('node_modules/@thatopen/')) return 'thatopen';
+                    return undefined;
+                },
+            },
         },
     },
     server: {

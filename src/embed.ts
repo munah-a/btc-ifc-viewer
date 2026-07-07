@@ -21,7 +21,7 @@
  */
 import * as THREE from 'three';
 
-import { bootstrapEngine, type EngineHandles } from './core/viewer-core';
+import type { EngineHandles } from './core/viewer-core';
 import { isProbablyIfc } from './core/ifc-format';
 import { hydrateI18n, initLanguage, t } from './core/i18n';
 import {
@@ -144,6 +144,10 @@ class EmbedViewer {
     this.showLoading(t('embed.loading'), 0.06);
 
     try {
+      // W5.1 (P1): dynamically import the engine so the embed's initial shell
+      // (poster + chrome) excludes three/@thatopen/web-ifc — they load only when
+      // the user activates the embed.
+      const { bootstrapEngine } = await import('./core/viewer-core');
       const engine = await bootstrapEngine({
         container: this.dom.viewer,
         backgroundColor: DEFAULT_BG,
