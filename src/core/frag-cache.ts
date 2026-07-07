@@ -132,8 +132,26 @@ export class IndexedDbFragCache implements FragCacheAdapter {
     return new Promise<unknown>((resolve, reject) => {
       const tx = db.transaction(STORE, mode);
       const request = run(tx.objectStore(STORE));
-      request.onsuccess = () => resolve(request.result);
+      // C1 (W5-fixups): a readwrite `put`/`delete`/`clear` request fires
+      // `onsuccess` BEFORE the transaction commits, so resolving there swallows a
+      // commit-time abort (e.g. quota on flush, tab unload) — a "saved" frag never
+      // persists and restore silently drops the model. So for readwrite, resolve
+      // on `tx.oncomplete` (the real durable point) and reject on
+      // `tx.onabort`/`tx.onerror`, capturing `request.result` for get-like reads.
+      // Reads (readonly) can safely resolve on `request.onsuccess`.
+      if (mode === 'readonly') {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error ?? new Error('Frag cache request failed'));
+        return;
+      }
+      let result: unknown;
+      request.onsuccess = () => {
+        result = request.result;
+      };
       request.onerror = () => reject(request.error ?? new Error('Frag cache request failed'));
+      tx.oncomplete = () => resolve(result);
+      tx.onabort = () => reject(tx.error ?? new Error('Frag cache transaction aborted'));
+      tx.onerror = () => reject(tx.error ?? new Error('Frag cache transaction failed'));
     });
   }
 

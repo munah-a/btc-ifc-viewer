@@ -68,7 +68,7 @@ import type { TestItemRef, ViewerTestApi } from './core/test-api';
 import { getViewCubeAxes, getViewCubeNavigationDistance, resolveViewCubeCameraUp } from './core/view-cube';
 import { buildEdgeOverlays, EdgeGeometryCache } from './tools/edges';
 import { routeKeyboardEvent, type KeyboardActions } from './input/keyboard-router';
-import { sectionBoxPlanes, sectionPlanePoint } from './tools/section';
+import { sectionBoxPlanes, sectionPlanePercent, sectionPlanePoint } from './tools/section';
 import { computeXrayOpacity } from './tools/xray';
 import type {
   FederatedModelRecord,
@@ -1291,6 +1291,7 @@ class ViewerApp {
   private async unloadModel(modelId: string): Promise<void> {
     const record = this.federatedModels.get(modelId);
     if (!record) return;
+    const removedFragKey = record.fragKey ?? null;
 
     if (this.activeGizmoModelId === modelId) this.detachModelGizmo();
     this.federatedModels.delete(modelId);
@@ -1298,6 +1299,7 @@ class ViewerApp {
     this.modelUnits.delete(modelId);
     this.modelRegistrations.delete(modelId);
     this.appliedModelOpacity.delete(modelId);
+    this.hiddenIdsByModel.delete(modelId);
     delete this.selectedItems[modelId];
     this.modelObjects = this.modelObjects.filter((object) => object !== record.object);
 
@@ -1318,7 +1320,75 @@ class ViewerApp {
     await this.updateVisibilityCount();
     await this.updateFragments(true);
     this.dom.emptyState.hidden = this.federatedModels.size > 0;
+
+    // C3 (W5-fixups): persist AFTER removing the model so the saved session no
+    // longer lists it — otherwise a reload before any other persist resurrects
+    // the explicitly-unloaded model. (restoringSession guards persist internally.)
+    this.persistLocalState();
+    // C2 (W5-fixups): evict this model's cached `.frag` if its key is no longer
+    // referenced by any remaining in-memory model OR the persisted session, then
+    // prune any orphaned IDB entries. Fire-and-forget: cache eviction never blocks
+    // the unload UX and degrades silently (private mode / no IDB).
+    this.fireAndForget(this.evictUnreferencedFrag(removedFragKey), 'Evict frag cache');
+
     this.setStatus(t('status.modelUnloaded', { name: record.fileName }));
+  }
+
+  /** C2 (W5-fixups): the set of fragKeys still referenced by a live model. */
+  private liveFragKeys(): Set<string> {
+    const keys = new Set<string>();
+    for (const record of this.federatedModels.values()) {
+      if (record.fragKey) keys.add(record.fragKey);
+    }
+    // A model still streaming in during a restore has its key in restoreFragKeys
+    // before the record's fragKey is stamped — keep those alive too.
+    for (const key of this.restoreFragKeys.values()) keys.add(key);
+    return keys;
+  }
+
+  /** C2 (W5-fixups): fragKeys referenced by the persisted session in localStorage. */
+  private persistedFragKeys(): Set<string> {
+    const keys = new Set<string>();
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return keys;
+      const state = normalizePersistedState(JSON.parse(raw));
+      for (const model of state?.models ?? []) {
+        if (model.fragKey) keys.add(model.fragKey);
+      }
+    } catch {
+      // A corrupt/absent session contributes no referenced keys.
+    }
+    return keys;
+  }
+
+  /**
+   * C2 (W5-fixups): eviction after an unload. Deletes the just-removed model's
+   * cached frag when nothing else references it, then prunes any IDB entries whose
+   * key is referenced by neither a live model nor the persisted session (bounds
+   * the unbounded frag cache — targets the tablet/field persona). Never deletes a
+   * frag still referenced by a saved session.
+   */
+  private async evictUnreferencedFrag(removedFragKey: string | null): Promise<void> {
+    const referenced = this.liveFragKeys();
+    for (const key of this.persistedFragKeys()) referenced.add(key);
+
+    // Fast path: the removed model's own key, if now unreferenced.
+    if (removedFragKey && !referenced.has(removedFragKey)) {
+      await this.fragCache.delete(removedFragKey).catch(() => {});
+    }
+
+    // Prune any other orphaned entries (dead code before C2 — keys()/delete()).
+    try {
+      const stored = await this.fragCache.keys();
+      await Promise.all(
+        stored
+          .filter((key) => !referenced.has(key))
+          .map((key) => this.fragCache.delete(key).catch(() => {})),
+      );
+    } catch {
+      // keys() unsupported / IDB unavailable — eviction is best-effort.
+    }
   }
 
   private async onModelAdded(modelId: string, model: FragmentsModelLike): Promise<void> {
@@ -2629,6 +2699,40 @@ class ViewerApp {
     this.fireAndForget(this.updateFragments(true), 'Section move');
   }
 
+  /**
+   * C5 (W5-fixups): re-wires the glass slider to a restored single-axis section
+   * plane so the user can adjust it after a session restore. Maps the restored
+   * normal to its axis rail button + label, sets the active-section state, and
+   * derives the slider position from the restored origin (inverse of
+   * sectionPlanePoint). If the normal isn't a recognized axis (e.g. an oblique
+   * viewpoint plane), the slider stays hidden — there is nothing to slide.
+   */
+  private restoreSectionSlider(plane: { normal: Vector3Record; origin: Vector3Record }): void {
+    const normal = new THREE.Vector3(plane.normal.x, plane.normal.y, plane.normal.z);
+    const button =
+      Math.abs(normal.x) > 0.5
+        ? this.dom.btnSectionX
+        : Math.abs(normal.z) > 0.5
+          ? this.dom.btnSectionY
+          : Math.abs(normal.y) > 0.5
+            ? this.dom.btnSectionZ
+            : null;
+    if (!button) return;
+    const box = this.getModelBoundingBox();
+    if (!box || box.isEmpty()) return;
+
+    this.activeSectionNormal = normal.clone();
+    this.activeSectionBox = box;
+    this.activeSectionLabel =
+      button === this.dom.btnSectionX ? 'Section X' : button === this.dom.btnSectionY ? 'Section Y' : 'Section Z';
+    this.dom.sectionLabel.textContent = this.activeSectionLabel;
+    const pct = Math.round(sectionPlanePercent(box, normal, new THREE.Vector3(plane.origin.x, plane.origin.y, plane.origin.z)));
+    this.dom.sectionPos.value = String(pct);
+    this.dom.sectionPosLabel.textContent = t('label.percent', { value: pct });
+    this.dom.sectionSlider.hidden = false;
+    this.setRailPressed(button, true);
+  }
+
   private createSectionBox(): void {
     const bbox = this.getModelBoundingBox();
     if (!bbox || bbox.isEmpty()) {
@@ -3658,13 +3762,22 @@ class ViewerApp {
     return selection;
   }
 
-  private persistLocalState(): void {
+  /**
+   * Persists the current session to localStorage. C6 (W5-fixups): returns whether
+   * the write actually succeeded (durably) — the quota-retry-without-thumbnails
+   * path still counts as success, but a total failure returns false (after
+   * showing its own red toast) so callers like saveSession() don't fire a
+   * contradictory green "saved" toast on silent data loss. A guarded no-op during
+   * a restore counts as success (nothing to write).
+   */
+  private persistLocalState(): boolean {
     // C8: don't churn localStorage while a restore is re-applying state — the
     // final state is persisted once when the restore completes.
-    if (this.restoringSession) return;
+    if (this.restoringSession) return true;
     const payload = this.getPersistedState();
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      return true;
     } catch {
       // Quota exceeded — retry once without snapshots (F2 size guard).
       try {
@@ -3674,9 +3787,11 @@ class ViewerApp {
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(stripped));
         this.setStatus(t('status.savedWithoutThumbnails'));
+        return true;
       } catch (retryError) {
         this.showToast(t('status.persistFailed', { error: serializeError(retryError) }), 'error');
         this.setStatus(t('status.persistFailed', { error: serializeError(retryError) }));
+        return false;
       }
     }
   }
@@ -3702,10 +3817,19 @@ class ViewerApp {
    */
   private saveSession(): void {
     try {
-      this.persistLocalState();
+      // C6 (W5-fixups): only show the green "saved" toast when the write actually
+      // succeeded. persistLocalState() swallows quota errors internally (it fires
+      // its own red persistFailed toast + status) and returns false, so a bare
+      // success toast here would be a contradictory false success on silent data
+      // loss. On failure its red toast/status already stands — bail without the
+      // green one.
+      if (!this.persistLocalState()) return;
       const count = this.collectPersistedModels().length;
       this.showToast(t('status.sessionSaved', { count }), 'success');
       this.setStatus(t('status.sessionSaved', { count }));
+      // C2 (W5-fixups): an explicit save is a natural, infrequent checkpoint to
+      // prune orphaned frag-cache entries not referenced by the persisted session.
+      this.fireAndForget(this.evictUnreferencedFrag(null), 'Prune frag cache');
     } catch (error) {
       this.showToast(t('status.sessionSaveFailed', { error: serializeError(error) }), 'error');
     }
@@ -3874,6 +3998,11 @@ class ViewerApp {
   /** C8: re-applies camera pose, section planes and selection after models load. */
   private async applyRestoredViewState(state: PersistedViewerState): Promise<void> {
     // Section planes.
+    // C4 (W5-fixups): clear any existing planes FIRST so restoring over an
+    // existing section (manual #btnRestoreSession, or restore over a ?m= session)
+    // doesn't stack duplicates + leak gizmo helpers, then re-persist a doubled
+    // list. Mirrors the viewpoint-restore path, which already clears first.
+    this.clearSections(false);
     if (state.sectionPlanes.length > 0) {
       this.clipper.enabled = true;
       for (const plane of state.sectionPlanes) {
@@ -3881,6 +4010,14 @@ class ViewerApp {
           new THREE.Vector3(plane.normal.x, plane.normal.y, plane.normal.z),
           new THREE.Vector3(plane.origin.x, plane.origin.y, plane.origin.z),
         );
+      }
+      // C5 (W5-fixups): a single-axis section must also restore the glass slider
+      // state (active normal/box/label, slider position + visibility, axis rail
+      // button) so setSectionPosition() works and the user can adjust it without a
+      // destructive re-click. Multi-plane restores (section box) leave the slider
+      // hidden — there is no single axis to slide.
+      if (state.sectionPlanes.length === 1) {
+        this.restoreSectionSlider(state.sectionPlanes[0]);
       }
     }
 
@@ -4250,6 +4387,9 @@ class ViewerApp {
       },
       saveSession: (): void => this.saveSession(),
       renderRequestCount: (): number => this.renderRequestCount,
+      unloadModel: (modelId: string): Promise<void> => this.unloadModel(modelId),
+      sectionPlaneCount: (): number => this.clipper?.list?.size ?? 0,
+      restoreSession: (): Promise<void> => this.restoreSavedSession(),
     };
     return Object.freeze(api);
   }

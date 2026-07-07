@@ -33,6 +33,14 @@ const waitForAppReady = async (page: Page): Promise<void> => {
   );
 };
 
+const waitForStatus = async (page: Page, text: string): Promise<void> => {
+  await page.waitForFunction(
+    (expected) => (document.querySelector('#statusText')?.textContent || '').includes(expected),
+    text,
+    { timeout: STATUS_TIMEOUT },
+  );
+};
+
 const waitForModelCount = async (page: Page, count: number): Promise<void> => {
   await page.waitForFunction(
     (expected) => {
@@ -181,5 +189,56 @@ test.describe('C8 full-session persistence round-trip (W5.2)', () => {
       .toBeCloseTo(0.25, 2);
     // Both models still present after the manual restore.
     expect(await page.evaluate(() => window.__viewerTestApi?.modelCount() ?? 0)).toBe(2);
+
+    // ── C4 (W5-fixups): section planes must NOT duplicate on repeated Restore. ──
+    // Add a single axis section, save, then Restore TWICE. Before the fix each
+    // Restore re-added the persisted plane without clearing, stacking duplicates.
+    await page.click('#btnSectionX');
+    await waitForStatus(page, 'Section plane added');
+    await page.click('#btnSaveSession');
+    await page.waitForFunction(
+      () => (document.querySelector('#statusText')?.textContent || '').includes('Session saved'),
+      undefined,
+      { timeout: STATUS_TIMEOUT },
+    );
+    const planesAfterAdd = await page.evaluate(() => window.__viewerTestApi?.sectionPlaneCount() ?? -1);
+    expect(planesAfterAdd).toBe(1);
+
+    await page.evaluate(async () => window.__viewerTestApi?.restoreSession());
+    await page.evaluate(async () => window.__viewerTestApi?.restoreSession());
+    await expect
+      .poll(async () => page.evaluate(() => window.__viewerTestApi?.sectionPlaneCount() ?? -1), {
+        timeout: RESTORE_TIMEOUT,
+      })
+      .toBe(1); // still exactly one plane — no duplicates stacked
+    // C5: the restored single-axis section re-shows its slider (adjustable).
+    expect(await page.locator('#sectionSlider').isHidden()).toBe(false);
+    // Clean the section up so it doesn't leak into the unload assertion below.
+    await page.click('#btnClearSections');
+    await waitForStatus(page, 'Sections cleared');
+
+    // ── C3 (W5-fixups): unload must persist so a reload does NOT resurrect it. ──
+    await page.evaluate(async (b) => window.__viewerTestApi?.unloadModel(b), modelB);
+    await expect
+      .poll(async () => page.evaluate(() => window.__viewerTestApi?.modelCount() ?? -1), {
+        timeout: RESTORE_TIMEOUT,
+      })
+      .toBe(1);
+    // The persisted session must no longer list the unloaded model.
+    await expect
+      .poll(async () => page.evaluate(() => window.__viewerTestApi?.persistedModelCount() ?? -1), {
+        timeout: STATUS_TIMEOUT,
+      })
+      .toBe(1);
+
+    // Reload: the explicitly-unloaded model B must stay gone (no resurrection).
+    await waitForAppReady(page);
+    await page.waitForFunction(
+      () => (window.__viewerTestApi?.modelCount() ?? 0) === 1,
+      undefined,
+      { timeout: RESTORE_TIMEOUT },
+    );
+    const remaining = await page.evaluate(() => window.__viewerTestApi?.allModelIds() ?? []);
+    expect(remaining).toEqual([modelA]);
   });
 });

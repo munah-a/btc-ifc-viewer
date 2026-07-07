@@ -147,6 +147,16 @@ export interface ViewerTestApi {
    * assert render parity (e.g. a measurement/section tool action bumped it).
    */
   renderRequestCount(): number;
+  /**
+   * W5-fixups (C3): unloads a model via the same path the federation panel's
+   * remove button drives (frees fragments, evicts frag cache, re-persists).
+   * Resolves once the unload + persist settle.
+   */
+  unloadModel(modelId: string): Promise<void>;
+  /** W5-fixups (C4): number of active clip planes (for the duplicate-on-restore guard). */
+  sectionPlaneCount(): number;
+  /** W5-fixups (C4/C5): re-applies the saved session from localStorage (manual Restore). */
+  restoreSession(): Promise<void>;
 }
 
 declare global {
