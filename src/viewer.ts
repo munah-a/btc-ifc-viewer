@@ -1308,16 +1308,18 @@ class ViewerApp {
       await this.fragments.core.disposeModel(modelId);
     }
 
-    // E1 (W5-fixups): evict this model's cached EdgesGeometry (keyed by source
-    // uuid). The disposed model's meshes are gone from modelObjects, so passing
-    // the still-live source uuids disposes+drops the orphaned entries — bounding
-    // the GPU-geometry growth across repeated load/unload with edges enabled.
-    this.edgeGeometryCache.prune(this.liveEdgeSourceUuids());
-
     // Pins referencing the unloaded model are hidden, not deleted (F9).
     this.refreshIssueMarkers();
     this.applyXRay();
+    // E1 (W5-fixups): rebuild the edge overlays from the now-live modelObjects
+    // FIRST (applyEdges tears down the old overlays), THEN evict the orphaned
+    // cached EdgesGeometry. Ordering matters (review): pruning before applyEdges
+    // left the stale this.edgeOverlays referencing disposed geometry for a
+    // synchronous window (safe today, fragile). Now no live overlay ever points
+    // at a disposed geometry. prune() disposes+drops entries whose source uuid is
+    // no longer live — bounding GPU-geometry growth across repeated load/unload.
     this.applyEdges();
+    this.edgeGeometryCache.prune(this.liveEdgeSourceUuids());
     await this.refreshSelectionVisuals();
     this.renderModelBrowser();
     this.renderFederatedTree();
