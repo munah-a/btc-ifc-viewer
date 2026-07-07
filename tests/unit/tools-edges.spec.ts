@@ -78,4 +78,34 @@ describe('EdgeGeometryCache (P3 — W5.3)', () => {
     cache.dispose();
     expect(spy).toHaveBeenCalled();
   });
+
+  it('prune disposes + drops entries whose source uuid is not in the keep set (E1)', () => {
+    const cache = new EdgeGeometryCache();
+    const keep = new THREE.BoxGeometry(1, 1, 1);
+    const drop = new THREE.BoxGeometry(2, 2, 2);
+    const keptEdges = cache.get(keep);
+    const droppedEdges = cache.get(drop);
+    const keptSpy = vi.fn();
+    const droppedSpy = vi.fn();
+    keptEdges.dispose = keptSpy;
+    droppedEdges.dispose = droppedSpy;
+
+    cache.prune(new Set([keep.uuid]));
+
+    // The dropped entry's GPU geometry is disposed and removed…
+    expect(droppedSpy).toHaveBeenCalled();
+    // …while the kept entry survives untouched (same cached instance on re-get).
+    expect(keptSpy).not.toHaveBeenCalled();
+    expect(cache.get(keep)).toBe(keptEdges);
+    // A re-get of the dropped source rebuilds a fresh geometry (no visual change).
+    expect(cache.get(drop)).not.toBe(droppedEdges);
+  });
+
+  it('prune with an empty keep set evicts everything (but leaves the cache usable)', () => {
+    const cache = new EdgeGeometryCache();
+    const source = new THREE.BoxGeometry(1, 1, 1);
+    const first = cache.get(source);
+    cache.prune(new Set());
+    expect(cache.get(source)).not.toBe(first); // rebuilt after eviction
+  });
 });

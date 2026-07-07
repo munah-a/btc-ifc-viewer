@@ -1307,6 +1307,12 @@ class ViewerApp {
       await this.fragments.core.disposeModel(modelId);
     }
 
+    // E1 (W5-fixups): evict this model's cached EdgesGeometry (keyed by source
+    // uuid). The disposed model's meshes are gone from modelObjects, so passing
+    // the still-live source uuids disposes+drops the orphaned entries — bounding
+    // the GPU-geometry growth across repeated load/unload with edges enabled.
+    this.edgeGeometryCache.prune(this.liveEdgeSourceUuids());
+
     // Pins referencing the unloaded model are hidden, not deleted (F9).
     this.refreshIssueMarkers();
     this.applyXRay();
@@ -1389,6 +1395,22 @@ class ViewerApp {
     } catch {
       // keys() unsupported / IDB unavailable — eviction is best-effort.
     }
+  }
+
+  /**
+   * E1 (W5-fixups): the set of source-geometry uuids still live under the current
+   * modelObjects — the keep-set for EdgeGeometryCache.prune. Matches the key
+   * buildEdgeOverlays uses (mesh.geometry.uuid).
+   */
+  private liveEdgeSourceUuids(): Set<string> {
+    const uuids = new Set<string>();
+    for (const object of this.modelObjects) {
+      object.traverse((child: THREE.Object3D) => {
+        const mesh = child as THREE.Mesh;
+        if (mesh.isMesh && mesh.geometry) uuids.add(mesh.geometry.uuid);
+      });
+    }
+    return uuids;
   }
 
   private async onModelAdded(modelId: string, model: FragmentsModelLike): Promise<void> {

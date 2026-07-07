@@ -37,6 +37,23 @@ export class EdgeGeometryCache {
     return edges;
   }
 
+  /**
+   * E1 (W5-fixups): evicts cached EdgesGeometry whose SOURCE-geometry uuid is no
+   * longer live (e.g. after a model unload), disposing the GPU geometry and
+   * dropping the entry. Without this the per-source-uuid cache was freed only in
+   * dispose() (viewer teardown), so repeated load/unload with edges enabled grew
+   * GPU memory unbounded (tablet/field persona). No visual change: overlays are
+   * rebuilt from the live modelObjects, so a pruned-then-reloaded geometry is
+   * simply rebuilt on next use.
+   */
+  prune(keepUuids: Set<string>): void {
+    for (const [uuid, geometry] of this.cache) {
+      if (keepUuids.has(uuid)) continue;
+      geometry.dispose();
+      this.cache.delete(uuid);
+    }
+  }
+
   dispose(): void {
     for (const geometry of this.cache.values()) geometry.dispose();
     this.cache.clear();
