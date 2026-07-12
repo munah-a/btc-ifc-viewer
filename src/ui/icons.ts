@@ -84,43 +84,46 @@ const PATHS: Record<IconName, string> = {
     '<path d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36a5.39 5.39 0 0 1-4.4 2.26 5.4 5.4 0 0 1-2.4-10.24C13.64 3.09 12.83 3 12 3z"/>',
   view_in_ar:
     '<path d="M3 4c0-.55.45-1 1-1h3v2H5v2H3V4zm14-1h3c.55 0 1 .45 1 1v3h-2V5h-2V3zM3 17v3c0 .55.45 1 1 1h3v-2H5v-2H3zm18 0v3c0 .55-.45 1-1 1h-3v-2h2v-2h2zM12 7.5 7 10v4l5 2.5 5-2.5v-4L12 7.5zm0 2.2 2.8 1.4L12 12.5 9.2 11.1 12 9.7z"/>',
-  near_me: '<path d="M21 3 3 10.53v.98l6.84 2.65L12.48 21h.98L21 3z"/>',
+  // ── Tool-rail set (user directive 2026-07-12): standard BIM-viewer glyphs in
+  // a consistent 24px line style (Autodesk-Viewer-like) — stroke 1.6–1.8, round
+  // caps/joins. Filled shapes only where the convention is filled (cursors).
+  near_me: '<path d="M7 3v14.6l3.7-3.5 2.2 5.3 2.3-1-2.2-5.2 5.1-.5z"/>',
   select_all:
-    '<path d="M3 5h2V3c-1.1 0-2 .9-2 2zm0 8h2v-2H3v2zm4 8h2v-2H7v2zM3 9h2V7H3v2zm10-6h-2v2h2V3zm6 0v2h2c0-1.1-.9-2-2-2zM5 21v-2H3c0 1.1.9 2 2 2zm-2-4h2v-2H3v2zM9 3H7v2h2V3zm2 18h2v-2h-2v2zm8-8h2v-2h-2v2zm0 8c1.1 0 2-.9 2-2h-2v2zm0-12h2V7h-2v2zm0 8h2v-2h-2v2zm-4 4h2v-2h-2v2zm0-16h2V3h-2v2zM7 17h10V7H7v10zm2-8h6v6H9V9z"/>',
+    '<path d="M5.5 5v11.4l2.9-2.7 1.7 4.1 2.1-.9-1.7-4 4-.4z"/><path d="M17.5 4.5v6M14.5 7.5h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>',
   center_focus_strong:
-    '<path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm0 6a2 2 0 1 1 0-4 2 2 0 0 1 0 4zM3 5v4h2V5h4V3H5a2 2 0 0 0-2 2zm2 10H3v4a2 2 0 0 0 2 2h4v-2H5v-4zm14 4h-4v2h4a2 2 0 0 0 2-2v-4h-2v4zm0-16h-4v2h4v4h2V5a2 2 0 0 0-2-2z"/>',
+    '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/><path d="M12 8.2 15.3 10.1v3.8L12 15.8 8.7 13.9v-3.8z"/>',
   visibility:
-    '<path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5C21.27 7.61 17 4.5 12 4.5zm0 12a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9zm0-7a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5z"/>',
+    '<path d="M2.8 12c2-4.2 5.5-6.4 9.2-6.4s7.2 2.2 9.2 6.4c-2 4.2-5.5 6.4-9.2 6.4S4.8 16.2 2.8 12z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.7" fill="none" stroke="currentColor" stroke-width="1.7"/>',
   visibility_off:
-    '<path d="M12 6.5a5.5 5.5 0 0 1 5.5 5.5c0 .73-.16 1.42-.42 2.05l3.21 3.21A11.8 11.8 0 0 0 23 12c-1.73-4.39-6-7.5-11-7.5-1.2 0-2.36.18-3.45.5l2.32 2.32c.36-.2.75-.32 1.13-.32zM2.7 3.3 1.3 4.7l2.5 2.5A11.8 11.8 0 0 0 1 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l3.2 3.2 1.4-1.42L2.7 3.3zM7.5 12a4.5 4.5 0 0 0 6.28 4.14l-1.5-1.5A2.5 2.5 0 0 1 9.36 11.2l-1.5-1.5c-.23.7-.36 1.45-.36 2.3z"/>',
+    '<path d="M2.8 12c2-4.2 5.5-6.4 9.2-6.4s7.2 2.2 9.2 6.4c-2 4.2-5.5 6.4-9.2 6.4S4.8 16.2 2.8 12z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="12" cy="12" r="2.7" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M4.5 3.5l15 17" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/>',
   straighten:
-    '<path d="M21 6H3a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h18a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2zm0 10H3V8h2v4h2V8h2v4h2V8h2v4h2V8h2v4h2V8h2v8z"/>',
+    '<path d="M2.8 16.4 16.4 2.8l4.8 4.8L7.6 21.2z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M6.2 13l1.6 1.6M9.6 9.6l1.6 1.6M13 6.2l1.6 1.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/>',
   square_foot:
-    '<path d="M17.66 17.66l-1.06 1.06-.71-.71 1.06-1.06-1.94-1.94-1.06 1.06-.71-.71 1.06-1.06-1.94-1.94-1.06 1.06-.71-.71 1.06-1.06L9 8.71V21h12v-3l-3.34-.34zM19 19h-8v-7.59L19 19zM6.99 2.99 2 8v11h2V9l4.99-4.99-2-1.02z"/>',
+    '<path d="M5 7 18 4.6l1.4 12L6.4 19.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><circle cx="5" cy="7" r="1.6"/><circle cx="18" cy="4.6" r="1.6"/><circle cx="19.4" cy="16.6" r="1.6"/><circle cx="6.4" cy="19.4" r="1.6"/>',
   delete_sweep:
-    '<path d="M15 16h4v2h-4v-2zm0-8h7v2h-7V8zm0 4h6v2h-6v-2zM3 18c0 1.1.9 2 2 2h6c1.1 0 2-.9 2-2V8H3v10zM14 5h-3l-1-1H6L5 5H2v2h12V5z"/>',
+    '<path d="M13.6 3.9a1.7 1.7 0 0 1 2.4 0l4.1 4.1a1.7 1.7 0 0 1 0 2.4L10 20.5H5.9l-2-2a1.7 1.7 0 0 1 0-2.4z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M9.3 8.2l6.5 6.5M12.5 20.5h8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" fill="none"/>',
   vertical_split:
-    '<path d="M3 5v14h18V5H3zm8 12H5V7h6v10zm8 0h-6v-2h6v2zm0-4h-6v-2h6v2zm0-4h-6V7h6v2z"/>',
+    '<path d="M9.3 12.5 14.6 5.5H21l-5.3 7z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M4.6 14.8l4.6 5.6M9.2 14.8l-4.6 5.6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>',
   horizontal_split:
-    '<path d="M3 5v14h18V5H3zm16 6H5V7h14v4zm0 6h-6v-2h6v2zm-8 0H5v-2h6v2z"/>',
+    '<path d="M9.3 12.5 14.6 5.5H21l-5.3 7z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M4.6 14.8l2.3 3m2.3-3-2.3 3m0 0v2.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>',
   layers:
-    '<path d="M11.99 18.54 4.62 12.8 3 14.07l9 7 9-7-1.63-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z"/>',
+    '<path d="M9.3 12.5 14.6 5.5H21l-5.3 7z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M4.8 14.8h4.4l-4.4 5.6h4.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
   crop_free:
-    '<path d="M3 5v4h2V5h4V3H5a2 2 0 0 0-2 2zm2 10H3v4a2 2 0 0 0 2 2h4v-2H5v-4zm14 4h-4v2h4a2 2 0 0 0 2-2v-4h-2v4zM19 3h-4v2h4v4h2V5a2 2 0 0 0-2-2z"/>',
+    '<path d="M3.2 7.4V4.7c0-.8.7-1.5 1.5-1.5h2.7M16.6 3.2h2.7c.8 0 1.5.7 1.5 1.5v2.7M20.8 16.6v2.7c0 .8-.7 1.5-1.5 1.5h-2.7M7.4 20.8H4.7c-.8 0-1.5-.7-1.5-1.5v-2.7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/><path d="M12 6.9 16.4 9.4v5.2L12 17.1 7.6 14.6V9.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7.6 9.4 12 11.9l4.4-2.5M12 11.9v5.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>',
   blur_on:
-    '<path d="M6 13a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm0-4a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm0 8a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-4-4a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm8 8a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-4 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zM10 5a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm10 8a1 1 0 1 0 0 2 1 1 0 0 0 0-2zM10 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm0 4a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm0-8a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm4 16a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm0-16a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm4 12a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm0-4a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm0-4a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/>',
+    '<path d="M12 3.6 19.3 7.8v8.4L12 20.4 4.7 16.2V7.8z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M4.7 7.8 12 12l7.3-4.2M12 12v8.4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="2.2 2"/>',
   border_style:
-    '<path d="M15 21h2v-2h-2v2zm4 0h2v-2h-2v2zM7 21h2v-2H7v2zm4 0h2v-2h-2v2zm8-4h2v-2h-2v2zm0-4h2v-2h-2v2zM3 3v18h2V5h16V3H3zm16 6h2V7h-2v2z"/>',
+    '<path d="M12 3.6 19.3 7.8v8.4L12 20.4 4.7 16.2V7.8z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M4.7 7.8 12 12l7.3-4.2M12 12v8.4" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="3.6" r="1.4"/><circle cx="19.3" cy="7.8" r="1.4"/><circle cx="19.3" cy="16.2" r="1.4"/><circle cx="12" cy="20.4" r="1.4"/><circle cx="4.7" cy="16.2" r="1.4"/><circle cx="4.7" cy="7.8" r="1.4"/><circle cx="12" cy="12" r="1.4"/>',
   grid_on:
-    '<path d="M20 2H4c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM8 20H4v-4h4v4zm0-6H4v-4h4v4zm0-6H4V4h4v4zm6 12h-4v-4h4v4zm0-6h-4v-4h4v4zm0-6h-4V4h4v4zm6 12h-4v-4h4v4zm0-6h-4v-4h4v4zm0-6h-4V4h4v4z"/>',
+    '<path d="M4.5 4.5h15v15h-15z M9.5 4.5v15M14.5 4.5v15M4.5 9.5h15M4.5 14.5h15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>',
   fit_screen:
     '<path d="M17 4h3a2 2 0 0 1 2 2v3h-2V6h-3V4zM4 9V6h3V4H4a2 2 0 0 0-2 2v3h2zm16 6v3h-3v2h3a2 2 0 0 0 2-2v-3h-2zM7 18H4v-3H2v3a2 2 0 0 0 2 2h3v-2zM6 8h12v8H6V8z"/>',
   '3d_rotation':
     '<path d="M7.52 21.48A11 11 0 0 1 2.05 13H.03A12 12 0 0 0 12 24l.68-.03-3.44-3.44-1.72.95zM12 0l-.68.03 3.44 3.44 1.72-.94A11 11 0 0 1 21.95 11h2.02A12 12 0 0 0 12 0zm0 6a4 4 0 0 0-2 7.46V16h4v-2.54A4 4 0 0 0 12 6z"/>',
   crop_portrait:
-    '<path d="M17 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 16H7V5h10v14z"/>',
+    '<path d="M4.5 9 9.9 3.9H19.5V13.4L14 18.5H4.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M4.5 9H14m0 0v9.5M14 9l5.5-5.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M4.5 9H14v9.5H4.5z" opacity="0.35"/>',
   crop_landscape:
-    '<path d="M19 5H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 12H5V7h14v10z"/>',
+    '<path d="M4.5 9 9.9 3.9H19.5V13.4L14 18.5H4.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M4.5 9H14m0 0v9.5M14 9l5.5-5.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M4.5 9 9.9 3.9H19.5L14 9z" opacity="0.35"/>',
   map: '<path d="M20.5 3l-.16.03L15 5.1 9 3 3.36 4.9c-.21.07-.36.25-.36.48V20.5c0 .28.22.5.5.5l.16-.03L9 18.9l6 2.1 5.64-1.9c.21-.07.36-.25.36-.48V3.5c0-.28-.22-.5-.5-.5zM15 19l-6-2.11V5l6 2.11V19z"/>',
   directions_walk:
     '<path d="M13.5 5.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3A7.3 7.3 0 0 0 18 13v-2c-1.7 0-3.2-.9-4-2.2l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7z"/>',

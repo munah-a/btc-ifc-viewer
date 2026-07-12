@@ -69,7 +69,16 @@ import type { TestItemRef, ViewerTestApi } from './core/test-api';
 import { getViewCubeAxes, getViewCubeNavigationDistance, resolveViewCubeCameraUp } from './core/view-cube';
 import { buildEdgeOverlays, EdgeGeometryCache } from './tools/edges';
 import { routeKeyboardEvent, type KeyboardActions } from './input/keyboard-router';
-import { sectionBoxPlanes, sectionPlanePercent, sectionPlanePoint } from './tools/section';
+import {
+  dominantWorldAxis,
+  orientedBoxFromBox3,
+  orientedSectionBoxPlanes,
+  sectionBoxFromPlanes,
+  sectionPlanePercent,
+  sectionPlanePoint,
+  type OrientedSectionBox,
+} from './tools/section';
+import { SectionBoxGizmo, SectionPlaneGizmo, type SectionGizmoContext } from './tools/section-gizmos';
 import { computeXrayOpacity } from './tools/xray';
 import type {
   FederatedModelRecord,
@@ -367,6 +376,8 @@ class ViewerApp {
     this.onDemandRender = null;
     // R1 (W5-fixups): cancel any in-flight section-drag render pump.
     this.stopSectionDragPump();
+    // Detach the section gizmos (window/canvas pointer listeners + scene nodes).
+    this.disposeSectionGizmos();
     // P4 (W5.4): free the IFC-conversion worker.
     this.ifcConversionClient.terminate();
 
@@ -514,14 +525,32 @@ class ViewerApp {
     this.dom.btnSectionY.addEventListener('click', () => this.toggleSectionPlane(this.dom.btnSectionY, new THREE.Vector3(0, 0, -1)));
     this.dom.btnSectionZ.addEventListener('click', () => this.toggleSectionPlane(this.dom.btnSectionZ, new THREE.Vector3(0, -1, 0)));
     this.dom.btnSectionBox.addEventListener('click', () => {
+      // Autodesk semantics: re-click hides/shows the box controls, the cut
+      // stays applied (view mode). Clear sections removes it.
       if (this.dom.btnSectionBox.classList.contains('is-active')) {
-        this.clearSections();
-      } else {
-        this.createSectionBox();
-        this.dom.btnSectionBox.classList.add('is-active');
-        this.dom.btnSectionBox.setAttribute('aria-pressed', 'true');
+        this.setSectionControlsVisible(false);
+        return;
+      }
+      if (this.sectionBoxGizmo && !this.sectionBoxGizmo.visible) {
+        this.setSectionControlsVisible(true);
+        return;
+      }
+      this.createSectionBox();
+      if (this.sectionBoxGizmo) {
+        this.activeSectionButton = this.dom.btnSectionBox;
+        this.setRailPressed(this.dom.btnSectionBox, true);
       }
     });
+    // Double-click any section button = remove the section entirely (user
+    // directive 2026-07-12; single click toggles the controls' visibility).
+    // The two constituent clicks toggle hide/show first, so the double-click
+    // always lands on a live section and clears it — a clean end state.
+    for (const sectionBtn of [this.dom.btnSectionX, this.dom.btnSectionY, this.dom.btnSectionZ, this.dom.btnSectionBox]) {
+      sectionBtn.addEventListener('dblclick', () => {
+        if (!this.clipper || this.clipper.list.size === 0) return;
+        this.clearSections();
+      });
+    }
     this.dom.btnClearSections.addEventListener('click', () => {
       this.clearSections();
       this.setStatus(t('status.sectionsCleared'));
@@ -921,8 +950,8 @@ class ViewerApp {
         this.closeSheet();
         break;
       case 'section':
-        if (this.dom.btnSectionZ.classList.contains('is-active')) this.clearSections();
-        else this.toggleSectionPlane(this.dom.btnSectionZ, new THREE.Vector3(0, -1, 0));
+        // Mirrors the rail button: create → hide controls → re-show (cut stays).
+        this.toggleSectionPlane(this.dom.btnSectionZ, new THREE.Vector3(0, -1, 0));
         this.closePanel();
         this.closeSheet();
         break;
@@ -1215,6 +1244,20 @@ class ViewerApp {
     // onDraggingStarted/onDraggingEnded in this pinned @thatopen version).
     this.clipper.onBeforeDrag.add(() => this.startSectionDragPump());
     this.clipper.onAfterDrag.add(() => this.stopSectionDragPump());
+
+    // Autodesk-style orbit pivot (user directive 2026-07-12): a left-drag in
+    // Orbit mode rotates around the model point under the cursor, not a fixed
+    // target. The fragments raycast is async (~ms) — the pivot lands within
+    // the first frames of the drag, like Autodesk Viewer's pivot ball. Gizmo /
+    // transform drags disable the camera controls in their capture-phase
+    // pointerdown (which runs first), so the enabled check skips those.
+    this.world.renderer!.three.domElement.addEventListener('pointerdown', (event: PointerEvent) => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return;
+      if (this.navigationMode !== 'Orbit') return;
+      if (!this.world.camera.controls.enabled) return;
+      this.fireAndForget(this.setOrbitPivotFromPointer(), 'Orbit pivot');
+    });
+    this.applyAutodeskNavigationTweaks();
 
     // R2 (W5-fixups): the live measurement rubber-band mutates on pointer move
     // between clicks, but MANUAL mode only repaints on requestRender. Subscribe
@@ -2634,10 +2677,44 @@ class ViewerApp {
     if (!this.world?.camera) return;
     this.navigationMode = mode;
     this.world.camera.set(mode);
+    // Re-apply after every mode switch — the thatopen navigation modes rewrite
+    // the camera-controls settings.
+    this.applyAutodeskNavigationTweaks();
     this.setRailPressed(this.dom.btnModeOrbit, mode === 'Orbit');
     this.setRailPressed(this.dom.btnModePlan, mode === 'Plan');
     this.setRailPressed(this.dom.btnModeFirstPerson, mode === 'FirstPerson');
     this.persistLocalState();
+  }
+
+  /**
+   * Autodesk-Viewer navigation feel (user directive 2026-07-12): the wheel
+   * dollies/zooms TOWARD THE CURSOR and middle-drag pans (LMV defaults), on
+   * top of the existing left-orbit / right-pan mapping. The ACTION enum is
+   * read off the controls' own constructor so camera-controls stays a
+   * transitive dependency.
+   */
+  private applyAutodeskNavigationTweaks(): void {
+    const controls = this.world?.camera?.controls;
+    if (!controls) return;
+    controls.dollyToCursor = true;
+    if (this.navigationMode === 'Orbit') {
+      const actions = (controls.constructor as unknown as { ACTION: { TRUCK: typeof controls.mouseButtons.middle } })
+        .ACTION;
+      controls.mouseButtons.middle = actions.TRUCK;
+    }
+  }
+
+  /**
+   * Sets the orbit pivot to the model point under the cursor (Autodesk-style).
+   * A miss keeps the current pivot; a hit while the drag was already cancelled
+   * (controls disabled) is dropped.
+   */
+  private async setOrbitPivotFromPointer(): Promise<void> {
+    const result = (await this.raycaster.castRay()) as { point?: THREE.Vector3 } | null;
+    const controls = this.world?.camera?.controls;
+    if (!controls || !controls.enabled || !result?.point) return;
+    controls.setOrbitPoint(result.point.x, result.point.y, result.point.z);
+    this.requestRender();
   }
 
   private setMeasureMode(mode: MeasureMode): void {
@@ -2676,58 +2753,189 @@ class ViewerApp {
 
   /**
    * F10: the single clip-plane creation path — every caller (section buttons
-   * AND viewpoint restore) gets the gizmo visibility fix.
+   * AND viewpoint restore) gets the gizmo visibility fix. Returns the created
+   * plane so callers can bind an Autodesk-style section gizmo to it.
+   * `hideHelper` hides the library's square+arrow helper for gizmo-managed
+   * planes (the custom gizmo replaces it; clipping stays enabled).
    */
-  private createClipPlane(normal: THREE.Vector3, point: THREE.Vector3): void {
+  private createClipPlane(normal: THREE.Vector3, point: THREE.Vector3, hideHelper = false): OBC.SimplePlane | null {
     this.clipper.enabled = true;
     const planeId = this.clipper.createFromNormalAndCoplanarPoint(this.world, normal, point);
-    // Exempt the gizmo from clipping and depth-test so the arrow is always visible
-    // (renders on top of model geometry and not clipped by section planes)
-    const plane = this.clipper.list.get(planeId);
+    const plane = this.clipper.list.get(planeId) ?? null;
     if (plane) {
       const renderer = this.world.renderer!.three;
       renderer.localClippingEnabled = true;
-      const gizmoHelper = getClipperPlaneGizmoHelper(plane);
-      gizmoHelper?.traverse((child: THREE.Object3D) => {
-        const mesh = child as THREE.Mesh;
-        if (mesh.material) {
-          const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-          mats.forEach((m: THREE.Material) => {
-            m.clippingPlanes = [];
-            m.depthTest = false;
-          });
-        }
-        child.renderOrder = 999;
-      });
+      if (hideHelper) {
+        plane.visible = false;
+      } else {
+        // Exempt the gizmo from clipping and depth-test so the arrow is always
+        // visible (renders on top of model geometry and not clipped by planes)
+        const gizmoHelper = getClipperPlaneGizmoHelper(plane);
+        gizmoHelper?.traverse((child: THREE.Object3D) => {
+          const mesh = child as THREE.Mesh;
+          if (mesh.material) {
+            const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            mats.forEach((m: THREE.Material) => {
+              m.clippingPlanes = [];
+              m.depthTest = false;
+            });
+          }
+          child.renderOrder = 999;
+        });
+      }
     }
     this.requestRender();
+    return plane;
   }
 
   // Active single-plane section state, for the glass slider (position + normal).
   private activeSectionNormal: THREE.Vector3 | null = null;
   private activeSectionBox: THREE.Box3 | null = null;
   private activeSectionLabel = '';
+  // Autodesk-style section gizmos (drive the clipper planes; the clipper stays
+  // the single source of truth for clipping, persistence and viewpoints).
+  private activeSectionPlane: OBC.SimplePlane | null = null;
+  private sectionPlaneGizmo: SectionPlaneGizmo | null = null;
+  private sectionBoxGizmo: SectionBoxGizmo | null = null;
+  private sectionBoxPlaneRefs: OBC.SimplePlane[] = [];
+  private lastSectionFragmentsUpdate = 0;
+  // The rail button owning the current section (Autodesk hide/show semantics:
+  // re-clicking it toggles the gizmo VISUALS while the cut stays applied).
+  private activeSectionButton: HTMLButtonElement | null = null;
 
-  private addSectionPlane(normal: THREE.Vector3): void {
+  /** The currently attached section gizmo (plane or box), if any. */
+  private currentSectionGizmo(): SectionPlaneGizmo | SectionBoxGizmo | null {
+    return this.sectionPlaneGizmo ?? this.sectionBoxGizmo;
+  }
+
+  /**
+   * Autodesk-style "view mode" toggle: hides/shows the section gizmo visuals
+   * (box faces/edges/handles or plane quad/arrow/rings) while the clipping
+   * stays applied — so the cut model can be inspected unobstructed. The rail
+   * button reflects the state (pressed = controls shown).
+   */
+  private setSectionControlsVisible(visible: boolean): void {
+    const gizmo = this.currentSectionGizmo();
+    if (!gizmo) return;
+    gizmo.setVisible(visible);
+    if (this.activeSectionButton) this.setRailPressed(this.activeSectionButton, visible);
+    this.setStatus(t(visible ? 'status.sectionControlsShown' : 'status.sectionControlsHidden'));
+  }
+
+  /** The engine handles + drag hooks a section gizmo needs. */
+  private sectionGizmoContext(): SectionGizmoContext {
+    return {
+      scene: this.world.scene.three,
+      getCamera: () => this.world.camera.three,
+      domElement: this.world.renderer!.three.domElement,
+      cameraControls: this.world.camera.controls,
+      requestRender: () => this.requestRender(),
+      onDragStart: () => this.startSectionDragPump(),
+      onDragMove: () => this.throttledSectionFragmentsUpdate(),
+      onDragEnd: () => {
+        this.stopSectionDragPump();
+        this.fireAndForget(this.updateFragments(true), 'Section drag');
+        this.persistLocalState();
+      },
+      // No accentColor: the gizmos use their neutral steel default — the
+      // Autodesk-Viewer grey look (user directive 2026-07-12), not the pink
+      // --section-accent brand token.
+    };
+  }
+
+  /**
+   * During a gizmo drag the clip planes move every pointermove; a full
+   * fragments update per move is too heavy, so refresh the streamed LOD at
+   * most every 150 ms (the drag-end hook runs a final full update).
+   */
+  private throttledSectionFragmentsUpdate(): void {
+    const now = performance.now();
+    if (now - this.lastSectionFragmentsUpdate < 150) return;
+    this.lastSectionFragmentsUpdate = now;
+    this.fireAndForget(this.updateFragments(true), 'Section drag');
+  }
+
+  private disposeSectionGizmos(): void {
+    this.sectionPlaneGizmo?.dispose();
+    this.sectionPlaneGizmo = null;
+    this.sectionBoxGizmo?.dispose();
+    this.sectionBoxGizmo = null;
+    this.sectionBoxPlaneRefs = [];
+  }
+
+  /** Binds the Autodesk-style plane gizmo (quad + arrow + rotation rings) to a clipper plane. */
+  private attachSectionPlaneGizmo(plane: OBC.SimplePlane): void {
+    const bounds = this.getModelBoundingBox();
+    if (!bounds || bounds.isEmpty()) return;
+    this.sectionPlaneGizmo?.dispose();
+    this.sectionPlaneGizmo = new SectionPlaneGizmo(this.sectionGizmoContext(), {
+      normal: plane.normal.clone(),
+      origin: plane.origin.clone(),
+      bounds,
+      onChange: (normal, origin, kind) => this.onSectionPlaneGizmoChange(plane, normal, origin, kind),
+    });
+  }
+
+  /** Gizmo drag → clipper plane + glass-slider sync (slider hides for oblique planes). */
+  private onSectionPlaneGizmoChange(
+    plane: OBC.SimplePlane,
+    normal: THREE.Vector3,
+    origin: THREE.Vector3,
+    kind: 'translate' | 'rotate',
+  ): void {
+    plane.setFromNormalAndCoplanarPoint(normal.clone(), origin.clone());
+    if (kind === 'rotate') {
+      if (!dominantWorldAxis(normal)) {
+        // Autodesk parity: a tilted plane rotates freely — there is no axis
+        // left to slide, so the glass slider disappears until re-toggled.
+        this.activeSectionNormal = null;
+        this.dom.sectionSlider.hidden = true;
+        return;
+      }
+      this.activeSectionNormal = normal.clone();
+      this.dom.sectionSlider.hidden = false;
+    }
+    if (this.activeSectionNormal && this.activeSectionBox && !this.activeSectionBox.isEmpty()) {
+      const pct = Math.round(sectionPlanePercent(this.activeSectionBox, this.activeSectionNormal, origin));
+      this.dom.sectionPos.value = String(pct);
+      this.dom.sectionPosLabel.textContent = t('label.percent', { value: pct });
+    }
+  }
+
+  private addSectionPlane(normal: THREE.Vector3): OBC.SimplePlane | null {
     const bbox = this.getModelBoundingBox();
     if (!bbox || bbox.isEmpty()) {
       this.setStatus(t('status.noModelToSection'));
-      return;
+      return null;
     }
     const center = bbox.getCenter(new THREE.Vector3());
-    this.createClipPlane(normal, center);
+    const plane = this.createClipPlane(normal, center, true);
     this.setStatus(t('status.sectionPlaneAdded'));
+    return plane;
   }
 
-  /** A12: shared toggle for the X/Y/Z axis section buttons. */
+  /**
+   * A12: shared toggle for the X/Y/Z axis section buttons. Autodesk semantics
+   * (user directive 2026-07-12): re-clicking the active button hides the gizmo
+   * controls but KEEPS the cut (view mode); clicking it again re-shows them.
+   * Clear sections (rail or slider ✕) removes the cut.
+   */
   private toggleSectionPlane(button: HTMLButtonElement, normal: THREE.Vector3): void {
     if (button.classList.contains('is-active')) {
-      this.clearSections();
+      this.setSectionControlsVisible(false);
+      return;
+    }
+    if (button === this.activeSectionButton && this.sectionPlaneGizmo && !this.sectionPlaneGizmo.visible) {
+      this.setSectionControlsVisible(true);
       return;
     }
     this.clearSections(false);
-    this.addSectionPlane(normal);
+    const plane = this.addSectionPlane(normal);
+    if (!plane) return;
     this.setRailPressed(button, true);
+    this.activeSectionButton = button;
+    this.activeSectionPlane = plane;
+    this.attachSectionPlaneGizmo(plane);
     // Wire the glass slider to this axis (design: bottom-center section control).
     this.activeSectionNormal = normal.clone();
     this.activeSectionBox = this.getModelBoundingBox();
@@ -2743,8 +2951,17 @@ class ViewerApp {
   private setSectionPosition(pct: number): void {
     if (!this.activeSectionNormal || !this.activeSectionBox || this.activeSectionBox.isEmpty()) return;
     const point = sectionPlanePoint(this.activeSectionBox, this.activeSectionNormal, pct);
-    this.clipper.deleteAll();
-    this.createClipPlane(this.activeSectionNormal.clone(), point);
+    if (this.activeSectionPlane) {
+      // In-place move: keeps the plane identity, so the attached gizmo just
+      // re-syncs (no delete/recreate churn per slider tick).
+      this.activeSectionPlane.setFromNormalAndCoplanarPoint(this.activeSectionNormal.clone(), point);
+      this.sectionPlaneGizmo?.setFromPlane(this.activeSectionNormal, point);
+    } else {
+      this.clipper.deleteAll();
+      const plane = this.createClipPlane(this.activeSectionNormal.clone(), point, true);
+      this.activeSectionPlane = plane;
+      if (plane) this.attachSectionPlaneGizmo(plane);
+    }
     this.fireAndForget(this.updateFragments(true), 'Section move');
   }
 
@@ -2779,6 +2996,7 @@ class ViewerApp {
     this.dom.sectionPos.value = String(pct);
     this.dom.sectionPosLabel.textContent = t('label.percent', { value: pct });
     this.dom.sectionSlider.hidden = false;
+    this.activeSectionButton = button;
     this.setRailPressed(button, true);
   }
 
@@ -2789,15 +3007,39 @@ class ViewerApp {
       return;
     }
     this.clearSections(false);
-    this.clipper.enabled = true;
-    for (const { normal, point } of sectionBoxPlanes(bbox)) {
-      this.clipper.createFromNormalAndCoplanarPoint(this.world, normal, point);
-    }
-    this.requestRender();
+    this.attachSectionBoxGizmo(orientedBoxFromBox3(bbox));
     this.setStatus(t('status.sectionBoxCreated'));
   }
 
+  /**
+   * Creates the six clipper planes of an oriented section box (helpers hidden)
+   * and binds the Autodesk-style box gizmo to them: face drags resize, ring
+   * drags rotate the whole box, and every change is pushed back into the
+   * matching clipper plane (face order — see OrientedSectionBox).
+   */
+  private attachSectionBoxGizmo(box: OrientedSectionBox): void {
+    this.sectionBoxGizmo?.dispose();
+    this.clipper.enabled = true;
+    const planes: OBC.SimplePlane[] = [];
+    for (const { normal, point } of orientedSectionBoxPlanes(box)) {
+      const plane = this.createClipPlane(normal, point, true);
+      if (plane) planes.push(plane);
+    }
+    if (planes.length !== 6) return;
+    this.sectionBoxPlaneRefs = planes;
+    this.sectionBoxGizmo = new SectionBoxGizmo(this.sectionGizmoContext(), {
+      box,
+      onChange: (planeDefs) => {
+        for (let face = 0; face < 6; face += 1) {
+          this.sectionBoxPlaneRefs[face]?.setFromNormalAndCoplanarPoint(planeDefs[face].normal, planeDefs[face].point);
+        }
+      },
+    });
+    this.requestRender();
+  }
+
   private clearSections(updateStatus = true): void {
+    this.disposeSectionGizmos();
     this.clipper.deleteAll();
     this.clipper.enabled = false;
     for (const btn of [this.dom.btnSectionX, this.dom.btnSectionY, this.dom.btnSectionZ, this.dom.btnSectionBox]) {
@@ -2805,9 +3047,46 @@ class ViewerApp {
     }
     this.activeSectionNormal = null;
     this.activeSectionBox = null;
+    this.activeSectionPlane = null;
+    this.activeSectionButton = null;
     this.dom.sectionSlider.hidden = true;
     this.requestRender();
     if (updateStatus) this.setStatus(t('status.sectionsCleared'));
+  }
+
+  /**
+   * Recreates persisted section planes (C8 restore + viewpoint apply) and
+   * re-attaches the matching interactive gizmo: six planes forming a box come
+   * back as a section-box gizmo, a single plane as a plane gizmo (+ slider via
+   * restoreSectionSlider when axis-aligned). Any other set restores as plain
+   * clipper planes with the library helpers, exactly as before.
+   */
+  private restoreSectionPlanes(records: Array<{ normal: Vector3Record; origin: Vector3Record }>): void {
+    if (records.length === 0) return;
+    this.clipper.enabled = true;
+    const boxMatch = sectionBoxFromPlanes(records);
+    if (boxMatch) {
+      this.attachSectionBoxGizmo(boxMatch.box);
+      this.activeSectionButton = this.dom.btnSectionBox;
+      this.setRailPressed(this.dom.btnSectionBox, true);
+      return;
+    }
+    // The plane gizmo needs model bounds (quad sizing/travel); a view-state
+    // import with no models keeps the library helper instead.
+    const bounds = this.getModelBoundingBox();
+    const gizmoCapable = records.length === 1 && !!bounds && !bounds.isEmpty();
+    for (const record of records) {
+      const plane = this.createClipPlane(
+        new THREE.Vector3(record.normal.x, record.normal.y, record.normal.z),
+        new THREE.Vector3(record.origin.x, record.origin.y, record.origin.z),
+        gizmoCapable,
+      );
+      if (gizmoCapable && plane) {
+        this.activeSectionPlane = plane;
+        this.attachSectionPlaneGizmo(plane);
+      }
+    }
+    if (records.length === 1) this.restoreSectionSlider(records[0]);
   }
 
   private applyXRay(): void {
@@ -3182,15 +3461,10 @@ class ViewerApp {
     );
 
     this.clearSections(false);
-    // F10: restore clipping through the shared creation path so the plane
-    // gizmos stay visible exactly like the section buttons' planes.
-    for (const plane of viewpoint.clippingPlanes) {
-      this.createClipPlane(
-        new THREE.Vector3(plane.normal.x, plane.normal.y, plane.normal.z),
-        new THREE.Vector3(plane.origin.x, plane.origin.y, plane.origin.z),
-      );
-    }
-    this.clipper.enabled = viewpoint.clippingPlanes.length > 0;
+    // F10: restore clipping through the shared creation path, so viewpoint
+    // sections come back with the same interactive gizmos (plane or box) as
+    // freshly created ones.
+    this.restoreSectionPlanes(viewpoint.clippingPlanes);
 
     await this.hider.set(true);
     const hiddenMap = this.getValidModelIdMap(toSetMap(viewpoint.hiddenItems));
@@ -4052,23 +4326,11 @@ class ViewerApp {
     // doesn't stack duplicates + leak gizmo helpers, then re-persist a doubled
     // list. Mirrors the viewpoint-restore path, which already clears first.
     this.clearSections(false);
-    if (state.sectionPlanes.length > 0) {
-      this.clipper.enabled = true;
-      for (const plane of state.sectionPlanes) {
-        this.createClipPlane(
-          new THREE.Vector3(plane.normal.x, plane.normal.y, plane.normal.z),
-          new THREE.Vector3(plane.origin.x, plane.origin.y, plane.origin.z),
-        );
-      }
-      // C5 (W5-fixups): a single-axis section must also restore the glass slider
-      // state (active normal/box/label, slider position + visibility, axis rail
-      // button) so setSectionPosition() works and the user can adjust it without a
-      // destructive re-click. Multi-plane restores (section box) leave the slider
-      // hidden — there is no single axis to slide.
-      if (state.sectionPlanes.length === 1) {
-        this.restoreSectionSlider(state.sectionPlanes[0]);
-      }
-    }
+    // C5 (W5-fixups) + gizmos: restoreSectionPlanes recreates the planes AND
+    // re-attaches the interactive gizmo (box gizmo for a six-plane box, plane
+    // gizmo + glass slider for a single axis plane) so a restored section is
+    // adjustable without a destructive re-click.
+    this.restoreSectionPlanes(state.sectionPlanes);
 
     // Selection.
     if (Object.keys(state.selection).length > 0) {
@@ -4439,8 +4701,33 @@ class ViewerApp {
       unloadModel: (modelId: string): Promise<void> => this.unloadModel(modelId),
       sectionPlaneCount: (): number => this.clipper?.list?.size ?? 0,
       restoreSession: (): Promise<void> => this.restoreSavedSession(),
+      sectionPlanes: (): Array<{ normal: Vector3Record; origin: Vector3Record }> => this.currentSectionPlanes(),
+      sectionHandleScreenPoint: (id: string): { x: number; y: number } | null => this.sectionHandleScreenPoint(id),
     };
     return Object.freeze(api);
+  }
+
+  /**
+   * Test seam (section gizmos): the client-space position of a named gizmo
+   * handle ('plane-arrow', 'plane-ring-u', 'box-face-3', …) so the e2e can
+   * drive real pointer drags against the canvas. Null when the handle's gizmo
+   * is not active.
+   */
+  private sectionHandleScreenPoint(id: string): { x: number; y: number } | null {
+    const gizmo = id.startsWith('box-') ? this.sectionBoxGizmo : this.sectionPlaneGizmo;
+    // A hidden gizmo has no interactive handles on screen (view mode).
+    if (gizmo && !gizmo.visible) return null;
+    const world = gizmo?.handleWorldPoint(id);
+    const canvas = this.world?.renderer?.three.domElement;
+    if (!world || !canvas) return null;
+    const camera = this.world.camera.three;
+    camera.updateMatrixWorld();
+    const ndc = world.clone().project(camera);
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: rect.left + ((ndc.x + 1) / 2) * rect.width,
+      y: rect.top + ((1 - ndc.y) / 2) * rect.height,
+    };
   }
 
   /**

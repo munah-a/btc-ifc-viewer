@@ -157,6 +157,17 @@ export interface ViewerTestApi {
   sectionPlaneCount(): number;
   /** W5-fixups (C4/C5): re-applies the saved session from localStorage (manual Restore). */
   restoreSession(): Promise<void>;
+
+  // ---- Autodesk-style section gizmos ----
+  /** Active section planes (clip normal + coplanar origin), in clipper order. */
+  sectionPlanes(): Array<{ normal: TestVec3; origin: TestVec3 }>;
+  /**
+   * Client-space position of a named section-gizmo handle ('plane-arrow',
+   * 'plane-arrow-tip', 'plane-ring-u', 'plane-ring-u-swept', 'plane-quad',
+   * 'box-face-0'…'box-face-5', 'box-face-N-out', 'box-arrow') so e2e can
+   * drive real pointer drags. Null when that gizmo is not active.
+   */
+  sectionHandleScreenPoint(id: string): { x: number; y: number } | null;
 }
 
 declare global {

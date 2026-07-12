@@ -94,7 +94,9 @@ test('capture rebrand screenshots', async ({ browser }) => {
   });
   expect(planes).toBeGreaterThanOrEqual(1);
   await shot(dp, 'desktop-06-section-dark');
-  await dp.locator('#btnSectionX').click().catch(() => undefined); // clear the section
+  // Re-clicking the section button now only hides the controls (Autodesk view
+  // mode); Clear sections removes the cut for the remaining shots.
+  await dp.locator('#btnClearSections').click().catch(() => undefined);
   await dp.evaluate(() => new Promise((r) => setTimeout(r, 400)));
 
   // German UI (C7 i18n): toggle to DE, capture, then back to EN.

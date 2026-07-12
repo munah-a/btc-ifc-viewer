@@ -108,6 +108,8 @@ export const en = {
   'status.noModelToSection': 'No model to section',
   'status.sectionPlaneAdded': 'Section plane added',
   'status.sectionBoxCreated': 'Section box created',
+  'status.sectionControlsHidden': 'Section controls hidden — cut stays applied (double-click clears)',
+  'status.sectionControlsShown': 'Section controls shown',
   'status.issuePointCaptured': 'Issue point captured. Fill in the issue form and create the issue',
   'status.elementsSelected': '{count} element(s) selected',
   'status.enterViewpointName': 'Enter a viewpoint name',
@@ -325,6 +327,7 @@ export const en = {
   // ---- static shell (index.html data-i18n / data-i18n-attr) ----
   'shell.skipNav': 'Skip to viewer',
   'shell.eyebrow': 'IFC viewer',
+  'shell.betaTag': 'Beta',
   'shell.loadIfc': 'Load IFC',
   'shell.exportScreenshot': 'Export screenshot',
   'shell.exportState': 'Export state',
@@ -535,6 +538,8 @@ export const de: Record<MessageKey, string> = {
   'status.noModelToSection': 'Kein Modell zum Schneiden',
   'status.sectionPlaneAdded': 'Schnittebene hinzugefügt',
   'status.sectionBoxCreated': 'Schnittbox erstellt',
+  'status.sectionControlsHidden': 'Schnittsteuerung ausgeblendet – Schnitt bleibt aktiv (Doppelklick entfernt)',
+  'status.sectionControlsShown': 'Schnittsteuerung eingeblendet',
   'status.issuePointCaptured': 'Aufgabenpunkt erfasst. Aufgabenformular ausfüllen und Aufgabe erstellen',
   'status.elementsSelected': '{count} Element(e) ausgewählt',
   'status.enterViewpointName': 'Namen für den Blickpunkt eingeben',
@@ -752,6 +757,7 @@ export const de: Record<MessageKey, string> = {
   // ---- static shell ----
   'shell.skipNav': 'Zum Viewer springen',
   'shell.eyebrow': 'IFC-Viewer',
+  'shell.betaTag': 'Beta',
   'shell.loadIfc': 'IFC laden',
   'shell.exportScreenshot': 'Screenshot exportieren',
   'shell.exportState': 'Zustand exportieren',
