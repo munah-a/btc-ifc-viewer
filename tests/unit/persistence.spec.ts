@@ -264,6 +264,42 @@ describe('normalizePersistedState — C8 full-session fields (W5.2)', () => {
     expect(state?.sectionPlanes).toHaveLength(1);
     expect(state?.selection).toEqual({ 'a.ifc': [1, 2] }); // empty + non-array dropped
   });
+
+  it('normalizes search sets, dropping malformed entries (2026-07-12)', () => {
+    const state = normalizePersistedState({
+      version: 2,
+      searchSets: [
+        {
+          id: 's1',
+          name: 'walls',
+          query: 'wall',
+          color: '#123456',
+          colorActive: true,
+          visible: false,
+          elementsByModel: { 'a.ifc': [1, 2, 'x'], 'b.ifc': 'nope' },
+        },
+        { id: 42, name: 'bad' }, // dropped: non-string id
+        'not-a-record', // dropped
+        { id: 's2', name: 'defaults' }, // kept, defaults filled in
+      ],
+    });
+    expect(state?.searchSets).toHaveLength(2);
+    expect(state?.searchSets?.[0]).toMatchObject({
+      id: 's1',
+      colorActive: true,
+      visible: false,
+      elementsByModel: { 'a.ifc': [1, 2] },
+    });
+    expect(state?.searchSets?.[1]).toMatchObject({
+      id: 's2',
+      query: '',
+      colorActive: false,
+      visible: true,
+      elementsByModel: {},
+    });
+    // Absent (v1 / pre-feature states) → empty list, never crash (A7).
+    expect(normalizePersistedState({ version: 2 })?.searchSets).toEqual([]);
+  });
 });
 
 describe('buildPersistedState — pure serializer (W3.5 extraction, W5.2)', () => {
@@ -297,6 +333,17 @@ describe('buildPersistedState — pure serializer (W3.5 extraction, W5.2)', () =
     sectionPlanes: [{ normal: { x: 1, y: 0, z: 0 }, origin: { x: 2, y: 0, z: 0 } }],
     selection: { 'a.ifc': [7, 8] },
     activeTab: 'models',
+    searchSets: [
+      {
+        id: 'set-1',
+        name: 'wall',
+        query: 'wall',
+        color: '#e4572e',
+        colorActive: true,
+        visible: false,
+        elementsByModel: { 'a.ifc': [7, 8, 9] },
+      },
+    ],
     maxSnapshotChars: 150_000,
   });
 

@@ -168,6 +168,16 @@ export interface ViewerTestApi {
    * drive real pointer drags. Null when that gizmo is not active.
    */
   sectionHandleScreenPoint(id: string): { x: number; y: number } | null;
+
+  /** Search sets (2026-07-12): summary of the saved sets for e2e assertions. */
+  searchSets(): Array<{
+    id: string;
+    name: string;
+    color: string;
+    colorActive: boolean;
+    visible: boolean;
+    count: number;
+  }>;
 }
 
 declare global {

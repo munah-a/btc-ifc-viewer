@@ -273,8 +273,19 @@
             </div>
 
             <div class="panel-group" id="searchResultsGroup" hidden>
-              <div class="eyebrow" data-i18n="shell.searchResults">Search results</div>
+              <div class="eyebrow-row">
+                <div class="eyebrow" data-i18n="shell.searchResults">Search results</div>
+                <button id="btnSaveSearchSet" class="set-save-btn" type="button"
+                  data-i18n="shell.saveSearchSet"
+                  data-i18n-attr="title:shell.saveSearchSetTitle,aria-label:shell.saveSearchSetTitle">Save as
+                  set</button>
+              </div>
               <div id="elementResults" class="list-box"></div>
+            </div>
+
+            <div class="panel-group" id="searchSetsGroup" hidden>
+              <div class="eyebrow" data-i18n="shell.searchSets">Search sets</div>
+              <div id="searchSetList" class="list-box"></div>
             </div>
 
             <div class="panel-group">
