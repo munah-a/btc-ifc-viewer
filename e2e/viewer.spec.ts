@@ -857,7 +857,7 @@ test.describe('search sets', () => {
     await page.waitForSelector('#searchResultsGroup:not([hidden])', { timeout: STATE_TIMEOUT });
     await page.click('#btnSaveSearchSet');
     await waitForStatus(page, 'saved (');
-    let sets = await getSets();
+    const sets = await getSets();
     expect(sets).toHaveLength(1);
     expect(sets[0].name).toBe('wall');
     expect(sets[0].colorActive).toBe(true); // override painted on creation
