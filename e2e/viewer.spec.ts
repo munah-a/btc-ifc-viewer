@@ -584,6 +584,268 @@ test.describe('visibility, measure, section & visual tools', () => {
   });
 });
 
+// Autodesk-style section gizmos: real pointer drags against the canvas move
+// the clip planes (plane: quad/arrow translate + ring rotate; box: face drag).
+test.describe('section gizmos (Autodesk-style)', () => {
+  type ScreenPoint = { x: number; y: number };
+  type PlaneRecord = { normal: CameraPosition; origin: CameraPosition };
+
+  const getHandlePoint = async (page: Page, id: string): Promise<ScreenPoint> => {
+    const point = await page.evaluate(
+      (handleId) => window.__viewerTestApi?.sectionHandleScreenPoint(handleId) ?? null,
+      id,
+    );
+    if (!point) throw new Error(`Section handle unavailable: ${id}`);
+    return point;
+  };
+
+  const getSectionPlanes = async (page: Page): Promise<PlaneRecord[]> =>
+    page.evaluate(() => window.__viewerTestApi?.sectionPlanes() ?? []);
+
+  /** Signed plane offset along its normal — the value a translate drag changes. */
+  const planeOffset = (plane: PlaneRecord): number => dotProduct(plane.normal, plane.origin);
+
+  const dragPointer = async (page: Page, from: ScreenPoint, to: ScreenPoint): Promise<void> => {
+    await page.mouse.move(from.x, from.y, { steps: 2 });
+    await page.mouse.down();
+    await page.mouse.move(to.x, to.y, { steps: 10 });
+    await page.mouse.up();
+  };
+
+  // The camera animation must be over before projecting handles to the screen.
+  const waitForCameraIdle = async (page: Page): Promise<void> => {
+    let previous = await getCameraPosition(page);
+    await expect
+      .poll(
+        async () => {
+          const current = await getCameraPosition(page);
+          const stable = !cameraChanged(previous, current);
+          previous = current;
+          return stable;
+        },
+        { timeout: CAMERA_POLL_TIMEOUT, intervals: [400, 400, 600, 1000] },
+      )
+      .toBeTruthy();
+  };
+
+  test('plane gizmo: arrow drag translates along the normal and syncs the slider', async ({ appPage: page }) => {
+    await page.click('#cubeHome');
+    await waitForCameraIdle(page);
+
+    await page.click('#btnSectionX');
+    await waitForStatus(page, 'Section plane added');
+    const before = await getSectionPlanes(page);
+    expect(before).toHaveLength(1);
+    await expect(page.locator('#sectionSlider')).toBeVisible();
+    const sliderBefore = await page.inputValue('#sectionPos');
+
+    // Drag from the arrow shaft toward (and past) its tip — a screen-space
+    // vector guaranteed to have a component along the plane normal.
+    const arrow = await getHandlePoint(page, 'plane-arrow');
+    const tip = await getHandlePoint(page, 'plane-arrow-tip');
+    await dragPointer(page, arrow, { x: arrow.x + (tip.x - arrow.x) * 3, y: arrow.y + (tip.y - arrow.y) * 3 });
+
+    const after = await getSectionPlanes(page);
+    expect(after).toHaveLength(1);
+    expect(Math.abs(planeOffset(after[0]) - planeOffset(before[0]))).toBeGreaterThan(0.01);
+    // Normal unchanged by a translate.
+    expect(dotProduct(normalizeVector(after[0].normal), normalizeVector(before[0].normal))).toBeGreaterThan(0.9999);
+    // Glass slider mirrors the drag.
+    expect(await page.inputValue('#sectionPos')).not.toBe(sliderBefore);
+
+    await page.click('#btnClearSections');
+    await waitForStatus(page, 'Sections cleared');
+  });
+
+  test('plane gizmo: ring drag rotates the plane (oblique → slider hides)', async ({ appPage: page }) => {
+    await page.click('#cubeHome');
+    await waitForCameraIdle(page);
+
+    await page.click('#btnSectionZ');
+    await waitForStatus(page, 'Section plane added');
+    const before = await getSectionPlanes(page);
+    expect(before).toHaveLength(1);
+
+    const ring = await getHandlePoint(page, 'plane-ring-u');
+    const swept = await getHandlePoint(page, 'plane-ring-u-swept');
+    await dragPointer(page, ring, swept);
+
+    const after = await getSectionPlanes(page);
+    expect(after).toHaveLength(1);
+    const alignment = Math.abs(dotProduct(normalizeVector(after[0].normal), normalizeVector(before[0].normal)));
+    expect(alignment).toBeLessThan(0.9999);
+    // An oblique plane has no axis slider (Autodesk parity).
+    await expect(page.locator('#sectionSlider')).toBeHidden();
+
+    await page.click('#btnClearSections');
+    await waitForStatus(page, 'Sections cleared');
+  });
+
+  test('box gizmo: dragging a face moves exactly that clip plane', async ({ appPage: page }) => {
+    await page.click('#cubeHome');
+    await waitForCameraIdle(page);
+
+    await page.click('#btnSectionBox');
+    await waitForStatus(page, 'Section box created');
+    const before = await getSectionPlanes(page);
+    expect(before).toHaveLength(6);
+
+    // Pick a FRONT-FACING face (its outward normal — the negated clip normal —
+    // points toward the camera, so the pointer ray hits it first) whose normal
+    // has the strongest on-screen projection inside the viewport: the most
+    // drag-friendly face for the current view.
+    const camera = await getCameraPosition(page);
+    const isFrontFacing = (face: number): boolean => {
+      const outward = { x: -before[face].normal.x, y: -before[face].normal.y, z: -before[face].normal.z };
+      const toFace = {
+        x: before[face].origin.x - camera.x,
+        y: before[face].origin.y - camera.y,
+        z: before[face].origin.z - camera.z,
+      };
+      return dotProduct(outward, toFace) < 0;
+    };
+    let bestFace = -1;
+    let bestLength = 0;
+    let bestFrom: ScreenPoint = { x: 0, y: 0 };
+    let bestTo: ScreenPoint = { x: 0, y: 0 };
+    for (let face = 0; face < 6; face += 1) {
+      if (!isFrontFacing(face)) continue;
+      const center = await getHandlePoint(page, `box-face-${face}`);
+      const out = await getHandlePoint(page, `box-face-${face}-out`);
+      const length = Math.hypot(out.x - center.x, out.y - center.y);
+      const inViewport =
+        center.x > 10 && center.x < VIEWPORT.width - 10 && center.y > 90 && center.y < VIEWPORT.height - 90;
+      if (inViewport && length > bestLength) {
+        bestFace = face;
+        bestLength = length;
+        bestFrom = center;
+        bestTo = out;
+      }
+    }
+    expect(bestFace).toBeGreaterThanOrEqual(0);
+
+    // Drag the face outward by ~2 gizmo lengths.
+    await dragPointer(page, bestFrom, {
+      x: bestFrom.x + (bestTo.x - bestFrom.x) * 2,
+      y: bestFrom.y + (bestTo.y - bestFrom.y) * 2,
+    });
+
+    const after = await getSectionPlanes(page);
+    expect(after).toHaveLength(6);
+    let movedCount = 0;
+    for (let i = 0; i < 6; i += 1) {
+      // Normals never change on a face drag.
+      expect(dotProduct(normalizeVector(after[i].normal), normalizeVector(before[i].normal))).toBeGreaterThan(0.9999);
+      if (Math.abs(planeOffset(after[i]) - planeOffset(before[i])) > 0.01) movedCount += 1;
+    }
+    expect(movedCount).toBe(1);
+    // The box UX has no axis slider.
+    await expect(page.locator('#sectionSlider')).toBeHidden();
+
+    await page.click('#btnClearSections');
+    await waitForStatus(page, 'Sections cleared');
+    expect(await page.evaluate(() => window.__viewerTestApi?.sectionPlaneCount() ?? -1)).toBe(0);
+  });
+
+  test('re-clicking the section button hides the controls but keeps the cut', async ({ appPage: page }) => {
+    await page.click('#cubeHome');
+    await waitForCameraIdle(page);
+    const planeCount = () => page.evaluate(() => window.__viewerTestApi?.sectionPlaneCount() ?? -1);
+    const handle = (id: string) => page.evaluate((h) => window.__viewerTestApi?.sectionHandleScreenPoint(h), id);
+
+    // Box: hide → cut stays (6 planes), no handles, button unpressed.
+    await page.click('#btnSectionBox');
+    await waitForStatus(page, 'Section box created');
+    expect(await planeCount()).toBe(6);
+    expect(await handle('box-face-0')).not.toBeNull();
+    await page.click('#btnSectionBox');
+    await waitForStatus(page, 'Section controls hidden');
+    expect(await planeCount()).toBe(6);
+    expect(await handle('box-face-0')).toBeNull();
+    await expect(page.locator('#btnSectionBox')).toHaveAttribute('aria-pressed', 'false');
+    // Show again.
+    await page.click('#btnSectionBox');
+    await waitForStatus(page, 'Section controls shown');
+    expect(await handle('box-face-0')).not.toBeNull();
+    await expect(page.locator('#btnSectionBox')).toHaveAttribute('aria-pressed', 'true');
+    await page.click('#btnClearSections');
+    await waitForStatus(page, 'Sections cleared');
+
+    // Plane: same hide/show cycle, then clear removes the cut.
+    await page.click('#btnSectionX');
+    await waitForStatus(page, 'Section plane added');
+    await page.click('#btnSectionX');
+    await waitForStatus(page, 'Section controls hidden');
+    expect(await planeCount()).toBe(1);
+    expect(await handle('plane-arrow')).toBeNull();
+    await page.click('#btnSectionX');
+    await waitForStatus(page, 'Section controls shown');
+    expect(await handle('plane-arrow')).not.toBeNull();
+    await page.click('#btnClearSections');
+    await waitForStatus(page, 'Sections cleared');
+    expect(await planeCount()).toBe(0);
+
+    // Double-click on a section button clears the section entirely (the two
+    // constituent clicks only toggle controls visibility first).
+    await page.click('#btnSectionBox');
+    await waitForStatus(page, 'Section box created');
+    expect(await planeCount()).toBe(6);
+    await page.dblclick('#btnSectionBox');
+    await waitForStatus(page, 'Sections cleared');
+    expect(await planeCount()).toBe(0);
+    await expect(page.locator('#btnSectionBox')).toHaveAttribute('aria-pressed', 'false');
+  });
+});
+
+// Autodesk-style navigation: the wheel dollies toward the cursor (the camera
+// TARGET shifts — with plain dolly it stays fixed) and middle-drag pans (both
+// position AND target translate — with the default dolly mapping the target
+// would stay fixed). The orbit-pivot-under-cursor feature needs a live-GPU
+// raycast hit and is verified outside CI (test-api note on clickCanvasAt).
+test.describe('Autodesk-style navigation', () => {
+  test('wheel zooms toward the cursor and middle-drag pans', async ({ appPage: page }) => {
+    await page.click('#cubeHome');
+    let previous = await getCameraPosition(page);
+    await expect
+      .poll(
+        async () => {
+          const current = await getCameraPosition(page);
+          const stable = !cameraChanged(previous, current);
+          previous = current;
+          return stable;
+        },
+        { timeout: CAMERA_POLL_TIMEOUT, intervals: [400, 400, 600, 1000] },
+      )
+      .toBeTruthy();
+
+    // Wheel at an off-center point: dollyToCursor shifts the target toward it.
+    const before = await getCameraState(page);
+    await page.mouse.move(VIEWPORT.width * 0.3, VIEWPORT.height * 0.35);
+    await page.mouse.wheel(0, -400);
+    await expect
+      .poll(async () => cameraChanged(before.target, (await getCameraState(page)).target), {
+        timeout: CAMERA_POLL_TIMEOUT,
+      })
+      .toBeTruthy();
+
+    // Middle-drag: pans (position and target move together, direction intact).
+    const beforePan = await getCameraState(page);
+    const beforeDir = await getCameraDirection(page);
+    await page.mouse.move(VIEWPORT.width * 0.45, VIEWPORT.height * 0.5);
+    await page.mouse.down({ button: 'middle' });
+    await page.mouse.move(VIEWPORT.width * 0.45 + 120, VIEWPORT.height * 0.5 + 60, { steps: 8 });
+    await page.mouse.up({ button: 'middle' });
+    await expect
+      .poll(async () => cameraChanged(beforePan.target, (await getCameraState(page)).target), {
+        timeout: CAMERA_POLL_TIMEOUT,
+      })
+      .toBeTruthy();
+    expect(cameraChanged(beforePan.position, (await getCameraState(page)).position)).toBeTruthy();
+    // Direction unchanged → it was a pan, not an orbit/dolly.
+    expect(dotProduct(await getCameraDirection(page), beforeDir)).toBeGreaterThan(0.999);
+  });
+});
+
 test.describe('models panel', () => {
   test('visual style, grid and theme settings apply', async ({ appPage: page }) => {
     // W3: visual style is set via the test API (the picker lives in the mobile

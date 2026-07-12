@@ -53,6 +53,43 @@ test.describe('PWA offline (W5.5 / C6)', () => {
     await page.waitForFunction(() => (window.__viewerTestApi?.modelCount() ?? 0) === 1, undefined, {
       timeout: MODEL_TIMEOUT,
     });
+    // The offline restore needs BOTH async post-load steps to have finished
+    // before the reload, or there is nothing to restore (pre-existing flake on
+    // loaded machines — modelCount flips long before them):
+    // (a) persist-on-load — runs at the END of registerModel, right before the
+    //     'Model loaded successfully' status, so gate on the status;
+    await page.waitForFunction(
+      () => (document.querySelector('#statusText')?.textContent || '').includes('Model loaded successfully'),
+      undefined,
+      { timeout: MODEL_TIMEOUT },
+    );
+    // (b) the fire-and-forget `.frag` write into the IndexedDB cache (~8MB).
+    await page.waitForFunction(
+      async () =>
+        new Promise<boolean>((resolve) => {
+          const open = indexedDB.open('btc-viewer-frag-cache');
+          open.onerror = () => resolve(false);
+          open.onsuccess = () => {
+            const db = open.result;
+            try {
+              const request = db.transaction('frags', 'readonly').objectStore('frags').count();
+              request.onsuccess = () => {
+                resolve(request.result >= 1);
+                db.close();
+              };
+              request.onerror = () => {
+                resolve(false);
+                db.close();
+              };
+            } catch {
+              resolve(false);
+              db.close();
+            }
+          };
+        }),
+      undefined,
+      { timeout: MODEL_TIMEOUT },
+    );
     // Give the SW a beat to finish caching the shell assets it fetched.
     await page.waitForTimeout(1500);
 

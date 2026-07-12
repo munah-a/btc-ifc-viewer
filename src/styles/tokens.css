@@ -60,14 +60,14 @@
   --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
 
   /* ── Viewer layout anatomy (from the prototype) ─────────── */
-  --topbar-h: 52px;
+  --topbar-h: 64px;
   --rail-w: 52px;
   --tabstrip-w: 48px;
   --statusbar-h: 30px;
   --panel-w: 320px; /* design prop default; 280–400 via splitter (U9) */
   --panel-w-min: 280px;
   --panel-w-max: 400px;
-  --mobile-topbar-h: 52px;
+  --mobile-topbar-h: 64px;
   --mobile-bottomnav-h: 64px;
 
   /* ── Glass blur (from design system) ────────────────────── */
