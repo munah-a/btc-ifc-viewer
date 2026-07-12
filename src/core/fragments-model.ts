@@ -67,6 +67,8 @@ export interface FragmentsModelLike {
 
   setOpacity(localIds: number[] | undefined, opacity: number): Promise<void>;
   resetOpacity(localIds: number[] | undefined): Promise<void>;
+  /** Paints a persistent per-element color override (search sets). */
+  setColor(localIds: number[] | undefined, color: THREE.Color): Promise<void>;
   resetColor(localIds: number[] | undefined): Promise<void>;
 
   /**

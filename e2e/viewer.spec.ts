@@ -846,6 +846,64 @@ test.describe('Autodesk-style navigation', () => {
   });
 });
 
+// Search sets (2026-07-12): a saved search captures its elements as a named
+// set with a color override and an eye toggle — Navisworks-style.
+test.describe('search sets', () => {
+  test('save, hide/unhide, select, color toggle, persist and delete a set', async ({ appPage: page }) => {
+    const getSets = () => page.evaluate(() => window.__viewerTestApi?.searchSets() ?? []);
+
+    // Search (debounced live search) → save the results as a set.
+    await page.fill('#searchInput', 'wall');
+    await page.waitForSelector('#searchResultsGroup:not([hidden])', { timeout: STATE_TIMEOUT });
+    await page.click('#btnSaveSearchSet');
+    await waitForStatus(page, 'saved (');
+    const sets = await getSets();
+    expect(sets).toHaveLength(1);
+    expect(sets[0].name).toBe('wall');
+    expect(sets[0].colorActive).toBe(true); // override painted on creation
+    expect(sets[0].count).toBeGreaterThan(0);
+    await expect(page.locator('#searchSetsGroup')).toBeVisible();
+
+    // Eye toggle hides the set's elements (visible counter drops), then shows.
+    const visibleBefore = await page.locator('#visibleCount').textContent();
+    await page.click('#searchSetList [data-set-action="visibility"]');
+    await waitForStatus(page, '" hidden');
+    await expect.poll(async () => page.locator('#visibleCount').textContent()).not.toBe(visibleBefore);
+    expect((await getSets())[0].visible).toBe(false);
+    await page.click('#searchSetList [data-set-action="visibility"]');
+    await waitForStatus(page, '" shown');
+    await expect.poll(async () => page.locator('#visibleCount').textContent()).toBe(visibleBefore);
+
+    // Clicking the set selects its elements.
+    await page.click('#searchSetList [data-set-action="select"]');
+    await waitForStatus(page, '" selected');
+    const selectedText = (await page.locator('#selectionCount').textContent()) || '';
+    expect(Number.parseInt(selectedText, 10)).toBe((await getSets())[0].count);
+
+    // Swatch toggles the color override off.
+    await page.click('#searchSetList [data-set-action="color"]');
+    await waitForStatus(page, 'Color override off');
+    expect((await getSets())[0].colorActive).toBe(false);
+
+    // C8: the set survives a save + restore round-trip.
+    await page.evaluate(() => window.__viewerTestApi?.saveSession());
+    await page.evaluate(async () => window.__viewerTestApi?.restoreSession());
+    await expect.poll(async () => (await getSets()).length, { timeout: STATE_TIMEOUT }).toBe(1);
+    expect((await getSets())[0].colorActive).toBe(false);
+
+    // Delete removes the set and hides the group.
+    await page.click('#searchSetList [data-set-action="delete"]');
+    await waitForStatus(page, '" deleted');
+    expect(await getSets()).toHaveLength(0);
+    await expect(page.locator('#searchSetsGroup')).toBeHidden();
+
+    // Leave the shared fixture clean.
+    await page.click('#btnClearSearch');
+    await page.click('#btnResetVisibility');
+    await waitForStatus(page, 'Visibility reset');
+  });
+});
+
 test.describe('models panel', () => {
   test('visual style, grid and theme settings apply', async ({ appPage: page }) => {
     // W3: visual style is set via the test API (the picker lives in the mobile

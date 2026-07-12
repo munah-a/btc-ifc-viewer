@@ -14,12 +14,14 @@ import {
   type NavigationMode,
   type PersistedCamera,
   type PersistedModelRecord,
+  type PersistedSearchSet,
   type PersistedViewerState,
   type SavedViewpoint,
   type SelectionMode,
   type Vector3Record,
   type VisualStyle,
 } from './core/persistence';
+import { buildSearchSetListMarkup, searchSetColor, type SearchSetView } from './ui/search-sets-panel';
 import {
   hashFragBytes,
   IndexedDbFragCache,
@@ -314,6 +316,7 @@ class ViewerApp {
     this.updateViewpointList();
     this.updateIssuesList();
     this.updateIssueComments();
+    this.renderSearchSets();
     void this.updatePropertiesPanel();
     this.updateActiveTabTitle();
     this.applyNavigationMode(this.navigationMode);
@@ -603,6 +606,34 @@ class ViewerApp {
       this.setStatus(t('status.searchCleared'));
     });
 
+    // Search sets: save the current search; one delegated listener for the
+    // per-set actions (color / visibility / select / delete) — A11.
+    this.dom.btnSaveSearchSet.addEventListener('click', () => {
+      this.fireAndForget(this.createSearchSetFromSearch(), 'Create search set');
+    });
+    this.dom.searchSetList.addEventListener('click', (event) => {
+      const target = event.target as HTMLElement;
+      const actionEl = target.closest<HTMLElement>('[data-set-action]');
+      const row = target.closest<HTMLElement>('[data-set-id]');
+      if (!actionEl || !row) return;
+      const set = this.searchSets.find((entry) => entry.id === row.dataset.setId);
+      if (!set) return;
+      switch (actionEl.dataset.setAction) {
+        case 'color':
+          this.fireAndForget(this.toggleSearchSetColor(set), 'Search set color');
+          break;
+        case 'visibility':
+          this.fireAndForget(this.toggleSearchSetVisibility(set), 'Search set visibility');
+          break;
+        case 'select':
+          this.fireAndForget(this.selectSearchSet(set), 'Search set select');
+          break;
+        case 'delete':
+          this.fireAndForget(this.deleteSearchSet(set), 'Search set delete');
+          break;
+      }
+    });
+
     // Filters — chip toggles apply immediately
     this.dom.classFilterList.addEventListener('click', (event) => this.onFilterChipClick(event));
     this.dom.levelFilterList.addEventListener('click', (event) => this.onFilterChipClick(event));
@@ -690,6 +721,15 @@ class ViewerApp {
     this.fireAndForget((async () => {
       await this.hider.set(true);
       this.clearFilterChecks();
+      // Show-all also reveals hidden search sets — sync their eye icons.
+      let setsChanged = false;
+      for (const set of this.searchSets) {
+        if (!set.visible) {
+          set.visible = true;
+          setsChanged = true;
+        }
+      }
+      if (setsChanged) this.renderSearchSets();
       await this.updateVisibilityCount();
       this.persistLocalState();
       this.setStatus(t('status.visibilityReset'));
@@ -1372,6 +1412,11 @@ class ViewerApp {
     await this.updateVisibilityCount();
     await this.updateFragments(true);
     this.dom.emptyState.hidden = this.federatedModels.size > 0;
+
+    // Search sets: drop the unloaded model's ids from every set (counts stay
+    // honest; sets never resurrect stale local ids on a later different load).
+    for (const set of this.searchSets) delete set.elementsByModel[modelId];
+    this.renderSearchSets();
 
     // C3 (W5-fixups): persist AFTER removing the model so the saved session no
     // longer lists it — otherwise a reload before any other persist resurrects
@@ -2902,6 +2947,157 @@ class ViewerApp {
     }
   }
 
+  // ── Search sets (user directive 2026-07-12) ──────────────────────────────
+  // Navisworks-style saved searches: the matched elements are captured as a
+  // named set with a color override and an eye toggle, so whole systems can be
+  // painted and hidden/shown in one click. The clipper-independent state lives
+  // here and persists through C8 (searchSets in the v2 schema).
+  private searchSets: PersistedSearchSet[] = [];
+
+  /** Saves the current search as a set (full, un-capped id resolution). */
+  private async createSearchSetFromSearch(): Promise<void> {
+    const term = this.dom.searchInput.value.trim();
+    if (!term) {
+      this.setStatus(t('status.searchSetEmpty'));
+      return;
+    }
+    const pattern = new RegExp(escapeRegExp(term), 'i');
+    const elementsByModel: Record<string, number[]> = {};
+    let total = 0;
+    for (const [modelKey, model] of this.fragments.list.entries()) {
+      const ids = await model.getItemsByQuery({
+        attributes: {
+          aggregation: 'inclusive',
+          queries: [{ name: /Name|GlobalId|ObjectType|PredefinedType/i, value: pattern }],
+        },
+      });
+      if (ids && ids.length > 0) {
+        elementsByModel[String(modelKey)] = [...ids];
+        total += ids.length;
+      }
+    }
+    if (total === 0) {
+      this.setStatus(t('status.searchSetEmpty'));
+      return;
+    }
+    const set: PersistedSearchSet = {
+      id: `set-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+      name: term,
+      query: term,
+      color: searchSetColor(this.searchSets.length),
+      colorActive: true,
+      visible: true,
+      elementsByModel,
+    };
+    this.searchSets.push(set);
+    await this.applySearchSetColors();
+    this.renderSearchSets();
+    this.persistLocalState();
+    this.setStatus(t('status.searchSetCreated', { name: set.name, count: total }));
+  }
+
+  /**
+   * Repaints every ACTIVE set's color override from scratch (full reset then
+   * re-apply in list order, so later sets win on overlapping elements and a
+   * disabled/deleted set's paint disappears without per-id bookkeeping).
+   */
+  private async applySearchSetColors(): Promise<void> {
+    for (const record of this.federatedModels.values()) {
+      const model = this.getFragmentsModel(record.modelId);
+      if (!model) continue;
+      await model.resetColor(undefined);
+    }
+    for (const set of this.searchSets) {
+      if (!set.colorActive) continue;
+      const color = new THREE.Color(set.color);
+      for (const [modelId, ids] of Object.entries(set.elementsByModel)) {
+        const model = this.getFragmentsModel(modelId);
+        if (!model || ids.length === 0) continue;
+        await model.setColor([...ids], color);
+      }
+    }
+    await this.updateFragments(true);
+  }
+
+  /** The set's elements as a validated model-id map (loaded models only). */
+  private searchSetIdMap(set: PersistedSearchSet): Record<string, Set<number>> {
+    return this.getValidModelIdMap(toSetMap(set.elementsByModel));
+  }
+
+  private async toggleSearchSetVisibility(set: PersistedSearchSet): Promise<void> {
+    set.visible = !set.visible;
+    const map = this.searchSetIdMap(set);
+    if (!isMapEmpty(map)) await this.hider.set(set.visible, cloneMap(map));
+    await this.updateVisibilityCount();
+    this.renderSearchSets();
+    this.persistLocalState();
+    this.setStatus(t(set.visible ? 'status.searchSetShown' : 'status.searchSetHidden', { name: set.name }));
+  }
+
+  private async toggleSearchSetColor(set: PersistedSearchSet): Promise<void> {
+    set.colorActive = !set.colorActive;
+    await this.applySearchSetColors();
+    this.renderSearchSets();
+    this.persistLocalState();
+    this.setStatus(t(set.colorActive ? 'status.searchSetColorOn' : 'status.searchSetColorOff', { name: set.name }));
+  }
+
+  private async selectSearchSet(set: PersistedSearchSet): Promise<void> {
+    clearMap(this.selectedItems);
+    for (const [modelId, ids] of Object.entries(this.searchSetIdMap(set))) {
+      if (ids.size > 0) this.selectedItems[modelId] = new Set(ids);
+    }
+    await this.refreshSelectionVisuals();
+    this.setStatus(t('status.searchSetSelected', { name: set.name }));
+  }
+
+  private async deleteSearchSet(set: PersistedSearchSet): Promise<void> {
+    // Deleting a hidden set must not leave its elements invisible forever.
+    if (!set.visible) {
+      const map = this.searchSetIdMap(set);
+      if (!isMapEmpty(map)) await this.hider.set(true, cloneMap(map));
+    }
+    this.searchSets = this.searchSets.filter((entry) => entry.id !== set.id);
+    await this.applySearchSetColors();
+    await this.updateVisibilityCount();
+    this.renderSearchSets();
+    this.persistLocalState();
+    this.setStatus(t('status.searchSetDeleted', { name: set.name }));
+  }
+
+  /** Renders the Explorer's search-set list (delegated clicks, A11). */
+  private renderSearchSets(): void {
+    const views: SearchSetView[] = this.searchSets.map((set) => ({
+      id: set.id,
+      name: set.name,
+      color: set.color,
+      colorActive: set.colorActive,
+      visible: set.visible,
+      count: Object.values(set.elementsByModel).reduce((sum, ids) => sum + ids.length, 0),
+    }));
+    const markup = buildSearchSetListMarkup(views, {
+      countText: (count) => t('set.count', { count }),
+      colorTitle: (active) => t(active ? 'set.colorOff' : 'set.colorOn'),
+      visibilityTitle: (visible) => t(visible ? 'set.hide' : 'set.show'),
+      selectTitle: t('set.select'),
+      deleteTitle: t('set.delete'),
+    });
+    this.dom.searchSetsGroup.hidden = markup === null;
+    // A1-safe: buildSearchSetListMarkup escapes every interpolated value; this
+    // mirrors the issues/properties panel render path.
+    this.dom.searchSetList.replaceChildren();
+    if (markup) this.dom.searchSetList.insertAdjacentHTML('beforeend', markup);
+  }
+
+  /** Restore hook: re-applies set overrides + hidden sets after models load. */
+  private async applyRestoredSearchSets(): Promise<void> {
+    this.renderSearchSets();
+    const hasActiveColor = this.searchSets.some((set) => set.colorActive);
+    if (hasActiveColor) await this.applySearchSetColors();
+    // Hidden ELEMENTS are already restored by the C8 hiddenIds snapshot; the
+    // per-set `visible` flags only drive the eye icons here.
+  }
+
   private addSectionPlane(normal: THREE.Vector3): OBC.SimplePlane | null {
     const bbox = this.getModelBoundingBox();
     if (!bbox || bbox.isEmpty()) {
@@ -4028,6 +4224,7 @@ class ViewerApp {
       sectionPlanes: this.currentSectionPlanes(),
       selection: this.currentSelectionRecord(),
       activeTab: this.activeTab,
+      searchSets: this.searchSets,
       maxSnapshotChars: MAX_PERSISTED_SNAPSHOT_CHARS,
     });
   }
@@ -4199,6 +4396,12 @@ class ViewerApp {
     );
     this.viewpoints = state.viewpoints;
     this.issues = state.issues.map((issue) => ({ ...issue }));
+    this.searchSets = (state.searchSets ?? []).map((set) => ({
+      ...set,
+      elementsByModel: Object.fromEntries(
+        Object.entries(set.elementsByModel).map(([modelId, ids]) => [modelId, [...ids]]),
+      ),
+    }));
 
     document.documentElement.setAttribute('data-theme', this.themeMode);
 
@@ -4220,6 +4423,7 @@ class ViewerApp {
     this.updateIssuesList();
     this.updateIssueComments();
     this.refreshIssueMarkers();
+    this.renderSearchSets();
 
     if (state.activeTab) this.activateTab(state.activeTab);
 
@@ -4285,6 +4489,8 @@ class ViewerApp {
       }
 
       await this.applyRestoredViewState(state);
+      // Search sets: repaint the color overrides now that models are loaded.
+      await this.applyRestoredSearchSets();
     } finally {
       this.restoringSession = false;
       this.suppressAutoFit = false;
@@ -4703,6 +4909,15 @@ class ViewerApp {
       restoreSession: (): Promise<void> => this.restoreSavedSession(),
       sectionPlanes: (): Array<{ normal: Vector3Record; origin: Vector3Record }> => this.currentSectionPlanes(),
       sectionHandleScreenPoint: (id: string): { x: number; y: number } | null => this.sectionHandleScreenPoint(id),
+      searchSets: () =>
+        this.searchSets.map((set) => ({
+          id: set.id,
+          name: set.name,
+          color: set.color,
+          colorActive: set.colorActive,
+          visible: set.visible,
+          count: Object.values(set.elementsByModel).reduce((sum, ids) => sum + ids.length, 0),
+        })),
     };
     return Object.freeze(api);
   }

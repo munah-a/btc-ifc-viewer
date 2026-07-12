@@ -126,6 +126,19 @@ export interface PersistedViewerState {
   selection: Record<string, number[]>;
   /** C8: the active right-panel tab, restored for continuity. */
   activeTab?: string;
+  /** Search sets (2026-07-12): saved searches with color override + visibility. */
+  searchSets?: PersistedSearchSet[];
+}
+
+/** A Navisworks-style saved search: captured elements + color + visibility. */
+export interface PersistedSearchSet {
+  id: string;
+  name: string;
+  query: string;
+  color: string;
+  colorActive: boolean;
+  visible: boolean;
+  elementsByModel: Record<string, number[]>;
 }
 
 /**
@@ -152,6 +165,7 @@ export interface PersistedStateInput {
   sectionPlanes: Array<{ normal: Vector3Record; origin: Vector3Record }>;
   selection: Record<string, number[]>;
   activeTab?: string;
+  searchSets: PersistedSearchSet[];
   /** Cap for persisted viewpoint snapshots (F2 size guard); larger are dropped. */
   maxSnapshotChars: number;
 }
@@ -220,6 +234,12 @@ export const buildPersistedState = (input: PersistedStateInput): PersistedViewer
     })),
     selection,
     activeTab: input.activeTab,
+    searchSets: input.searchSets.map((set) => ({
+      ...set,
+      elementsByModel: Object.fromEntries(
+        Object.entries(set.elementsByModel).map(([modelId, ids]) => [modelId, [...ids]]),
+      ),
+    })),
   };
 };
 
@@ -472,5 +492,34 @@ export const normalizePersistedState = (raw: unknown): PersistedViewerState | nu
     sectionPlanes: asSectionPlanes(raw.sectionPlanes),
     selection: asSelection(raw.selection),
     activeTab: typeof raw.activeTab === 'string' ? raw.activeTab : undefined,
+    searchSets: asSearchSets(raw.searchSets),
   };
+};
+
+/** Search sets: absent/malformed entries are dropped, never crash (A7). */
+const asSearchSets = (value: unknown): PersistedSearchSet[] => {
+  if (!Array.isArray(value)) return [];
+  const sets: PersistedSearchSet[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    if (typeof entry.id !== 'string' || typeof entry.name !== 'string') continue;
+    const elementsByModel: Record<string, number[]> = {};
+    if (isRecord(entry.elementsByModel)) {
+      for (const [modelId, ids] of Object.entries(entry.elementsByModel)) {
+        if (!Array.isArray(ids)) continue;
+        const clean = ids.filter((id): id is number => typeof id === 'number' && Number.isFinite(id));
+        if (clean.length > 0) elementsByModel[modelId] = clean;
+      }
+    }
+    sets.push({
+      id: entry.id,
+      name: entry.name,
+      query: asString(entry.query, ''),
+      color: asString(entry.color, '#e4572e'),
+      colorActive: asBoolean(entry.colorActive, false),
+      visible: asBoolean(entry.visible, true),
+      elementsByModel,
+    });
+  }
+  return sets;
 };
