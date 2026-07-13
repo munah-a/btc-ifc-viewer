@@ -9,9 +9,9 @@
  * maxDuration is bounded low: this is a bytes-in, metadata-out endpoint, not a
  * compute endpoint.
  */
-import { handleUpload } from './_lib/hosting';
-import { error } from './_lib/http';
-import { createRealStorage } from './_lib/storage';
+import { handleUpload } from './_lib/hosting.js';
+import { error } from './_lib/http.js';
+import { createRealStorage } from './_lib/storage.js';
 
 export const config = { maxDuration: 30 };
 

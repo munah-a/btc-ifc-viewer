@@ -6,9 +6,9 @@
  * see handleCronCleanup. The metadata store (Redis) also auto-expires records,
  * so this primarily reaps blob objects (the blob store has no TTL of its own).
  */
-import { handleCronCleanup } from './_lib/hosting';
-import { error } from './_lib/http';
-import { createRealStorage } from './_lib/storage';
+import { handleCronCleanup } from './_lib/hosting.js';
+import { error } from './_lib/http.js';
+import { createRealStorage } from './_lib/storage.js';
 
 export const config = { maxDuration: 60 };
 
