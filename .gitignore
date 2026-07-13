@@ -19,3 +19,8 @@ ci-*.log
 # e2e run logs (transient)
 e2e-*.log
 docs/design/shots/
+.env*
+
+# Vendor agent-skills dropped by marketplace integrations (unreviewed — not part of the app)
+.agents/
+skills-lock.json

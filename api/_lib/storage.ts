@@ -326,12 +326,15 @@ export async function createRealStorage(deps?: {
   redis?: RedisLike;
   blobToken?: string;
 }): Promise<StorageAdapter> {
-  // The storage SDKs are OPTIONAL at build/test time — the PO adds @vercel/blob
-  // and @upstash/redis at provisioning (their shapes are declared in
-  // optional-deps.d.ts so this file type-checks WITHOUT them installed). These
-  // dynamic imports only run on Vercel, where the real packages are present.
-  const blob: VercelBlobModule = deps?.blob ?? (await import('@vercel/blob'));
-  const redis: RedisLike = deps?.redis ?? (await import('@upstash/redis')).Redis.fromEnv();
+  // The storage SDKs are lazily imported so tests can inject fakes and the
+  // function bundle only loads them on first use. Provisioned 2026-07-13: the
+  // real packages are now dependencies (optional-deps.d.ts stubs removed). The
+  // casts pin the REAL SDK surfaces to the minimal local shapes this adapter
+  // calls — the SDK types are wider (extra body types / option unions), but
+  // every call here is valid against both (put/del incl. cacheControlMaxAge +
+  // addRandomSuffix; set{ex}/get/del/incr/expire/sadd/srem/scard/smembers).
+  const blob = (deps?.blob ?? ((await import('@vercel/blob')) as unknown)) as VercelBlobModule;
+  const redis = (deps?.redis ?? ((await import('@upstash/redis')).Redis.fromEnv() as unknown)) as RedisLike;
   const blobToken = deps?.blobToken ?? process.env.BLOB_READ_WRITE_TOKEN;
 
   return {
