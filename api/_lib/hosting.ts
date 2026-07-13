@@ -25,9 +25,9 @@ import {
   resolveEntitlements,
   ttlSeconds,
   type Entitlements,
-} from './entitlements';
-import { error, generateId, generateToken, isProduction, json, methodNotAllowed, ownerIdFromRequest, sha256Hex, verifyToken } from './http';
-import type { Clock, StorageAdapter, UploadMeta } from './storage';
+} from './entitlements.js';
+import { error, generateId, generateToken, isProduction, json, methodNotAllowed, ownerIdFromRequest, sha256Hex, verifyToken } from './http.js';
+import type { Clock, StorageAdapter, UploadMeta } from './storage.js';
 
 /** How embeds/deep-links are built. Config-driven so the host domain is easy to change. */
 export interface HostConfig {

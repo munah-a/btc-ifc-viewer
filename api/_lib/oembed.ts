@@ -10,8 +10,8 @@
  * embed page (which carries the model URL in its own query), so oEmbed just
  * reflects it into an iframe wrapper. No model bytes touch the function (C2).
  */
-import { error, json, methodNotAllowed } from './http';
-import { resolveHostConfig, type HostConfig } from './hosting';
+import { error, json, methodNotAllowed } from './http.js';
+import { resolveHostConfig, type HostConfig } from './hosting.js';
 
 const DEFAULT_WIDTH = 800;
 const DEFAULT_HEIGHT = 600;

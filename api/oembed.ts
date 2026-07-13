@@ -5,8 +5,8 @@
  * no model bytes (C2). Register this endpoint in embed.html via a
  * <link rel="alternate" type="application/json+oembed"> so consumers discover it.
  */
-import { handleOEmbed } from './_lib/oembed';
-import { error } from './_lib/http';
+import { handleOEmbed } from './_lib/oembed.js';
+import { error } from './_lib/http.js';
 
 export const config = { maxDuration: 10 };
 

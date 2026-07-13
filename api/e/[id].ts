@@ -11,9 +11,9 @@
  * framework-specific context object, so the logic stays framework-agnostic and
  * unit-testable.
  */
-import { handleEmbedMeta } from '../_lib/hosting';
-import { error } from '../_lib/http';
-import { createRealStorage } from '../_lib/storage';
+import { handleEmbedMeta } from '../_lib/hosting.js';
+import { error } from '../_lib/http.js';
+import { createRealStorage } from '../_lib/storage.js';
 
 export const config = { maxDuration: 10 };
 
